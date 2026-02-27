@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Expo
+.expo/
+dist/
+web-build/
+
+# Build outputs
+ios/
+android/
+
+# Misc
+.DS_Store
+*.log
+npm-debug.log*
+yarn-error.log
+
+# Editor
+.vscode/
+.idea/

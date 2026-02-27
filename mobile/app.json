@@ -1,0 +1,53 @@
+{
+  "expo": {
+    "name": "Togt",
+    "slug": "togt",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1A6B3A"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "za.togt.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Togt uses your location to find nearby labourers.",
+        "NSLocationAlwaysUsageDescription": "Togt uses your location to share it with customers while on a job."
+      }
+    },
+    "android": {
+      "package": "za.togt.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1A6B3A"
+      },
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow Togt to use your location."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#1A6B3A"
+        }
+      ]
+    ],
+    "extra": {
+      "apiUrl": "http://localhost:3000"
+    }
+  }
+}

@@ -1,0 +1,154 @@
+const express = require('express');
+const db = require('../config/db');
+const { authMiddleware } = require('../middleware/auth');
+
+const router = express.Router();
+
+// POST /bookings — customer creates a booking request
+router.post('/', authMiddleware, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'customer') {
+      return res.status(403).json({ error: 'Only customers can create bookings' });
+    }
+
+    const { labourer_id, skill_needed, address, location_lat, location_lng, scheduled_at, hours_est, notes } = req.body;
+
+    if (!labourer_id || !skill_needed || !address || !location_lat || !location_lng || !scheduled_at) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Check labourer exists and is available
+    const labourerCheck = await db.query(
+      `SELECT u.id, lp.hourly_rate, lp.is_available
+       FROM users u JOIN labourer_profiles lp ON u.id = lp.user_id
+       WHERE u.id = $1 AND u.role = 'labourer'`,
+      [labourer_id]
+    );
+    if (labourerCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Labourer not found' });
+    }
+    const labourer = labourerCheck.rows[0];
+
+    const total_amount = hours_est ? (labourer.hourly_rate * parseFloat(hours_est)).toFixed(2) : null;
+
+    const result = await db.query(
+      `INSERT INTO bookings
+         (customer_id, labourer_id, skill_needed, address, location_lat, location_lng,
+          scheduled_at, hours_est, total_amount, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       RETURNING *`,
+      [req.user.id, labourer_id, skill_needed, address, location_lat, location_lng,
+       scheduled_at, hours_est || null, total_amount, notes || null]
+    );
+
+    res.status(201).json({ booking: result.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /bookings/my — get own bookings
+router.get('/my', authMiddleware, async (req, res, next) => {
+  try {
+    const col = req.user.role === 'customer' ? 'b.customer_id' : 'b.labourer_id';
+
+    const result = await db.query(
+      `SELECT b.*,
+              cu.name AS customer_name, cu.phone AS customer_phone, cu.avatar_url AS customer_avatar,
+              lu.name AS labourer_name, lu.phone AS labourer_phone, lu.avatar_url AS labourer_avatar,
+              lp.hourly_rate, lp.skills
+       FROM bookings b
+       JOIN users cu ON b.customer_id = cu.id
+       JOIN users lu ON b.labourer_id = lu.id
+       JOIN labourer_profiles lp ON b.labourer_id = lp.user_id
+       WHERE ${col} = $1
+       ORDER BY b.created_at DESC`,
+      [req.user.id]
+    );
+
+    res.json({ bookings: result.rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /bookings/:id
+router.get('/:id', authMiddleware, async (req, res, next) => {
+  try {
+    const result = await db.query(
+      `SELECT b.*,
+              cu.name AS customer_name, cu.phone AS customer_phone, cu.avatar_url AS customer_avatar,
+              lu.name AS labourer_name, lu.phone AS labourer_phone, lu.avatar_url AS labourer_avatar,
+              lp.hourly_rate, lp.skills, lp.current_lat, lp.current_lng,
+              p.status AS payment_status, p.id AS payment_id
+       FROM bookings b
+       JOIN users cu ON b.customer_id = cu.id
+       JOIN users lu ON b.labourer_id = lu.id
+       JOIN labourer_profiles lp ON b.labourer_id = lp.user_id
+       LEFT JOIN payments p ON p.booking_id = b.id
+       WHERE b.id = $1`,
+      [req.params.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Booking not found' });
+    }
+
+    const booking = result.rows[0];
+    // Only customer or labourer involved can view
+    if (booking.customer_id !== req.user.id && booking.labourer_id !== req.user.id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    res.json({ booking });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Status transition helper
+async function transition(req, res, next, allowedRoles, fromStatuses, toStatus) {
+  try {
+    const result = await db.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
+
+    const booking = result.rows[0];
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Not allowed' });
+    }
+    if (req.user.role === 'customer' && booking.customer_id !== req.user.id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    if (req.user.role === 'labourer' && booking.labourer_id !== req.user.id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    if (!fromStatuses.includes(booking.status)) {
+      return res.status(400).json({ error: `Cannot transition from '${booking.status}' to '${toStatus}'` });
+    }
+
+    const updated = await db.query(
+      'UPDATE bookings SET status = $1 WHERE id = $2 RETURNING *',
+      [toStatus, req.params.id]
+    );
+    res.json({ booking: updated.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+}
+
+router.put('/:id/accept', authMiddleware, (req, res, next) =>
+  transition(req, res, next, ['labourer'], ['pending'], 'accepted'));
+
+router.put('/:id/decline', authMiddleware, (req, res, next) =>
+  transition(req, res, next, ['labourer'], ['pending'], 'cancelled'));
+
+router.put('/:id/start', authMiddleware, (req, res, next) =>
+  transition(req, res, next, ['labourer'], ['accepted'], 'in_progress'));
+
+router.put('/:id/complete', authMiddleware, (req, res, next) =>
+  transition(req, res, next, ['labourer'], ['in_progress'], 'completed'));
+
+router.put('/:id/cancel', authMiddleware, (req, res, next) =>
+  transition(req, res, next, ['customer'], ['pending', 'accepted'], 'cancelled'));
+
+module.exports = router;

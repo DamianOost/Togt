@@ -1,9 +1,14 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authService } from '../services/authService';
+
+const STORAGE_KEY = '@togt_auth';
 
 export const loginThunk = createAsyncThunk('auth/login', async (credentials, { rejectWithValue }) => {
   try {
-    return await authService.login(credentials);
+    const data = await authService.login(credentials);
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    return data;
   } catch (err) {
     return rejectWithValue(err.response?.data?.error || 'Login failed');
   }
@@ -11,9 +16,22 @@ export const loginThunk = createAsyncThunk('auth/login', async (credentials, { r
 
 export const registerThunk = createAsyncThunk('auth/register', async (data, { rejectWithValue }) => {
   try {
-    return await authService.register(data);
+    const result = await authService.register(data);
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(result));
+    return result;
   } catch (err) {
     return rejectWithValue(err.response?.data?.error || 'Registration failed');
+  }
+});
+
+// Restore session from AsyncStorage on app launch
+export const restoreSessionThunk = createAsyncThunk('auth/restore', async (_, { rejectWithValue }) => {
+  try {
+    const stored = await AsyncStorage.getItem(STORAGE_KEY);
+    if (!stored) return rejectWithValue('No session');
+    return JSON.parse(stored);
+  } catch {
+    return rejectWithValue('Failed to restore');
   }
 });
 
@@ -25,12 +43,14 @@ const authSlice = createSlice({
     refreshToken: null,
     loading: false,
     error: null,
+    restored: false,
   },
   reducers: {
     logout(state) {
       state.user = null;
       state.accessToken = null;
       state.refreshToken = null;
+      AsyncStorage.removeItem(STORAGE_KEY).catch(() => {});
     },
     setTokens(state, action) {
       state.accessToken = action.payload.accessToken;
@@ -59,7 +79,16 @@ const authSlice = createSlice({
       .addCase(loginThunk.rejected, handleRejected)
       .addCase(registerThunk.pending, handlePending)
       .addCase(registerThunk.fulfilled, handleFulfilled)
-      .addCase(registerThunk.rejected, handleRejected);
+      .addCase(registerThunk.rejected, handleRejected)
+      .addCase(restoreSessionThunk.fulfilled, (state, action) => {
+        state.user = action.payload.user;
+        state.accessToken = action.payload.accessToken;
+        state.refreshToken = action.payload.refreshToken;
+        state.restored = true;
+      })
+      .addCase(restoreSessionThunk.rejected, (state) => {
+        state.restored = true;
+      });
   },
 });
 

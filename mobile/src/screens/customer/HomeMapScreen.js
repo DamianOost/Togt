@@ -78,6 +78,9 @@ export default function HomeMapScreen({ navigation }) {
           <TouchableOpacity onPress={() => navigation.getParent()?.navigate('Bookings')}>
             <Text style={styles.bookingsLink}>My Bookings</Text>
           </TouchableOpacity>
+          <TouchableOpacity onPress={() => dispatch(logout())}>
+            <Text style={styles.logoutLink}>Logout</Text>
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -173,6 +176,7 @@ const styles = StyleSheet.create({
   headerBtn: { padding: 6 },
   headerBtnText: { fontSize: 20 },
   bookingsLink: { color: '#1A6B3A', fontWeight: '600', fontSize: 14 },
+  logoutLink: { color: '#EF4444', fontWeight: '600', fontSize: 13 },
   chips: { paddingHorizontal: 12, paddingVertical: 8, gap: 8 },
   chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, backgroundColor: '#fff', borderWidth: 1, borderColor: '#E5E7EB' },
   chipActive: { backgroundColor: '#1A6B3A', borderColor: '#1A6B3A' },

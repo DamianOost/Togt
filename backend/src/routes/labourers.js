@@ -65,6 +65,25 @@ router.get('/', async (req, res, next) => {
   }
 });
 
+// GET /labourers/profile — get own profile (labourer)
+router.get('/profile', authMiddleware, requireRole('labourer'), async (req, res, next) => {
+  try {
+    const result = await db.query(
+      `SELECT lp.*, u.name, u.email, u.phone, u.avatar_url
+       FROM labourer_profiles lp
+       JOIN users u ON lp.user_id = u.id
+       WHERE lp.user_id = $1`,
+      [req.user.id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Profile not found' });
+    }
+    res.json({ profile: result.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /labourers/:id
 router.get('/:id', async (req, res, next) => {
   try {

@@ -1,11 +1,13 @@
-import React, { useEffect } from 'react';
-import { Provider, useSelector } from 'react-redux';
+import React, { useEffect, useState } from 'react';
+import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { Provider, useSelector, useDispatch } from 'react-redux';
 import { StatusBar } from 'expo-status-bar';
 import store from './src/store/store';
 import AppNavigator from './src/navigation/AppNavigator';
 import { setTokenGetter } from './src/services/api';
+import { restoreSessionThunk } from './src/store/authSlice';
 
-// Wire up token getter after store is ready
+// Wire up token getter
 function TokenWirer() {
   useEffect(() => {
     setTokenGetter(() => store.getState().auth.accessToken);
@@ -13,32 +15,43 @@ function TokenWirer() {
   return null;
 }
 
-// Register push notifications once logged in
-// NOTE: Push notifications are NOT supported in Expo Go (SDK 53+).
-// They will work in development builds and production builds.
-function PushNotificationSetup() {
-  const auth = useSelector((s) => s.auth);
-  const user = auth?.user;
+// Restore auth session from device storage
+function SessionRestorer({ children }) {
+  const dispatch = useDispatch();
+  const { restored } = useSelector((s) => s.auth);
 
   useEffect(() => {
-    if (!user) return;
+    dispatch(restoreSessionThunk());
+  }, []);
 
-    // Push notifications don't work in Expo Go (SDK 53+)
-    // Silently skip — they'll work in dev/production builds
-    console.log('[notifications] Skipped (Expo Go — not supported)');
-    return () => {};
-  }, [user]);
+  if (!restored) {
+    return (
+      <View style={styles.splash}>
+        <ActivityIndicator size="large" color="#1A6B3A" />
+      </View>
+    );
+  }
 
-  return null;
+  return children;
 }
 
 export default function App() {
   return (
     <Provider store={store}>
       <TokenWirer />
-      <PushNotificationSetup />
       <StatusBar style="light" />
-      <AppNavigator />
+      <SessionRestorer>
+        <AppNavigator />
+      </SessionRestorer>
     </Provider>
   );
 }
+
+const styles = StyleSheet.create({
+  splash: {
+    flex: 1,
+    backgroundColor: '#F9FAFB',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+});

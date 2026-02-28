@@ -56,12 +56,20 @@ export default function DashboardScreen({ navigation }) {
                 <Text style={styles.greeting}>Hey {user?.name?.split(' ')[0]} 👷</Text>
                 <Text style={styles.phone}>{user?.phone}</Text>
               </View>
-              <TouchableOpacity
-                style={styles.profileBtn}
-                onPress={() => navigation.navigate('ProfileSetup')}
-              >
-                <Text style={styles.profileBtnText}>Edit Profile</Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TouchableOpacity
+                  style={styles.profileBtn}
+                  onPress={() => navigation.getParent()?.navigate('Profile')}
+                >
+                  <Text style={styles.profileBtnText}>Edit Profile</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.profileBtn, { backgroundColor: '#FEF2F2' }]}
+                  onPress={() => dispatch(logout())}
+                >
+                  <Text style={[styles.profileBtnText, { color: '#EF4444' }]}>Logout</Text>
+                </TouchableOpacity>
+              </View>
             </View>
 
             {/* Availability toggle */}
@@ -88,14 +96,14 @@ export default function DashboardScreen({ navigation }) {
             <View style={styles.statsRow}>
               <TouchableOpacity
                 style={styles.statCard}
-                onPress={() => navigation.navigate('JobRequests')}
+                onPress={() => navigation.getParent()?.navigate('Jobs')}
               >
                 <Text style={styles.statNum}>{pendingBookings.length}</Text>
                 <Text style={styles.statLabel}>Pending Jobs</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.statCard}
-                onPress={() => navigation.navigate('Earnings')}
+                onPress={() => navigation.getParent()?.navigate('Earnings')}
               >
                 <Text style={styles.statNum}>
                   {bookings.filter((b) => b.status === 'completed').length}
@@ -130,7 +138,7 @@ export default function DashboardScreen({ navigation }) {
               <View style={styles.section}>
                 <View style={styles.sectionRow}>
                   <Text style={styles.sectionTitle}>New Requests</Text>
-                  <TouchableOpacity onPress={() => navigation.navigate('JobRequests')}>
+                  <TouchableOpacity onPress={() => navigation.getParent()?.navigate('Jobs')}>
                     <Text style={styles.seeAll}>See all</Text>
                   </TouchableOpacity>
                 </View>
@@ -138,7 +146,7 @@ export default function DashboardScreen({ navigation }) {
                   <TouchableOpacity
                     key={b.id}
                     style={styles.bookingCard}
-                    onPress={() => navigation.navigate('JobRequests')}
+                    onPress={() => navigation.getParent()?.navigate('Jobs')}
                   >
                     <Text style={styles.bCustomer}>{b.customer_name}</Text>
                     <Text style={styles.bSkill}>{b.skill_needed} — {b.address}</Text>

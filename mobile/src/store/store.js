@@ -1,6 +1,6 @@
-const { configureStore } = require('@reduxjs/toolkit');
-const authReducer = require('./authSlice');
-const bookingReducer = require('./bookingSlice');
+import { configureStore } from '@reduxjs/toolkit';
+import authReducer from './authSlice';
+import bookingReducer from './bookingSlice';
 
 const store = configureStore({
   reducer: {
@@ -9,4 +9,4 @@ const store = configureStore({
   },
 });
 
-module.exports = store;
+export default store;

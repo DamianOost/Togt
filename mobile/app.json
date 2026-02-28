@@ -44,7 +44,8 @@
           "icon": "./assets/notification-icon.png",
           "color": "#1A6B3A"
         }
-      ]
+      ],
+      "@react-native-community/datetimepicker"
     ],
     "extra": {
       "apiUrl": "http://192.168.10.69:3002"

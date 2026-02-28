@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../config/db');
 const { authMiddleware } = require('../middleware/auth');
+const { notifyUser } = require('../services/notifications');
 
 const router = express.Router();
 
@@ -19,7 +20,7 @@ router.post('/', authMiddleware, async (req, res, next) => {
 
     // Check labourer exists and is available
     const labourerCheck = await db.query(
-      `SELECT u.id, lp.hourly_rate, lp.is_available
+      `SELECT u.id, u.name, lp.hourly_rate, lp.is_available
        FROM users u JOIN labourer_profiles lp ON u.id = lp.user_id
        WHERE u.id = $1 AND u.role = 'labourer'`,
       [labourer_id]
@@ -41,7 +42,19 @@ router.post('/', authMiddleware, async (req, res, next) => {
        scheduled_at, hours_est || null, total_amount, notes || null]
     );
 
-    res.status(201).json({ booking: result.rows[0] });
+    const booking = result.rows[0];
+
+    // Notify labourer of new booking request
+    const customerResult = await db.query('SELECT name FROM users WHERE id = $1', [req.user.id]);
+    const customerName = customerResult.rows[0]?.name || 'A customer';
+    notifyUser(
+      labourer_id,
+      '🔔 New Booking Request',
+      `${customerName} needs ${skill_needed} — tap to review`,
+      { bookingId: booking.id, screen: 'JobRequests' }
+    );
+
+    res.status(201).json({ booking });
   } catch (err) {
     next(err);
   }
@@ -95,7 +108,6 @@ router.get('/:id', authMiddleware, async (req, res, next) => {
     }
 
     const booking = result.rows[0];
-    // Only customer or labourer involved can view
     if (booking.customer_id !== req.user.id && booking.labourer_id !== req.user.id) {
       return res.status(403).json({ error: 'Access denied' });
     }
@@ -106,7 +118,7 @@ router.get('/:id', authMiddleware, async (req, res, next) => {
   }
 });
 
-// Status transition helper
+// Status transition helper — with push notifications
 async function transition(req, res, next, allowedRoles, fromStatuses, toStatus) {
   try {
     const result = await db.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
@@ -130,6 +142,33 @@ async function transition(req, res, next, allowedRoles, fromStatuses, toStatus) 
       'UPDATE bookings SET status = $1 WHERE id = $2 RETURNING *',
       [toStatus, req.params.id]
     );
+
+    // Push notifications based on transition
+    const actorName = await db.query('SELECT name FROM users WHERE id = $1', [req.user.id]);
+    const name = actorName.rows[0]?.name || 'Someone';
+
+    if (toStatus === 'accepted') {
+      notifyUser(booking.customer_id, '✅ Booking Accepted',
+        `${name} accepted your booking request!`,
+        { bookingId: booking.id, screen: 'ActiveBooking' });
+    } else if (toStatus === 'cancelled' && req.user.role === 'labourer') {
+      notifyUser(booking.customer_id, '❌ Booking Declined',
+        `${name} couldn't take this job. Try another labourer.`,
+        { bookingId: booking.id, screen: 'MyBookings' });
+    } else if (toStatus === 'cancelled' && req.user.role === 'customer') {
+      notifyUser(booking.labourer_id, '❌ Booking Cancelled',
+        `${name} cancelled the booking.`,
+        { bookingId: booking.id, screen: 'Dashboard' });
+    } else if (toStatus === 'in_progress') {
+      notifyUser(booking.customer_id, '🚀 Job Started',
+        `${name} has started the job. Track them live.`,
+        { bookingId: booking.id, screen: 'ActiveBooking' });
+    } else if (toStatus === 'completed') {
+      notifyUser(booking.customer_id, '🎉 Job Complete!',
+        `${name} marked the job as done. Please leave a rating.`,
+        { bookingId: booking.id, screen: 'Rate' });
+    }
+
     res.json({ booking: updated.rows[0] });
   } catch (err) {
     next(err);

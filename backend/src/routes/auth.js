@@ -88,6 +88,18 @@ router.post('/login', async (req, res, next) => {
   }
 });
 
+// POST /auth/push-token — save Expo push token for notifications
+router.post('/push-token', require('../middleware/auth').authMiddleware, async (req, res, next) => {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ error: 'Token required' });
+    await db.query('UPDATE users SET push_token = $1 WHERE id = $2', [token, req.user.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /auth/refresh
 router.post('/refresh', async (req, res, next) => {
   try {

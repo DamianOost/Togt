@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
-  StyleSheet, SafeAreaView, Alert, ActivityIndicator,
+  StyleSheet, SafeAreaView, Alert, ActivityIndicator, Platform,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useDispatch, useSelector } from 'react-redux';
 import { createBookingThunk } from '../../store/bookingSlice';
 import { locationService } from '../../services/locationService';
@@ -23,6 +24,10 @@ export default function BookingFormScreen({ route, navigation }) {
     notes: '',
   });
 
+  const [scheduledDate, setScheduledDate] = useState(new Date(Date.now() + 60 * 60 * 1000));
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(false);
+
   useEffect(() => {
     // Pre-fill GPS location
     locationService.getCurrentPosition().then((pos) => {
@@ -32,6 +37,36 @@ export default function BookingFormScreen({ route, navigation }) {
 
   function set(key) {
     return (val) => setForm((f) => ({ ...f, [key]: val }));
+  }
+
+  function onDateChange(event, selected) {
+    if (Platform.OS === 'android') setShowDatePicker(false);
+    if (selected) {
+      const updated = new Date(scheduledDate);
+      updated.setFullYear(selected.getFullYear(), selected.getMonth(), selected.getDate());
+      setScheduledDate(updated);
+      setForm((f) => ({ ...f, scheduled_at: updated.toISOString() }));
+      // On Android, open time picker next
+      if (Platform.OS === 'android') setTimeout(() => setShowTimePicker(true), 100);
+    }
+  }
+
+  function onTimeChange(event, selected) {
+    if (Platform.OS === 'android') setShowTimePicker(false);
+    if (selected) {
+      const updated = new Date(scheduledDate);
+      updated.setHours(selected.getHours(), selected.getMinutes(), 0, 0);
+      setScheduledDate(updated);
+      setForm((f) => ({ ...f, scheduled_at: updated.toISOString() }));
+    }
+  }
+
+  function formatDisplayDate(date) {
+    return date.toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+  }
+
+  function formatDisplayTime(date) {
+    return date.toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' });
   }
 
   const estimatedTotal = form.hours_est
@@ -85,12 +120,31 @@ export default function BookingFormScreen({ route, navigation }) {
         />
 
         <Text style={styles.label}>Scheduled Date & Time *</Text>
-        <TextInput
-          style={styles.input}
-          value={form.scheduled_at}
-          onChangeText={set('scheduled_at')}
-          placeholder="YYYY-MM-DDTHH:MM:SS"
-        />
+        <View style={styles.dateRow}>
+          <TouchableOpacity style={[styles.dateButton, { flex: 1.5 }]} onPress={() => setShowDatePicker(true)}>
+            <Text style={styles.dateButtonText}>📅 {formatDisplayDate(scheduledDate)}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.dateButton, { flex: 1 }]} onPress={() => setShowTimePicker(true)}>
+            <Text style={styles.dateButtonText}>🕐 {formatDisplayTime(scheduledDate)}</Text>
+          </TouchableOpacity>
+        </View>
+        {showDatePicker && (
+          <DateTimePicker
+            value={scheduledDate}
+            mode="date"
+            display={Platform.OS === 'ios' ? 'inline' : 'default'}
+            minimumDate={new Date()}
+            onChange={onDateChange}
+          />
+        )}
+        {showTimePicker && (
+          <DateTimePicker
+            value={scheduledDate}
+            mode="time"
+            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+            onChange={onTimeChange}
+          />
+        )}
 
         <Text style={styles.label}>Estimated Hours</Text>
         <TextInput
@@ -142,6 +196,16 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   textArea: { height: 90, textAlignVertical: 'top' },
+  dateRow: { flexDirection: 'row', gap: 8 },
+  dateButton: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
+    padding: 13,
+    alignItems: 'center',
+  },
+  dateButtonText: { fontSize: 14, color: '#374151', fontWeight: '500' },
   estimate: {
     backgroundColor: '#D1FAE5',
     borderRadius: 12,

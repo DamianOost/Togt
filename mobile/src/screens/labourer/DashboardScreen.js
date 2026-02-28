@@ -32,6 +32,19 @@ export default function DashboardScreen({ navigation }) {
   async function toggleAvailability(value) {
     setToggling(true);
     try {
+      // If going available, also update GPS location
+      if (value) {
+        try {
+          const { locationService } = require('../../services/locationService');
+          const granted = await locationService.requestPermission();
+          if (granted) {
+            const pos = await locationService.getCurrentPosition();
+            await api.put('/labourers/location', { lat: pos.lat, lng: pos.lng });
+          }
+        } catch (locErr) {
+          console.log('[location] Could not update:', locErr.message);
+        }
+      }
       await api.put('/labourers/availability', { is_available: value });
       setAvailable(value);
     } catch {

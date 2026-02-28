@@ -83,6 +83,18 @@ export default function BookingFormScreen({ route, navigation }) {
       return;
     }
 
+    // Confirm before booking
+    Alert.alert(
+      'Confirm Booking',
+      `Book ${labourer.name} for ${form.skill_needed}?\n\n📍 ${form.address}\n📅 ${formatDisplayDate(scheduledDate)} at ${formatDisplayTime(scheduledDate)}\n⏱️ ${form.hours_est || '?'} hours\n💰 ${estimatedTotal ? formatZAR(estimatedTotal) : 'TBD'}`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Confirm', onPress: submitBooking },
+      ]
+    );
+  }
+
+  async function submitBooking() {
     const result = await dispatch(createBookingThunk({
       labourer_id: labourer.id,
       ...form,
@@ -103,12 +115,17 @@ export default function BookingFormScreen({ route, navigation }) {
         {error && <Text style={styles.error}>{error}</Text>}
 
         <Text style={styles.label}>Skill Needed *</Text>
-        <TextInput
-          style={styles.input}
-          value={form.skill_needed}
-          onChangeText={set('skill_needed')}
-          placeholder="e.g. Plumbing, Painting..."
-        />
+        <View style={styles.skillChips}>
+          {(labourer.skills || ['Plumbing', 'Painting', 'Electrical', 'Building', 'Cleaning', 'Tiling', 'Garden']).map((s) => (
+            <TouchableOpacity
+              key={s}
+              style={[styles.skillChip, form.skill_needed === s && styles.skillChipActive]}
+              onPress={() => set('skill_needed')(s)}
+            >
+              <Text style={[styles.skillChipText, form.skill_needed === s && styles.skillChipTextActive]}>{s}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
 
         <Text style={styles.label}>Job Address *</Text>
         <TextInput
@@ -196,6 +213,11 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   textArea: { height: 90, textAlignVertical: 'top' },
+  skillChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  skillChip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, backgroundColor: '#fff', borderWidth: 1, borderColor: '#E5E7EB' },
+  skillChipActive: { backgroundColor: '#1A6B3A', borderColor: '#1A6B3A' },
+  skillChipText: { fontSize: 13, color: '#374151', fontWeight: '500' },
+  skillChipTextActive: { color: '#fff' },
   dateRow: { flexDirection: 'row', gap: 8 },
   dateButton: {
     backgroundColor: '#fff',

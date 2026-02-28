@@ -45,7 +45,9 @@
           "color": "#1A6B3A"
         }
       ],
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "expo-asset",
+      "expo-font"
     ],
     "extra": {
       "apiUrl": "http://192.168.10.69:3002"

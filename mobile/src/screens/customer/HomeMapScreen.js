@@ -1,7 +1,7 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet,
-  FlatList, ActivityIndicator, Alert, SafeAreaView,
+  View, Text, TouchableOpacity, StyleSheet,
+  FlatList, ActivityIndicator, Alert, SafeAreaView, RefreshControl,
 } from 'react-native';
 import MapView, { Marker } from 'react-native-maps';
 import { useSelector, useDispatch } from 'react-redux';
@@ -10,7 +10,7 @@ import { locationService } from '../../services/locationService';
 import api from '../../services/api';
 import LabourerCard from '../../components/LabourerCard';
 
-const SKILLS = ['All', 'Plumbing', 'Painting', 'Electrical', 'Building', 'Cleaning', 'Tiling', 'Garden'];
+const SKILLS = ['All', 'Plumbing', 'Painting', 'Electrical', 'Building', 'Cleaning', 'Tiling', 'Garden', 'Carpentry', 'Welding'];
 
 export default function HomeMapScreen({ navigation }) {
   const dispatch = useDispatch();
@@ -18,6 +18,7 @@ export default function HomeMapScreen({ navigation }) {
   const [location, setLocation] = useState(null);
   const [labourers, setLabourers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [selectedSkill, setSelectedSkill] = useState('All');
   const [showList, setShowList] = useState(false);
   const mapRef = useRef(null);
@@ -39,7 +40,7 @@ export default function HomeMapScreen({ navigation }) {
   async function fetchLabourers(pos, skill) {
     setLoading(true);
     try {
-      const params = { lat: pos.lat, lng: pos.lng, radius: 25 };
+      const params = { lat: pos.lat, lng: pos.lng, radius: 50 };
       if (skill && skill !== 'All') params.skill = skill;
       const res = await api.get('/labourers', { params });
       setLabourers(res.data.labourers);
@@ -50,6 +51,13 @@ export default function HomeMapScreen({ navigation }) {
     }
   }
 
+  const onRefresh = useCallback(async () => {
+    if (!location) return;
+    setRefreshing(true);
+    await fetchLabourers(location, selectedSkill);
+    setRefreshing(false);
+  }, [location, selectedSkill]);
+
   function selectSkill(skill) {
     setSelectedSkill(skill);
     if (location) fetchLabourers(location, skill);
@@ -59,10 +67,18 @@ export default function HomeMapScreen({ navigation }) {
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.greeting}>Hi {user?.name?.split(' ')[0]} 👋</Text>
-        <TouchableOpacity onPress={() => navigation.navigate('MyBookings')}>
-          <Text style={styles.bookingsLink}>My Bookings</Text>
-        </TouchableOpacity>
+        <View>
+          <Text style={styles.title}>Find a Labourer</Text>
+          <Text style={styles.greeting}>Hi {user?.name?.split(' ')[0]} 👋</Text>
+        </View>
+        <View style={styles.headerRight}>
+          <TouchableOpacity style={styles.headerBtn} onPress={onRefresh}>
+            <Text style={styles.headerBtnText}>🔄</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => navigation.navigate('MyBookings')}>
+            <Text style={styles.bookingsLink}>My Bookings</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Skill filter chips */}
@@ -84,52 +100,49 @@ export default function HomeMapScreen({ navigation }) {
         )}
       />
 
-      {/* Map */}
-      {location && (
-        <MapView
-          ref={mapRef}
-          style={styles.map}
-          initialRegion={{
-            latitude: location.lat,
-            longitude: location.lng,
-            latitudeDelta: 0.1,
-            longitudeDelta: 0.1,
-          }}
-        >
-          {/* User location */}
-          <Marker coordinate={{ latitude: location.lat, longitude: location.lng }} title="You" pinColor="blue" />
+      {/* Map or List */}
+      {!showList ? (
+        location ? (
+          <MapView
+            ref={mapRef}
+            style={styles.map}
+            initialRegion={{
+              latitude: location.lat,
+              longitude: location.lng,
+              latitudeDelta: 0.15,
+              longitudeDelta: 0.15,
+            }}
+          >
+            {/* User location */}
+            <Marker coordinate={{ latitude: location.lat, longitude: location.lng }} title="You" pinColor="blue" />
 
-          {/* Labourer markers */}
-          {labourers.map((l) =>
-            l.current_lat && l.current_lng ? (
-              <Marker
-                key={l.id}
-                coordinate={{ latitude: l.current_lat, longitude: l.current_lng }}
-                title={l.name}
-                description={(l.skills || []).join(', ')}
-                onCalloutPress={() => navigation.navigate('LabourerProfile', { labourer: l })}
-              />
-            ) : null
-          )}
-        </MapView>
-      )}
-
-      {/* Toggle list button */}
-      <TouchableOpacity style={styles.toggleBtn} onPress={() => setShowList((v) => !v)}>
-        <Text style={styles.toggleBtnText}>{showList ? 'Show Map' : `Show List (${labourers.length})`}</Text>
-      </TouchableOpacity>
-
-      {/* Labourer list */}
-      {showList && (
+            {/* Labourer markers */}
+            {labourers.map((l) =>
+              l.current_lat && l.current_lng ? (
+                <Marker
+                  key={l.id}
+                  coordinate={{ latitude: parseFloat(l.current_lat), longitude: parseFloat(l.current_lng) }}
+                  title={l.name}
+                  description={`${(l.skills || []).join(', ')} — R${l.hourly_rate}/hr`}
+                  onCalloutPress={() => navigation.navigate('LabourerProfile', { labourer: l })}
+                />
+              ) : null
+            )}
+          </MapView>
+        ) : (
+          <ActivityIndicator style={{ flex: 1 }} color="#1A6B3A" />
+        )
+      ) : (
         <View style={styles.list}>
           {loading ? (
             <ActivityIndicator color="#1A6B3A" style={{ marginTop: 20 }} />
           ) : labourers.length === 0 ? (
-            <Text style={styles.empty}>No labourers found nearby.</Text>
+            <Text style={styles.empty}>No labourers found nearby. Try expanding your search or check back later.</Text>
           ) : (
             <FlatList
               data={labourers}
               keyExtractor={(l) => l.id}
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#1A6B3A']} />}
               renderItem={({ item }) => (
                 <LabourerCard
                   labourer={item}
@@ -142,6 +155,11 @@ export default function HomeMapScreen({ navigation }) {
           )}
         </View>
       )}
+
+      {/* Toggle list/map button */}
+      <TouchableOpacity style={styles.toggleBtn} onPress={() => setShowList((v) => !v)}>
+        <Text style={styles.toggleBtnText}>{showList ? '🗺️ Show Map' : `📋 Show List (${labourers.length})`}</Text>
+      </TouchableOpacity>
     </SafeAreaView>
   );
 }
@@ -149,7 +167,11 @@ export default function HomeMapScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F9FAFB' },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12 },
-  greeting: { fontSize: 18, fontWeight: '700', color: '#111827' },
+  title: { fontSize: 20, fontWeight: '800', color: '#111827' },
+  greeting: { fontSize: 14, color: '#6B7280', marginTop: 2 },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  headerBtn: { padding: 6 },
+  headerBtnText: { fontSize: 20 },
   bookingsLink: { color: '#1A6B3A', fontWeight: '600', fontSize: 14 },
   chips: { paddingHorizontal: 12, paddingVertical: 8, gap: 8 },
   chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, backgroundColor: '#fff', borderWidth: 1, borderColor: '#E5E7EB' },
@@ -173,5 +195,5 @@ const styles = StyleSheet.create({
   },
   toggleBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
   list: { flex: 1 },
-  empty: { textAlign: 'center', color: '#9CA3AF', marginTop: 40, fontSize: 15 },
+  empty: { textAlign: 'center', color: '#9CA3AF', marginTop: 40, fontSize: 15, paddingHorizontal: 32 },
 });

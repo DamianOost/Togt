@@ -75,7 +75,7 @@ export default function HomeMapScreen({ navigation }) {
           <TouchableOpacity style={styles.headerBtn} onPress={onRefresh}>
             <Text style={styles.headerBtnText}>🔄</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => navigation.navigate('MyBookings')}>
+          <TouchableOpacity onPress={() => navigation.getParent()?.navigate('Bookings')}>
             <Text style={styles.bookingsLink}>My Bookings</Text>
           </TouchableOpacity>
         </View>

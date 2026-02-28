@@ -23,27 +23,10 @@ function PushNotificationSetup() {
   useEffect(() => {
     if (!user) return;
 
-    let cleanup = () => {};
-
-    async function setup() {
-      try {
-        const { registerForPushNotifications, setupNotificationListeners } =
-          await import('./src/services/notificationService');
-
-        await registerForPushNotifications();
-
-        cleanup = setupNotificationListeners((data) => {
-          // Navigation on tap will be wired up with development builds
-          console.log('[notifications] Tapped:', data);
-        });
-      } catch (e) {
-        // Expected in Expo Go — push notifications not available
-        console.log('[notifications] Not available (Expo Go):', e.message);
-      }
-    }
-
-    setup();
-    return () => cleanup();
+    // Push notifications don't work in Expo Go (SDK 53+)
+    // Silently skip — they'll work in dev/production builds
+    console.log('[notifications] Skipped (Expo Go — not supported)');
+    return () => {};
   }, [user]);
 
   return null;

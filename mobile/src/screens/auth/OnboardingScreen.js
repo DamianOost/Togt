@@ -1,108 +1,250 @@
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, SafeAreaView, Image,
+  View, Text, TouchableOpacity, StyleSheet, Dimensions,
+  ScrollView, StatusBar, SafeAreaView,
 } from 'react-native';
+import { colors, typography, spacing, borderRadius } from '../../theme';
+
+const { width } = Dimensions.get('window');
+
+const SLIDES = [
+  {
+    icon: '🔍',
+    title: 'Find skilled workers near you',
+    subtitle: 'Browse hundreds of verified, rated labourers in your area — plumbers, painters, electricians and more.',
+    color: colors.accent,
+  },
+  {
+    icon: '⚡',
+    title: 'Book in 60 seconds',
+    subtitle: 'Pick a skill, choose a time, confirm. Your labourer gets notified instantly and heads your way.',
+    color: colors.info,
+  },
+  {
+    icon: '🛡️',
+    title: 'Safe, rated & insured',
+    subtitle: 'Every labourer is background-checked and rated by real customers. Your satisfaction is guaranteed.',
+    color: colors.success,
+  },
+];
 
 export default function OnboardingScreen({ navigation }) {
+  const scrollRef = useRef(null);
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  function goNext() {
+    if (activeIndex < SLIDES.length - 1) {
+      const next = activeIndex + 1;
+      scrollRef.current?.scrollTo({ x: next * width, animated: true });
+      setActiveIndex(next);
+    } else {
+      navigation.navigate('Login');
+    }
+  }
+
+  function handleScroll(e) {
+    const idx = Math.round(e.nativeEvent.contentOffset.x / width);
+    setActiveIndex(idx);
+  }
+
+  const isLast = activeIndex === SLIDES.length - 1;
+
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.hero}>
-        <Text style={styles.appName}>Togt</Text>
-        <Text style={styles.tagline}>Connecting skilled labourers with people who need them — across South Africa.</Text>
-      </View>
-
-      <View style={styles.cards}>
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor={colors.primary} />
+      <SafeAreaView style={styles.safeArea}>
+        {/* Skip button */}
         <TouchableOpacity
-          style={[styles.card, styles.cardGreen]}
-          onPress={() => navigation.navigate('Register', { role: 'customer' })}
+          style={styles.skipBtn}
+          onPress={() => navigation.navigate('Login')}
         >
-          <Text style={styles.cardIcon}>🔨</Text>
-          <Text style={styles.cardTitle}>I Need a Labourer</Text>
-          <Text style={styles.cardSub}>Find skilled workers near you</Text>
+          <Text style={styles.skipText}>Skip</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.card, styles.cardDark]}
-          onPress={() => navigation.navigate('Register', { role: 'labourer' })}
+        {/* Slides */}
+        <ScrollView
+          ref={scrollRef}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          onMomentumScrollEnd={handleScroll}
+          style={styles.slides}
         >
-          <Text style={styles.cardIcon}>💼</Text>
-          <Text style={styles.cardTitle}>I Am a Labourer</Text>
-          <Text style={styles.cardSub}>Find jobs and earn money</Text>
-        </TouchableOpacity>
-      </View>
+          {SLIDES.map((slide, i) => (
+            <View key={i} style={styles.slide}>
+              <View style={[styles.iconCircle, { backgroundColor: slide.color + '22' }]}>
+                <Text style={styles.icon}>{slide.icon}</Text>
+              </View>
+              <Text style={styles.slideTitle}>{slide.title}</Text>
+              <Text style={styles.slideSubtitle}>{slide.subtitle}</Text>
+            </View>
+          ))}
+        </ScrollView>
 
-      <TouchableOpacity style={styles.loginLink} onPress={() => navigation.navigate('Login')}>
-        <Text style={styles.loginText}>Already have an account? <Text style={styles.loginBold}>Log in</Text></Text>
-      </TouchableOpacity>
-    </SafeAreaView>
+        {/* Dots */}
+        <View style={styles.dots}>
+          {SLIDES.map((_, i) => (
+            <View
+              key={i}
+              style={[styles.dot, i === activeIndex && styles.dotActive]}
+            />
+          ))}
+        </View>
+
+        {/* CTA button */}
+        <TouchableOpacity style={styles.ctaBtn} onPress={goNext}>
+          <Text style={styles.ctaBtnText}>
+            {isLast ? 'Get Started' : 'Next'}
+          </Text>
+        </TouchableOpacity>
+
+        {/* Login link */}
+        <View style={styles.loginRow}>
+          <Text style={styles.loginPrompt}>Already have an account? </Text>
+          <TouchableOpacity onPress={() => navigation.navigate('Login')}>
+            <Text style={styles.loginLink}>Log in</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Sign up as labourer */}
+        <View style={styles.roleRow}>
+          <TouchableOpacity
+            style={styles.roleBtn}
+            onPress={() => navigation.navigate('Register', { role: 'customer' })}
+          >
+            <Text style={styles.roleBtnText}>🔨 Need a labourer</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.roleBtn, styles.roleBtnDark]}
+            onPress={() => navigation.navigate('Register', { role: 'labourer' })}
+          >
+            <Text style={styles.roleBtnText}>💼 I'm a labourer</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F9FAFB',
-    paddingHorizontal: 24,
+    backgroundColor: colors.primary,
   },
-  hero: {
+  safeArea: {
     flex: 1,
+    alignItems: 'center',
+  },
+  skipBtn: {
+    alignSelf: 'flex-end',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  skipText: {
+    color: colors.textMuted,
+    fontSize: typography.sm,
+    fontWeight: '600',
+  },
+  slides: {
+    flex: 1,
+    width,
+  },
+  slide: {
+    width,
+    alignItems: 'center',
     justifyContent: 'center',
-    alignItems: 'center',
-    paddingTop: 40,
+    paddingHorizontal: spacing.xl,
+    paddingBottom: spacing.xl,
   },
-  appName: {
+  iconCircle: {
+    width: 120,
+    height: 120,
+    borderRadius: borderRadius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.xl,
+  },
+  icon: {
     fontSize: 56,
-    fontWeight: '900',
-    color: '#1A6B3A',
-    letterSpacing: -1,
   },
-  tagline: {
-    fontSize: 16,
-    color: '#6B7280',
+  slideTitle: {
+    fontSize: typography.xl,
+    fontWeight: '800',
+    color: colors.textInverse,
     textAlign: 'center',
-    marginTop: 12,
+    marginBottom: spacing.md,
+    lineHeight: 32,
+  },
+  slideSubtitle: {
+    fontSize: typography.md,
+    color: colors.textMuted,
+    textAlign: 'center',
     lineHeight: 24,
-    maxWidth: 280,
   },
-  cards: {
-    gap: 16,
-    marginBottom: 32,
+  dots: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginBottom: spacing.lg,
   },
-  card: {
-    borderRadius: 16,
-    padding: 24,
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: borderRadius.full,
+    backgroundColor: colors.borderDark,
+  },
+  dotActive: {
+    width: 24,
+    backgroundColor: colors.accent,
+  },
+  ctaBtn: {
+    backgroundColor: colors.accent,
+    width: width - spacing.xl * 2,
+    borderRadius: borderRadius.lg,
+    paddingVertical: spacing.md + 2,
     alignItems: 'center',
+    marginBottom: spacing.md,
   },
-  cardGreen: {
-    backgroundColor: '#1A6B3A',
+  ctaBtnText: {
+    color: colors.primary,
+    fontSize: typography.lg,
+    fontWeight: '800',
   },
-  cardDark: {
-    backgroundColor: '#1F2937',
+  loginRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.lg,
   },
-  cardIcon: {
-    fontSize: 40,
-    marginBottom: 8,
-  },
-  cardTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#fff',
-    marginBottom: 4,
-  },
-  cardSub: {
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.75)',
+  loginPrompt: {
+    color: colors.textMuted,
+    fontSize: typography.sm,
   },
   loginLink: {
+    color: colors.accent,
+    fontSize: typography.sm,
+    fontWeight: '700',
+  },
+  roleRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.lg,
+  },
+  roleBtn: {
+    flex: 1,
+    backgroundColor: colors.primaryLight,
+    borderRadius: borderRadius.md,
+    paddingVertical: spacing.sm + 4,
     alignItems: 'center',
-    paddingBottom: 32,
+    borderWidth: 1,
+    borderColor: colors.borderDark,
   },
-  loginText: {
-    fontSize: 15,
-    color: '#6B7280',
+  roleBtnDark: {
+    backgroundColor: '#0d0d1a',
   },
-  loginBold: {
-    color: '#1A6B3A',
+  roleBtnText: {
+    color: colors.textInverse,
+    fontSize: typography.sm,
     fontWeight: '600',
   },
 });

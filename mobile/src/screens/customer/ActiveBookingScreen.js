@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
-  View, Text, StyleSheet, ActivityIndicator, SafeAreaView, TouchableOpacity, Alert,
+  View, Text, StyleSheet, ActivityIndicator, TouchableOpacity,
+  Alert, ScrollView, StatusBar, Linking,
 } from 'react-native';
 import MapView, { Marker } from 'react-native-maps';
 import { useSelector, useDispatch } from 'react-redux';
@@ -9,6 +10,72 @@ import { socketService } from '../../services/socketService';
 import { bookingService } from '../../services/bookingService';
 import BookingStatusBadge from '../../components/BookingStatusBadge';
 import { formatZAR, formatDateTime } from '../../utils/formatters';
+import { colors, typography, spacing, borderRadius, shadows, darkMapStyle } from '../../theme';
+
+const STATUS_STEPS = [
+  { key: 'pending', label: 'Requested', icon: '📋' },
+  { key: 'accepted', label: 'Accepted', icon: '✅' },
+  { key: 'in_progress', label: 'Working', icon: '🔧' },
+  { key: 'completed', label: 'Done', icon: '🎉' },
+];
+
+function StatusTimeline({ currentStatus }) {
+  const currentIdx = STATUS_STEPS.findIndex((s) => s.key === currentStatus);
+  return (
+    <View style={timelineStyles.container}>
+      {STATUS_STEPS.map((step, i) => {
+        const done = i < currentIdx;
+        const active = i === currentIdx;
+        return (
+          <View key={step.key} style={timelineStyles.step}>
+            <View style={[
+              timelineStyles.dot,
+              done && timelineStyles.dotDone,
+              active && timelineStyles.dotActive,
+            ]}>
+              <Text style={timelineStyles.dotIcon}>{done ? '✓' : step.icon}</Text>
+            </View>
+            {i < STATUS_STEPS.length - 1 && (
+              <View style={[timelineStyles.line, done && timelineStyles.lineDone]} />
+            )}
+            <Text style={[timelineStyles.label, active && timelineStyles.labelActive]}>
+              {step.label}
+            </Text>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+const timelineStyles = StyleSheet.create({
+  container: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing.sm },
+  step: { alignItems: 'center', flex: 1, position: 'relative' },
+  dot: {
+    width: 32,
+    height: 32,
+    borderRadius: borderRadius.full,
+    backgroundColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  dotDone: { backgroundColor: colors.success },
+  dotActive: { backgroundColor: colors.accent, ...shadows.card },
+  dotIcon: { fontSize: 12 },
+  line: {
+    position: 'absolute',
+    top: 15,
+    left: '60%',
+    right: '-60%',
+    height: 2,
+    backgroundColor: colors.border,
+    zIndex: -1,
+  },
+  lineDone: { backgroundColor: colors.success },
+  label: { fontSize: 9, color: colors.textMuted, textAlign: 'center' },
+  labelActive: { color: colors.accent, fontWeight: '700', fontSize: 10 },
+});
 
 export default function ActiveBookingScreen({ route, navigation }) {
   const { bookingId } = route.params;
@@ -21,16 +88,13 @@ export default function ActiveBookingScreen({ route, navigation }) {
 
   useEffect(() => {
     loadBooking();
-    // Connect socket and listen for labourer location
     socketService.connect(accessToken);
     socketService.joinBooking(bookingId);
     socketService.onLocationUpdate((data) => {
       dispatch(updateLabourerLocation({ lat: data.lat, lng: data.lng }));
     });
 
-    // Poll booking status every 15s
     const interval = setInterval(loadBooking, 15000);
-
     return () => {
       socketService.offLocationUpdate();
       clearInterval(interval);
@@ -62,8 +126,20 @@ export default function ActiveBookingScreen({ route, navigation }) {
     ]);
   }
 
+  function callLabourer() {
+    if (booking?.labourer_phone) {
+      Linking.openURL(`tel:${booking.labourer_phone}`);
+    } else {
+      Alert.alert('Contact', 'Labourer phone not available yet.');
+    }
+  }
+
   if (loading || !booking) {
-    return <ActivityIndicator style={{ flex: 1 }} color="#1A6B3A" />;
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator color={colors.accent} size="large" />
+      </View>
+    );
   }
 
   const mapCenter = labourerLocation || {
@@ -73,100 +149,231 @@ export default function ActiveBookingScreen({ route, navigation }) {
 
   const isCompleted = booking.status === 'completed';
   const isCancellable = ['pending', 'accepted'].includes(booking.status);
+  const isPaid = booking.payment_status === 'paid';
 
   return (
-    <SafeAreaView style={styles.container}>
-      <MapView
-        style={styles.map}
-        region={{
-          latitude: mapCenter.lat,
-          longitude: mapCenter.lng,
-          latitudeDelta: 0.05,
-          longitudeDelta: 0.05,
-        }}
-      >
-        {/* Job location */}
-        <Marker
-          coordinate={{ latitude: booking.location_lat, longitude: booking.location_lng }}
-          title="Job Location"
-          pinColor="red"
-        />
-        {/* Labourer live location */}
-        {labourerLocation && (
-          <Marker
-            coordinate={{ latitude: labourerLocation.lat, longitude: labourerLocation.lng }}
-            title={booking.labourer_name}
-            pinColor="green"
-          />
-        )}
-      </MapView>
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" />
+
+      {mapCenter?.lat && mapCenter?.lng ? (
+        <MapView
+          style={styles.map}
+          customMapStyle={darkMapStyle}
+          region={{
+            latitude: parseFloat(mapCenter.lat),
+            longitude: parseFloat(mapCenter.lng),
+            latitudeDelta: 0.05,
+            longitudeDelta: 0.05,
+          }}
+        >
+          {booking.location_lat && (
+            <Marker
+              coordinate={{ latitude: parseFloat(booking.location_lat), longitude: parseFloat(booking.location_lng) }}
+              title="Job Location"
+            >
+              <View>
+                <Text style={{ fontSize: 24 }}>📍</Text>
+              </View>
+            </Marker>
+          )}
+          {labourerLocation && (
+            <Marker
+              coordinate={{ latitude: labourerLocation.lat, longitude: labourerLocation.lng }}
+              title={booking.labourer_name}
+            >
+              <View style={styles.labourerMarker}>
+                <Text style={styles.labourerMarkerText}>👷</Text>
+              </View>
+            </Marker>
+          )}
+        </MapView>
+      ) : (
+        <View style={styles.mapPlaceholder}>
+          <Text style={styles.mapPlaceholderText}>🗺️ Map loading...</Text>
+        </View>
+      )}
 
       <View style={styles.card}>
-        <View style={styles.row}>
-          <Text style={styles.labourerName}>{booking.labourer_name}</Text>
-          <BookingStatusBadge status={booking.status} />
-        </View>
+        <ScrollView showsVerticalScrollIndicator={false}>
+          {/* Labourer info */}
+          <View style={styles.labourerHeader}>
+            <View style={styles.labourerAvatar}>
+              <Text style={styles.labourerAvatarText}>{booking.labourer_name?.[0] || 'L'}</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.labourerName}>{booking.labourer_name}</Text>
+              <Text style={styles.jobSkill}>{booking.skill_needed}</Text>
+              <BookingStatusBadge status={booking.status} />
+            </View>
+            <TouchableOpacity style={styles.callBtn} onPress={callLabourer}>
+              <Text style={styles.callBtnText}>📞</Text>
+            </TouchableOpacity>
+          </View>
 
-        <Text style={styles.skill}>{booking.skill_needed}</Text>
-        <Text style={styles.address}>{booking.address}</Text>
-        <Text style={styles.time}>{formatDateTime(booking.scheduled_at)}</Text>
+          {/* Status timeline */}
+          <StatusTimeline currentStatus={booking.status} />
 
-        {booking.total_amount && (
-          <Text style={styles.amount}>{formatZAR(booking.total_amount)} estimated</Text>
-        )}
+          {/* Details */}
+          <View style={styles.detailsRow}>
+            <View style={styles.detailChip}>
+              <Text style={styles.detailChipIcon}>📅</Text>
+              <Text style={styles.detailChipText}>{formatDateTime(booking.scheduled_at)}</Text>
+            </View>
+            {booking.total_amount && (
+              <View style={[styles.detailChip, styles.detailChipGold]}>
+                <Text style={styles.detailChipIcon}>💰</Text>
+                <Text style={[styles.detailChipText, { color: colors.accentDark, fontWeight: '700' }]}>
+                  {formatZAR(booking.total_amount)}
+                </Text>
+              </View>
+            )}
+          </View>
 
-        {isCompleted && (
-          <TouchableOpacity
-            style={styles.payBtn}
-            onPress={() => navigation.navigate('Payment', { booking })}
-          >
-            <Text style={styles.payBtnText}>Proceed to Payment</Text>
-          </TouchableOpacity>
-        )}
+          {booking.address && (
+            <View style={styles.addressRow}>
+              <Text style={styles.addressIcon}>📍</Text>
+              <Text style={styles.addressText}>{booking.address}</Text>
+            </View>
+          )}
 
-        {isCancellable && (
-          <TouchableOpacity style={styles.cancelBtn} onPress={handleCancel}>
-            <Text style={styles.cancelBtnText}>Cancel Booking</Text>
-          </TouchableOpacity>
-        )}
+          {/* Actions */}
+          <View style={styles.actions}>
+            {isCompleted && !isPaid && (
+              <TouchableOpacity
+                style={styles.payBtn}
+                onPress={() => navigation.navigate('Payment', { booking })}
+              >
+                <Text style={styles.payBtnText}>💳  Proceed to Payment</Text>
+              </TouchableOpacity>
+            )}
 
-        {isCompleted && booking.payment_status === 'paid' && (
-          <TouchableOpacity
-            style={styles.rateBtn}
-            onPress={() => navigation.navigate('Rate', { booking })}
-          >
-            <Text style={styles.rateBtnText}>Rate {booking.labourer_name.split(' ')[0]}</Text>
-          </TouchableOpacity>
-        )}
+            {isCompleted && isPaid && (
+              <TouchableOpacity
+                style={styles.rateBtn}
+                onPress={() => navigation.navigate('Rate', { booking })}
+              >
+                <Text style={styles.rateBtnText}>⭐  Rate {booking.labourer_name?.split(' ')[0]}</Text>
+              </TouchableOpacity>
+            )}
+
+            {isCancellable && (
+              <TouchableOpacity style={styles.cancelBtn} onPress={handleCancel}>
+                <Text style={styles.cancelBtnText}>Cancel Booking</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </ScrollView>
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1, backgroundColor: colors.background },
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   map: { flex: 1 },
+  mapPlaceholder: {
+    flex: 1,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mapPlaceholderText: { color: colors.textMuted, fontSize: typography.md },
+  labourerMarker: {
+    backgroundColor: colors.accent,
+    borderRadius: borderRadius.full,
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  labourerMarkerText: { fontSize: 20 },
   card: {
     backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 8,
+    borderTopLeftRadius: borderRadius.lg,
+    borderTopRightRadius: borderRadius.lg,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
+    maxHeight: '55%',
+    ...shadows.upward,
   },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  labourerName: { fontSize: 18, fontWeight: '800', color: '#111827' },
-  skill: { fontSize: 14, color: '#4B5563', marginBottom: 4 },
-  address: { fontSize: 13, color: '#6B7280', marginBottom: 4 },
-  time: { fontSize: 13, color: '#6B7280', marginBottom: 8 },
-  amount: { fontSize: 16, fontWeight: '700', color: '#1A6B3A', marginBottom: 12 },
-  payBtn: { backgroundColor: '#1A6B3A', borderRadius: 12, padding: 14, alignItems: 'center', marginBottom: 8 },
-  payBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  cancelBtn: { borderWidth: 1, borderColor: '#EF4444', borderRadius: 12, padding: 12, alignItems: 'center' },
-  cancelBtnText: { color: '#EF4444', fontWeight: '600' },
-  rateBtn: { backgroundColor: '#F59E0B', borderRadius: 12, padding: 14, alignItems: 'center', marginBottom: 8 },
-  rateBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  labourerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  labourerAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: borderRadius.full,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  labourerAvatarText: { color: colors.primary, fontSize: typography.xl, fontWeight: '800' },
+  labourerName: { fontSize: typography.md, fontWeight: '800', color: colors.textPrimary, marginBottom: 2 },
+  jobSkill: { fontSize: typography.sm, color: colors.textMuted, marginBottom: 4 },
+  callBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: borderRadius.full,
+    backgroundColor: colors.successLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  callBtnText: { fontSize: 22 },
+  detailsRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.sm, flexWrap: 'wrap' },
+  detailChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#f3f4f6',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: borderRadius.full,
+  },
+  detailChipGold: { backgroundColor: colors.accentLight },
+  detailChipIcon: { fontSize: 12 },
+  detailChipText: { fontSize: typography.xs, color: colors.textSecondary, fontWeight: '500' },
+  addressRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.xs,
+    marginBottom: spacing.md,
+  },
+  addressIcon: { fontSize: 14 },
+  addressText: { flex: 1, fontSize: typography.sm, color: colors.textMuted, lineHeight: 20 },
+  actions: { paddingBottom: spacing.lg, gap: spacing.sm },
+  payBtn: {
+    backgroundColor: colors.accent,
+    borderRadius: borderRadius.lg,
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+    ...shadows.card,
+  },
+  payBtnText: { color: colors.primary, fontWeight: '800', fontSize: typography.lg },
+  rateBtn: {
+    backgroundColor: colors.primary,
+    borderRadius: borderRadius.lg,
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+    ...shadows.card,
+  },
+  rateBtnText: { color: colors.accent, fontWeight: '800', fontSize: typography.md },
+  cancelBtn: {
+    borderWidth: 1.5,
+    borderColor: colors.danger,
+    borderRadius: borderRadius.md,
+    paddingVertical: spacing.sm + 4,
+    alignItems: 'center',
+  },
+  cancelBtnText: { color: colors.danger, fontWeight: '700' },
 });

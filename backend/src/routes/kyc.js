@@ -115,23 +115,46 @@ router.post('/verify-id', authMiddleware, async (req, res, next) => {
       };
     }
 
-    // Upsert KYC record
+    // Upsert KYC record (use INSERT ... ON CONFLICT (user_id) ... once unique constraint exists,
+    // or use a manual check-then-insert approach)
     const status = result.verified ? 'verified' : 'failed';
 
-    await db.query(
-      `INSERT INTO kyc_verifications
-         (user_id, id_number, status, smile_job_id, verified_name, verified_at)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT DO NOTHING`,
-      [
-        req.user.id,
-        idNumber,
-        status,
-        result.smile_job_id || null,
-        result.verified ? result.name : null,
-        result.verified ? new Date() : null,
-      ]
+    // Check if a record already exists for this user
+    const existing = await db.query(
+      'SELECT id FROM kyc_verifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1',
+      [req.user.id]
     );
+
+    if (existing.rows.length > 0) {
+      // Update the existing record
+      await db.query(
+        `UPDATE kyc_verifications
+         SET id_number = $1, status = $2, smile_job_id = $3, verified_name = $4, verified_at = $5
+         WHERE id = $6`,
+        [
+          idNumber,
+          status,
+          result.smile_job_id || null,
+          result.verified ? result.name : null,
+          result.verified ? new Date() : null,
+          existing.rows[0].id,
+        ]
+      );
+    } else {
+      await db.query(
+        `INSERT INTO kyc_verifications
+           (user_id, id_number, status, smile_job_id, verified_name, verified_at)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          req.user.id,
+          idNumber,
+          status,
+          result.smile_job_id || null,
+          result.verified ? result.name : null,
+          result.verified ? new Date() : null,
+        ]
+      );
+    }
 
     // Update user kyc_status
     if (result.verified) {

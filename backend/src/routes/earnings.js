@@ -26,7 +26,7 @@ router.get('/', authMiddleware, requireRole('labourer'), async (req, res, next) 
     // Daily breakdown for the last 30 days (for charting)
     const dailyResult = await db.query(
       `SELECT
-         DATE(b.completed_at) AS date,
+         TO_CHAR(DATE(b.completed_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS date,
          COUNT(*)             AS booking_count,
          SUM(b.total_amount)  AS amount
        FROM bookings b
@@ -34,7 +34,7 @@ router.get('/', authMiddleware, requireRole('labourer'), async (req, res, next) 
          AND b.status = 'completed'
          AND b.total_amount IS NOT NULL
          AND b.completed_at >= NOW() - INTERVAL '30 days'
-       GROUP BY DATE(b.completed_at)
+       GROUP BY TO_CHAR(DATE(b.completed_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD')
        ORDER BY date ASC`,
       [userId]
     );

@@ -16,6 +16,7 @@ export default function ProfileSetupScreen({ navigation }) {
   const [skills, setSkills] = useState([]);
   const [hourlyRate, setHourlyRate] = useState('');
   const [bio, setBio] = useState('');
+  const [emergencyContact, setEmergencyContact] = useState('');
   const [idNumber, setIdNumber] = useState('');
   const [avatarUri, setAvatarUri] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -29,6 +30,7 @@ export default function ProfileSetupScreen({ navigation }) {
         setSkills(p.skills || []);
         setHourlyRate(String(p.hourly_rate || ''));
         setBio(p.bio || '');
+        setEmergencyContact(p.emergency_contact || '');
         setIdNumber(p.id_number || '');
       } finally {
         setLoading(false);
@@ -71,6 +73,7 @@ export default function ProfileSetupScreen({ navigation }) {
         skills,
         hourly_rate: parseFloat(hourlyRate),
         bio: bio.trim() || undefined,
+        emergency_contact: emergencyContact.trim() || undefined,
         id_number: idNumber.trim() || undefined,
       });
 
@@ -156,6 +159,16 @@ export default function ProfileSetupScreen({ navigation }) {
           placeholder="For identity verification"
           keyboardType="number-pad"
           maxLength={13}
+        />
+
+        <Text style={styles.label}>Emergency Contact (optional)</Text>
+        <TextInput
+          style={styles.input}
+          value={emergencyContact}
+          onChangeText={setEmergencyContact}
+          placeholder="e.g. 082 123 4567"
+          placeholderTextColor="#6b7280"
+          keyboardType="phone-pad"
         />
 
         <TouchableOpacity style={styles.saveBtn} onPress={handleSave} disabled={saving}>

@@ -64,6 +64,28 @@ router.get('/my', authMiddleware, requireRole('labourer'), async (req, res, next
   }
 });
 
+// GET /api/services/:id — get a single service listing
+router.get('/:id', async (req, res, next) => {
+  try {
+    const result = await db.query(
+      `SELECT s.*,
+              u.name AS labourer_name, u.avatar_url AS labourer_avatar,
+              lp.rating_avg, lp.rating_count, lp.is_available
+       FROM labourer_services s
+       JOIN users u ON s.labourer_id = u.id
+       JOIN labourer_profiles lp ON s.labourer_id = lp.user_id
+       WHERE s.id = $1`,
+      [req.params.id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Service not found' });
+    }
+    res.json({ service: result.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/services — create service listing (labourer only)
 router.post('/', authMiddleware, requireRole('labourer'), async (req, res, next) => {
   try {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity,
+  View, Text, StyleSheet, ScrollView, TextInput, Modal, TouchableOpacity,
   ActivityIndicator, Alert, StatusBar,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -118,21 +118,19 @@ export default function ScopeConfirmScreen({ route, navigation }) {
     }
   }
 
-  async function handleRequestChange() {
-    Alert.prompt(
-      '📝 Request Scope Change',
-      'Describe what needs to change:',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Send Request',
-          onPress: (text) => {
-            if (!text?.trim()) return;
-            navigation.navigate('Chat', {
-              bookingId,
-              otherPartyName: isCustomer ? booking?.labourer_name : booking?.customer_name,
-              bookingStatus: booking?.status,
-              prefillMessage: `📝 Scope Change Request: ${text.trim()}`,
+  function handleRequestChange() {
+    setChangeText('');
+    setChangeModal(true);
+  }
+
+  function submitScopeChange() {
+    if (!changeText.trim()) return;
+    setChangeModal(false);
+    navigation.navigate('Chat', {
+      bookingId,
+      otherPartyName: isCustomer ? booking?.labourer_name : booking?.customer_name,
+      bookingStatus: booking?.status,
+      prefillMessage: `📝 Scope Change Request: ${changeText.trim()}`,
             });
           },
         },

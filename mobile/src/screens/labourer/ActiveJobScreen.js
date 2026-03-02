@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ActivityIndicator,
-  Alert, ScrollView, StatusBar, Linking, Share, Animated,
+  Alert, ScrollView, StatusBar, Linking, Share, Animated, TextInput, Modal,
 } from 'react-native';
 import MapView, { Marker } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -249,7 +249,24 @@ export default function ActiveJobScreen({ route, navigation }) {
   }
 
   function handleChangeOrder() {
-    // Use Alert.prompt for a quick input on iOS; on Android fall back to chat
+    setChangeOrderText('');
+    setChangeOrderModal(true);
+  }
+
+  async function submitChangeOrder() {
+    if (!changeOrderText.trim()) return;
+    try {
+      await api.post(`/api/bookings/${bookingId}/change-order`, {
+        description: changeOrderText.trim(),
+      });
+      setChangeOrderModal(false);
+      Alert.alert('✅ Sent', 'Change request sent to the customer.');
+    } catch (err) {
+      Alert.alert('Error', err.response?.data?.error || 'Could not send request.');
+    }
+  }
+
+  function _unused_oldPrompt() {
     Alert.prompt(
       '📝 Request Extra Work',
       'Describe what additional work is needed:',
@@ -259,15 +276,6 @@ export default function ActiveJobScreen({ route, navigation }) {
           text: 'Send to Customer',
           onPress: async (text) => {
             if (!text?.trim()) return;
-            try {
-              await api.post(`/api/bookings/${bookingId}/change-order`, {
-                description: text.trim(),
-              });
-              Alert.alert('✅ Sent', 'Change request sent to the customer.');
-            } catch (err) {
-              Alert.alert('Error', err.response?.data?.error || 'Could not send request.');
-            }
-          },
         },
       ],
       'plain-text'

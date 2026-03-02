@@ -158,7 +158,22 @@ router.put('/avatar', authMiddleware, requireRole('labourer'), async (req, res, 
   }
 });
 
-// PUT /labourers/availability
+// PUT/PATCH /labourers/availability
+router.patch('/availability', authMiddleware, requireRole('labourer'), async (req, res, next) => {
+  try {
+    const { is_available } = req.body;
+    if (typeof is_available !== 'boolean') {
+      return res.status(400).json({ error: 'is_available must be boolean' });
+    }
+    const result = await db.query(
+      'UPDATE labourer_profiles SET is_available = $1 WHERE user_id = $2 RETURNING *',
+      [is_available, req.user.id]
+    );
+    res.json({ profile: result.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
 router.put('/availability', authMiddleware, requireRole('labourer'), async (req, res, next) => {
   try {
     const { is_available } = req.body;
@@ -176,7 +191,22 @@ router.put('/availability', authMiddleware, requireRole('labourer'), async (req,
   }
 });
 
-// PUT /labourers/location
+// PUT/PATCH /labourers/location
+router.patch('/location', authMiddleware, requireRole('labourer'), async (req, res, next) => {
+  try {
+    const { lat, lng } = req.body;
+    if (lat == null || lng == null) {
+      return res.status(400).json({ error: 'lat and lng are required' });
+    }
+    await db.query(
+      'UPDATE labourer_profiles SET current_lat = $1, current_lng = $2 WHERE user_id = $3',
+      [lat, lng, req.user.id]
+    );
+    res.json({ updated: true });
+  } catch (err) {
+    next(err);
+  }
+});
 router.put('/location', authMiddleware, requireRole('labourer'), async (req, res, next) => {
   try {
     const { lat, lng } = req.body;

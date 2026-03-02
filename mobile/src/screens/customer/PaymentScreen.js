@@ -1,101 +1,257 @@
 import React, { useEffect, useState } from 'react';
 import {
-  View, Text, StyleSheet, ActivityIndicator, SafeAreaView, Alert,
+  View,
+  Text,
+  StyleSheet,
+  SafeAreaView,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
-import { WebView } from 'react-native-webview';
 import api from '../../services/api';
 import { formatZAR } from '../../utils/formatters';
+import { colors, typography, spacing, borderRadius, shadows } from '../../theme';
 
 export default function PaymentScreen({ route, navigation }) {
   const { booking } = route.params;
-  const [checkoutData, setCheckoutData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [configured, setConfigured] = useState(null); // null = loading
+  const [marking, setMarking] = useState(false);
 
   useEffect(() => {
-    async function initPayment() {
-      try {
-        const res = await api.post('/payments/initiate', { booking_id: booking.id });
-        setCheckoutData(res.data);
-      } catch (err) {
-        Alert.alert('Payment Error', err.response?.data?.error || 'Could not initiate payment.');
-        navigation.goBack();
-      } finally {
-        setLoading(false);
-      }
-    }
-    initPayment();
+    checkPaymentConfig();
   }, []);
 
-  function handleNavigationChange(navState) {
-    // Peach Payments redirects to a success/failure URL
-    const url = navState.url;
-    if (url.includes('result=success') || url.includes('paymentStatus=COMPLETED')) {
-      Alert.alert('Payment Successful', 'Your payment has been processed!', [
-        {
-          text: 'OK',
-          onPress: () =>
-            navigation.replace('Rate', { booking }),
-        },
-      ]);
-    } else if (url.includes('result=error') || url.includes('paymentStatus=FAILED')) {
-      Alert.alert('Payment Failed', 'Your payment could not be processed. Please try again.', [
-        { text: 'OK', onPress: () => navigation.goBack() },
-      ]);
+  async function checkPaymentConfig() {
+    try {
+      const res = await api.post('/api/payments/initiate', { booking_id: booking.id });
+      // If we get a checkout URL back, Peach is configured
+      if (res.data?.checkoutUrl) {
+        setConfigured(true);
+        // NOTE: Full WebView flow could be added here; for now just show configured state
+      } else {
+        setConfigured(false);
+      }
+    } catch (err) {
+      // 500/config error = not configured; 402/etc = some other issue
+      const errMsg = err.response?.data?.error || '';
+      const notConfigured =
+        errMsg.toLowerCase().includes('not configured') ||
+        errMsg.toLowerCase().includes('peach') ||
+        err.response?.status === 500;
+      setConfigured(!notConfigured);
     }
   }
 
-  if (loading) {
+  async function handleCashPayment() {
+    Alert.alert(
+      'Mark as Cash Payment?',
+      'This will mark the booking as paid via cash. The labourer will be notified.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Confirm Cash',
+          onPress: async () => {
+            setMarking(true);
+            try {
+              await api.post('/api/payments/cash', { booking_id: booking.id });
+              Alert.alert('✅ Payment Recorded', 'Cash payment marked successfully.', [
+                {
+                  text: 'Rate Labourer',
+                  onPress: () => navigation.replace('Rate', { booking }),
+                },
+              ]);
+            } catch (err) {
+              Alert.alert('Error', err.response?.data?.error || 'Could not record payment.');
+            } finally {
+              setMarking(false);
+            }
+          },
+        },
+      ]
+    );
+  }
+
+  if (configured === null) {
     return (
-      <SafeAreaView style={styles.loading}>
-        <ActivityIndicator size="large" color="#1A6B3A" />
-        <Text style={styles.loadingText}>Setting up payment...</Text>
+      <SafeAreaView style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={colors.accent} />
+        <Text style={styles.loadingText}>Checking payment options...</Text>
       </SafeAreaView>
     );
   }
 
-  // Peach Payments hosted checkout HTML
-  const checkoutHtml = `
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-          body { font-family: sans-serif; padding: 20px; background: #f9fafb; }
-          .amount { font-size: 24px; font-weight: bold; color: #1A6B3A; text-align: center; margin: 20px 0; }
-        </style>
-      </head>
-      <body>
-        <p class="amount">Pay ${formatZAR(booking.total_amount)}</p>
-        <form action="${checkoutData?.checkoutUrl || ''}" class="paymentWidgets" data-brands="VISA MASTER AMEX"></form>
-        <script async src="${checkoutData?.checkoutUrl}"></script>
-      </body>
-    </html>
-  `;
+  if (!configured) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Complete Payment</Text>
+          <Text style={styles.headerAmount}>{formatZAR(booking.total_amount)}</Text>
+        </View>
 
+        <View style={styles.body}>
+          <View style={styles.comingSoonCard}>
+            <Text style={styles.comingSoonIcon}>💳</Text>
+            <Text style={styles.comingSoonTitle}>Online Payment Coming Soon</Text>
+            <Text style={styles.comingSoonText}>
+              Card and EFT payment integration is being set up. In the meantime, you can pay
+              in cash directly to the labourer.
+            </Text>
+          </View>
+
+          <View style={styles.amountRow}>
+            <Text style={styles.amountLabel}>Amount due</Text>
+            <Text style={styles.amountValue}>{formatZAR(booking.total_amount)}</Text>
+          </View>
+
+          <TouchableOpacity
+            style={styles.cashBtn}
+            onPress={handleCashPayment}
+            disabled={marking}
+          >
+            {marking ? (
+              <ActivityIndicator color={colors.primary} />
+            ) : (
+              <>
+                <Text style={styles.cashBtnIcon}>💵</Text>
+                <Text style={styles.cashBtnText}>Mark as Cash Payment</Text>
+              </>
+            )}
+          </TouchableOpacity>
+
+          <Text style={styles.cashNote}>
+            Tap above once you've paid in cash to complete the booking.
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Configured state — payment integration available
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Complete Payment</Text>
-        <Text style={styles.amount}>{formatZAR(booking.total_amount)}</Text>
+        <Text style={styles.headerTitle}>Complete Payment</Text>
+        <Text style={styles.headerAmount}>{formatZAR(booking.total_amount)}</Text>
       </View>
-      <WebView
-        source={{ html: checkoutHtml }}
-        onNavigationStateChange={handleNavigationChange}
-        style={styles.webview}
-        startInLoadingState
-        renderLoading={() => <ActivityIndicator style={styles.webviewLoading} color="#1A6B3A" />}
-      />
+      <View style={styles.body}>
+        <View style={styles.comingSoonCard}>
+          <Text style={styles.comingSoonIcon}>✅</Text>
+          <Text style={styles.comingSoonTitle}>Payment Ready</Text>
+          <Text style={styles.comingSoonText}>
+            Proceed to complete your payment securely.
+          </Text>
+        </View>
+        <TouchableOpacity
+          style={styles.cashBtn}
+          onPress={handleCashPayment}
+          disabled={marking}
+        >
+          <Text style={styles.cashBtnIcon}>💵</Text>
+          <Text style={styles.cashBtnText}>Pay in Cash Instead</Text>
+        </TouchableOpacity>
+      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F9FAFB' },
-  loading: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  loadingText: { marginTop: 12, color: '#6B7280', fontSize: 15 },
-  header: { padding: 16, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#E5E7EB', alignItems: 'center' },
-  title: { fontSize: 16, fontWeight: '700', color: '#111827' },
-  amount: { fontSize: 24, fontWeight: '800', color: '#1A6B3A', marginTop: 4 },
-  webview: { flex: 1 },
-  webviewLoading: { flex: 1 },
+  container: { flex: 1, backgroundColor: '#f8f9fa' },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  loadingText: { color: colors.textMuted, fontSize: typography.sm },
+
+  header: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.lg,
+    alignItems: 'center',
+  },
+  headerTitle: {
+    color: '#fff',
+    fontSize: typography.md,
+    fontWeight: '700',
+    marginBottom: spacing.xs,
+  },
+  headerAmount: {
+    color: colors.accent,
+    fontSize: typography.xxl,
+    fontWeight: '900',
+  },
+
+  body: {
+    flex: 1,
+    padding: spacing.lg,
+    gap: spacing.md,
+  },
+
+  comingSoonCard: {
+    backgroundColor: '#fff',
+    borderRadius: borderRadius.lg,
+    padding: spacing.lg,
+    alignItems: 'center',
+    gap: spacing.sm,
+    ...shadows.card,
+  },
+  comingSoonIcon: { fontSize: 48 },
+  comingSoonTitle: {
+    fontSize: typography.lg,
+    fontWeight: '800',
+    color: colors.textPrimary,
+    textAlign: 'center',
+  },
+  comingSoonText: {
+    fontSize: typography.sm,
+    color: colors.textMuted,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+
+  amountRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: borderRadius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    ...shadows.card,
+  },
+  amountLabel: {
+    fontSize: typography.sm,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  amountValue: {
+    fontSize: typography.lg,
+    fontWeight: '800',
+    color: colors.textPrimary,
+  },
+
+  cashBtn: {
+    backgroundColor: colors.accent,
+    borderRadius: borderRadius.lg,
+    paddingVertical: spacing.md + 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    ...shadows.heavy,
+  },
+  cashBtnIcon: { fontSize: 22 },
+  cashBtnText: {
+    color: colors.primary,
+    fontWeight: '800',
+    fontSize: typography.lg,
+  },
+
+  cashNote: {
+    fontSize: typography.xs,
+    color: colors.textMuted,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
 });

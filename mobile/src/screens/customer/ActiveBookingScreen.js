@@ -205,6 +205,18 @@ export default function ActiveBookingScreen({ route, navigation }) {
               <Text style={styles.jobSkill}>{booking.skill_needed}</Text>
               <BookingStatusBadge status={booking.status} />
             </View>
+            <TouchableOpacity
+              style={styles.chatBtn}
+              onPress={() =>
+                navigation.navigate('Chat', {
+                  bookingId: booking.id,
+                  otherPartyName: booking.labourer_name,
+                  bookingStatus: booking.status,
+                })
+              }
+            >
+              <Text style={styles.callBtnText}>💬</Text>
+            </TouchableOpacity>
             <TouchableOpacity style={styles.callBtn} onPress={callLabourer}>
               <Text style={styles.callBtnText}>📞</Text>
             </TouchableOpacity>
@@ -326,6 +338,14 @@ const styles = StyleSheet.create({
     height: 44,
     borderRadius: borderRadius.full,
     backgroundColor: colors.successLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chatBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: borderRadius.full,
+    backgroundColor: colors.infoLight,
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -8,22 +8,25 @@ import ProfileSetupScreen from '../screens/labourer/ProfileSetupScreen';
 import JobRequestsScreen from '../screens/labourer/JobRequestsScreen';
 import ActiveJobScreen from '../screens/labourer/ActiveJobScreen';
 import EarningsScreen from '../screens/labourer/EarningsScreen';
+import ServicesScreen from '../screens/labourer/ServicesScreen';
+import ChatScreen from '../screens/shared/ChatScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
 const screenOptions = {
-  headerStyle: { backgroundColor: '#1A6B3A' },
+  headerStyle: { backgroundColor: '#1a1a2e' },
   headerTintColor: '#fff',
   headerTitleStyle: { fontWeight: 'bold' },
 };
 
-// Dashboard stack (Dashboard + ActiveJob)
+// Dashboard stack (Dashboard + ActiveJob + Chat)
 function DashboardStack() {
   return (
     <Stack.Navigator screenOptions={screenOptions}>
       <Stack.Screen name="DashboardMain" component={DashboardScreen} options={{ title: 'Dashboard' }} />
       <Stack.Screen name="ActiveJob" component={ActiveJobScreen} options={{ title: 'Active Job' }} />
+      <Stack.Screen name="Chat" component={ChatScreen} options={{ title: 'Chat', headerShown: false }} />
     </Stack.Navigator>
   );
 }
@@ -34,6 +37,7 @@ function JobsStack() {
     <Stack.Navigator screenOptions={screenOptions}>
       <Stack.Screen name="JobRequestsMain" component={JobRequestsScreen} options={{ title: 'Job Requests' }} />
       <Stack.Screen name="ActiveJob" component={ActiveJobScreen} options={{ title: 'Active Job' }} />
+      <Stack.Screen name="Chat" component={ChatScreen} options={{ title: 'Chat', headerShown: false }} />
     </Stack.Navigator>
   );
 }
@@ -43,14 +47,15 @@ export default function LabourerStack() {
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
-        tabBarActiveTintColor: '#1A6B3A',
+        tabBarActiveTintColor: '#f59e0b',
         tabBarInactiveTintColor: '#9CA3AF',
         tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
-        tabBarStyle: { paddingBottom: 6, paddingTop: 4, height: 58 },
+        tabBarStyle: { paddingBottom: 6, paddingTop: 4, height: 58, backgroundColor: '#1a1a2e', borderTopColor: '#374151' },
         tabBarIcon: ({ focused }) => {
           const icons = {
             Home: '🏠',
             Jobs: '📋',
+            Services: '🛠️',
             Profile: '👤',
             Earnings: '💰',
           };
@@ -60,6 +65,15 @@ export default function LabourerStack() {
     >
       <Tab.Screen name="Home" component={DashboardStack} />
       <Tab.Screen name="Jobs" component={JobsStack} />
+      <Tab.Screen
+        name="Services"
+        component={ServicesScreen}
+        options={{
+          ...screenOptions,
+          headerShown: true,
+          title: 'My Services',
+        }}
+      />
       <Tab.Screen
         name="Profile"
         component={ProfileSetupScreen}

@@ -10,7 +10,11 @@ const labourerRoutes = require('./routes/labourers');
 const bookingRoutes = require('./routes/bookings');
 const paymentRoutes = require('./routes/payments');
 const ratingRoutes = require('./routes/ratings');
+const messageRoutes = require('./routes/messages');
+const serviceRoutes = require('./routes/services');
+const earningsRoutes = require('./routes/earnings');
 const initLocationSockets = require('./sockets/location');
+const initChatSockets = require('./sockets/chat');
 
 const app = express();
 const server = http.createServer(app);
@@ -22,6 +26,9 @@ const io = new Server(server, {
   },
 });
 
+// Make io available to routes (for message broadcast)
+app.set('io', io);
+
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -31,6 +38,15 @@ app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 // Routes
 app.use('/auth', authRoutes);
+app.use('/api/labourers', labourerRoutes);
+app.use('/api/bookings', bookingRoutes);
+app.use('/api/payments', paymentRoutes);
+app.use('/api/ratings', ratingRoutes);
+app.use('/api/messages', messageRoutes);
+app.use('/api/services', serviceRoutes);
+app.use('/api/earnings', earningsRoutes);
+
+// Legacy routes (backward compat)
 app.use('/labourers', labourerRoutes);
 app.use('/bookings', bookingRoutes);
 app.use('/payments', paymentRoutes);
@@ -38,6 +54,7 @@ app.use('/ratings', ratingRoutes);
 
 // Socket.io
 initLocationSockets(io);
+initChatSockets(io);
 
 // Error handler (must be last)
 app.use(errorHandler);

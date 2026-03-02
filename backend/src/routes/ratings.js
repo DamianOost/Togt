@@ -86,4 +86,32 @@ router.get('/labourer/:id', async (req, res, next) => {
   }
 });
 
+// GET /ratings/user/:userId — get all ratings received by a user
+router.get('/user/:userId', async (req, res, next) => {
+  try {
+    const result = await db.query(
+      `SELECT r.id, r.booking_id, r.score, r.comment, r.created_at,
+              u.name AS reviewer_name, u.avatar_url AS reviewer_avatar
+       FROM ratings r
+       JOIN users u ON r.reviewer_id = u.id
+       WHERE r.reviewee_id = $1
+       ORDER BY r.created_at DESC
+       LIMIT 50`,
+      [req.params.userId]
+    );
+    const avgResult = await db.query(
+      `SELECT ROUND(AVG(score)::NUMERIC, 2) AS avg_score, COUNT(*) AS total
+       FROM ratings WHERE reviewee_id = $1`,
+      [req.params.userId]
+    );
+    res.json({
+      ratings: result.rows,
+      avg_score: avgResult.rows[0]?.avg_score || 0,
+      total: parseInt(avgResult.rows[0]?.total || 0),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;

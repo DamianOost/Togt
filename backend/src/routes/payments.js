@@ -134,4 +134,37 @@ router.get('/status/:bookingId', authMiddleware, async (req, res, next) => {
   }
 });
 
+// POST /payments/cash — mark booking as paid via cash (fallback)
+router.post('/cash', authMiddleware, async (req, res, next) => {
+  try {
+    const { booking_id } = req.body;
+    if (!booking_id) return res.status(400).json({ error: 'booking_id required' });
+
+    const bookingResult = await db.query(
+      'SELECT * FROM bookings WHERE id = $1 AND customer_id = $2',
+      [booking_id, req.user.id]
+    );
+    if (bookingResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Booking not found' });
+    }
+    const booking = bookingResult.rows[0];
+    if (booking.status !== 'completed') {
+      return res.status(400).json({ error: 'Can only pay for completed bookings' });
+    }
+
+    // Upsert payment record
+    const result = await db.query(
+      `INSERT INTO payments (booking_id, amount, currency, status, peach_result_code)
+       VALUES ($1, $2, 'ZAR', 'paid', 'CASH')
+       ON CONFLICT DO NOTHING
+       RETURNING *`,
+      [booking_id, booking.total_amount || 0]
+    );
+
+    res.json({ success: true, payment: result.rows[0] || null });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;

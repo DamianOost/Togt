@@ -228,6 +228,18 @@ export default function ActiveJobScreen({ route, navigation }) {
               <Text style={styles.jobSkill}>{booking.skill_needed}</Text>
               <Text style={styles.jobAddress}>{booking.address}</Text>
             </View>
+            <TouchableOpacity
+              style={styles.chatBtn}
+              onPress={() =>
+                navigation.navigate('Chat', {
+                  bookingId: booking.id,
+                  otherPartyName: booking.customer_name,
+                  bookingStatus: booking.status,
+                })
+              }
+            >
+              <Text style={styles.callBtnText}>💬</Text>
+            </TouchableOpacity>
             <TouchableOpacity style={styles.callBtn} onPress={callCustomer}>
               <Text style={styles.callBtnText}>📞</Text>
             </TouchableOpacity>
@@ -324,6 +336,14 @@ const styles = StyleSheet.create({
     height: 44,
     borderRadius: borderRadius.full,
     backgroundColor: colors.successLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chatBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: borderRadius.full,
+    backgroundColor: colors.infoLight,
     alignItems: 'center',
     justifyContent: 'center',
   },

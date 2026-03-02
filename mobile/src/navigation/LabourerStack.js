@@ -11,6 +11,7 @@ import EarningsScreen from '../screens/labourer/EarningsScreen';
 import ServicesScreen from '../screens/labourer/ServicesScreen';
 import ChatScreen from '../screens/shared/ChatScreen';
 import KYCScreen from '../screens/shared/KYCScreen';
+import ScopeConfirmScreen from '../screens/shared/ScopeConfirmScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -29,6 +30,7 @@ function DashboardStack() {
       <Stack.Screen name="ActiveJob" component={ActiveJobScreen} options={{ title: 'Active Job' }} />
       <Stack.Screen name="Chat" component={ChatScreen} options={{ title: 'Chat', headerShown: false }} />
       <Stack.Screen name="KYC" component={KYCScreen} options={{ title: 'Verify Identity', headerShown: false }} />
+      <Stack.Screen name="ScopeConfirm" component={ScopeConfirmScreen} options={{ title: 'Confirm Scope', headerShown: false }} />
     </Stack.Navigator>
   );
 }

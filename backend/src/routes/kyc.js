@@ -8,8 +8,10 @@ const router = express.Router();
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+const DEMO_VALUES = new Set(['DEMO', 'demo', 'your_partner_id', 'your_api_key', '', undefined, null]);
+
 const isDemo = () =>
-  SMILE_CONFIG.partner_id === 'DEMO' || SMILE_CONFIG.api_key === 'DEMO';
+  DEMO_VALUES.has(SMILE_CONFIG.partner_id) || DEMO_VALUES.has(SMILE_CONFIG.api_key);
 
 function smileSignature(timestamp) {
   return crypto

@@ -266,13 +266,6 @@ export default function ActiveJobScreen({ route, navigation }) {
     }
   }
 
-  function _unused_oldPrompt() {
-    Alert.prompt(
-      '📝 Request Extra Work',
-      'Describe what additional work is needed:',
-      [
-          }
-
   function callCustomer() {
     if (booking?.customer_phone) {
       Linking.openURL(`tel:${booking.customer_phone}`);

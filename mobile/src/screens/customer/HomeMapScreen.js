@@ -190,6 +190,16 @@ export default function HomeMapScreen({ navigation }) {
           </TouchableOpacity>
         </View>
 
+        {/* KYC badge */}
+        {user?.kyc_status !== 'verified' ? (
+          <TouchableOpacity
+            onPress={() => navigation.navigate('KYC')}
+            style={{ paddingHorizontal: 16, paddingVertical: 6, backgroundColor: 'rgba(245,158,11,0.15)', marginHorizontal: 16, borderRadius: 8, marginBottom: 4 }}
+          >
+            <Text style={{ fontSize: 12, color: '#F59E0B', fontWeight: '600', textAlign: 'center' }}>⚠️ Identity unverified — tap here to verify and unlock bookings</Text>
+          </TouchableOpacity>
+        ) : null}
+
         {/* Skill filter chips */}
         <ScrollView
           horizontal

@@ -97,6 +97,14 @@ export default function DashboardScreen({ navigation }) {
                 <View>
                   <Text style={styles.greeting}>Hey {user?.name?.split(' ')[0]} 👷</Text>
                   <Text style={styles.subGreeting}>Ready to earn today?</Text>
+                  {/* KYC badge */}
+                  {user?.kyc_status !== 'verified' ? (
+                    <TouchableOpacity onPress={() => navigation.navigate('KYC')} style={{ marginTop: 4 }}>
+                      <Text style={{ fontSize: 12, color: '#F59E0B', fontWeight: '600' }}>⚠️ Unverified — Tap to verify</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <Text style={{ fontSize: 12, color: '#10B981', fontWeight: '600', marginTop: 4 }}>✅ Verified</Text>
+                  )}
                 </View>
                 <View style={styles.headerActions}>
                   <TouchableOpacity

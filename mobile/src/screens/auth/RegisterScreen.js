@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   SafeAreaView, ScrollView, ActivityIndicator, Alert,
@@ -9,7 +9,7 @@ import { registerThunk } from '../../store/authSlice';
 export default function RegisterScreen({ route, navigation }) {
   const preselectedRole = route.params?.role || 'customer';
   const dispatch = useDispatch();
-  const { loading, error } = useSelector((s) => s.auth);
+  const { loading, error, user } = useSelector((s) => s.auth);
 
   const [form, setForm] = useState({
     name: '',
@@ -18,6 +18,16 @@ export default function RegisterScreen({ route, navigation }) {
     password: '',
     role: preselectedRole,
   });
+  const [registered, setRegistered] = useState(false);
+
+  // Watch for successful registration → show KYC prompt
+  useEffect(() => {
+    if (registered && user) {
+      setRegistered(false);
+      // Navigate to KYC prompt immediately after registration
+      navigation.navigate('KYC');
+    }
+  }, [user, registered]);
 
   function set(key) {
     return (value) => setForm((f) => ({ ...f, [key]: value }));
@@ -28,6 +38,7 @@ export default function RegisterScreen({ route, navigation }) {
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
+    setRegistered(true);
     dispatch(registerThunk(form));
   }
 

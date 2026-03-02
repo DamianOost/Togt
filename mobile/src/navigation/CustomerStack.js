@@ -12,6 +12,7 @@ import RateScreen from '../screens/customer/RateScreen';
 import MyBookingsScreen from '../screens/customer/MyBookingsScreen';
 import DiscoverScreen from '../screens/customer/DiscoverScreen';
 import ChatScreen from '../screens/shared/ChatScreen';
+import KYCScreen from '../screens/shared/KYCScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -33,6 +34,7 @@ function HomeStack() {
       <Stack.Screen name="Payment" component={PaymentScreen} options={{ title: 'Payment' }} />
       <Stack.Screen name="Rate" component={RateScreen} options={{ title: 'Leave a Rating' }} />
       <Stack.Screen name="Chat" component={ChatScreen} options={{ title: 'Chat', headerShown: false }} />
+      <Stack.Screen name="KYC" component={KYCScreen} options={{ title: 'Verify Identity', headerShown: false }} />
     </Stack.Navigator>
   );
 }

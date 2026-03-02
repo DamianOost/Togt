@@ -13,6 +13,7 @@ const ratingRoutes = require('./routes/ratings');
 const messageRoutes = require('./routes/messages');
 const serviceRoutes = require('./routes/services');
 const earningsRoutes = require('./routes/earnings');
+const kycRoutes = require('./routes/kyc');
 const initLocationSockets = require('./sockets/location');
 const initChatSockets = require('./sockets/chat');
 
@@ -38,6 +39,7 @@ app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 // Routes
 app.use('/auth', authRoutes);
+app.use('/api/auth', authRoutes);
 app.use('/api/labourers', labourerRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/payments', paymentRoutes);
@@ -45,6 +47,7 @@ app.use('/api/ratings', ratingRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/services', serviceRoutes);
 app.use('/api/earnings', earningsRoutes);
+app.use('/api/kyc', kycRoutes);
 
 // Legacy routes (backward compat)
 app.use('/labourers', labourerRoutes);

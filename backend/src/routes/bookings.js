@@ -60,6 +60,29 @@ router.post('/', authMiddleware, async (req, res, next) => {
   }
 });
 
+// GET /bookings — alias for /bookings/my (frontend convenience)
+router.get('/', authMiddleware, async (req, res, next) => {
+  const col = req.user.role === 'customer' ? 'b.customer_id' : 'b.labourer_id';
+  try {
+    const result = await db.query(
+      `SELECT b.*,
+              cu.name AS customer_name, cu.phone AS customer_phone, cu.avatar_url AS customer_avatar,
+              lu.name AS labourer_name, lu.phone AS labourer_phone, lu.avatar_url AS labourer_avatar,
+              lp.hourly_rate, lp.skills
+       FROM bookings b
+       JOIN users cu ON b.customer_id = cu.id
+       JOIN users lu ON b.labourer_id = lu.id
+       JOIN labourer_profiles lp ON b.labourer_id = lp.user_id
+       WHERE ${col} = $1
+       ORDER BY b.created_at DESC`,
+      [req.user.id]
+    );
+    res.json({ bookings: result.rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /bookings/my — get own bookings
 router.get('/my', authMiddleware, async (req, res, next) => {
   try {
@@ -138,10 +161,18 @@ async function transition(req, res, next, allowedRoles, fromStatuses, toStatus) 
       return res.status(400).json({ error: `Cannot transition from '${booking.status}' to '${toStatus}'` });
     }
 
-    const updated = await db.query(
-      'UPDATE bookings SET status = $1 WHERE id = $2 RETURNING *',
-      [toStatus, req.params.id]
-    );
+    // Set completed_at when marking completed, cancelled_by when cancelling
+    let updateQuery = 'UPDATE bookings SET status = $1';
+    const updateParams = [toStatus, req.params.id];
+    if (toStatus === 'completed') {
+      updateQuery += ', completed_at = NOW()';
+    } else if (toStatus === 'cancelled') {
+      updateQuery += ', cancelled_by = $3';
+      updateParams.push(req.user.id);
+    }
+    updateQuery += ' WHERE id = $2 RETURNING *';
+
+    const updated = await db.query(updateQuery, updateParams);
 
     // Push notifications based on transition
     const actorName = await db.query('SELECT name FROM users WHERE id = $1', [req.user.id]);
@@ -189,5 +220,25 @@ router.put('/:id/complete', authMiddleware, (req, res, next) =>
 
 router.put('/:id/cancel', authMiddleware, (req, res, next) =>
   transition(req, res, next, ['customer'], ['pending', 'accepted'], 'cancelled'));
+
+// PATCH /:id/status — generic status update (maps to specific action routes)
+// Body: { status: "accepted" | "in_progress" | "completed" | "cancelled" }
+router.patch('/:id/status', authMiddleware, async (req, res, next) => {
+  const { status } = req.body;
+  if (!status) return res.status(400).json({ error: 'status is required' });
+
+  const statusMap = {
+    accepted:    { roles: ['labourer'], from: ['pending'] },
+    in_progress: { roles: ['labourer'], from: ['accepted'] },
+    completed:   { roles: ['labourer'], from: ['in_progress'] },
+    cancelled:   { roles: ['customer', 'labourer'], from: ['pending', 'accepted'] },
+  };
+
+  const config = statusMap[status];
+  if (!config) {
+    return res.status(400).json({ error: `Invalid status: ${status}` });
+  }
+  return transition(req, res, next, config.roles, config.from, status);
+});
 
 module.exports = router;

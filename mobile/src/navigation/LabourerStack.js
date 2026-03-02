@@ -10,6 +10,7 @@ import ActiveJobScreen from '../screens/labourer/ActiveJobScreen';
 import EarningsScreen from '../screens/labourer/EarningsScreen';
 import ServicesScreen from '../screens/labourer/ServicesScreen';
 import ChatScreen from '../screens/shared/ChatScreen';
+import KYCScreen from '../screens/shared/KYCScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -27,6 +28,7 @@ function DashboardStack() {
       <Stack.Screen name="DashboardMain" component={DashboardScreen} options={{ title: 'Dashboard' }} />
       <Stack.Screen name="ActiveJob" component={ActiveJobScreen} options={{ title: 'Active Job' }} />
       <Stack.Screen name="Chat" component={ChatScreen} options={{ title: 'Chat', headerShown: false }} />
+      <Stack.Screen name="KYC" component={KYCScreen} options={{ title: 'Verify Identity', headerShown: false }} />
     </Stack.Navigator>
   );
 }

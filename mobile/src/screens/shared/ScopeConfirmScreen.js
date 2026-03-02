@@ -131,6 +131,8 @@ export default function ScopeConfirmScreen({ route, navigation }) {
       otherPartyName: isCustomer ? booking?.labourer_name : booking?.customer_name,
       bookingStatus: booking?.status,
       prefillMessage: `📝 Scope Change Request: ${changeText.trim()}`,
+    });
+    setChangeText('');
   }
 
   if (loading || !booking) {

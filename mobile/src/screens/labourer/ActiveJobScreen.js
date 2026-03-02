@@ -271,16 +271,7 @@ export default function ActiveJobScreen({ route, navigation }) {
       '📝 Request Extra Work',
       'Describe what additional work is needed:',
       [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Send to Customer',
-          onPress: async (text) => {
-            if (!text?.trim()) return;
-        },
-      ],
-      'plain-text'
-    );
-  }
+          }
 
   function callCustomer() {
     if (booking?.customer_phone) {

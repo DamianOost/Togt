@@ -50,6 +50,14 @@ export default function LabourerProfileScreen({ route, navigation }) {
     );
   }
 
+  if (!labourer) {
+    return (
+      <View style={styles.loadingContainer}>
+        <Text style={{ color: colors.textSecondary }}>Profile not available.</Text>
+      </View>
+    );
+  }
+
   const primarySkill = (labourer.skills || [])[0] || 'Worker';
 
   return (

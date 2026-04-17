@@ -1,13 +1,25 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 import { authService } from '../services/authService';
 
-const STORAGE_KEY = '@togt_auth';
+// SecureStore keys must match /^[A-Za-z0-9._-]+$/ — no @ prefix here.
+const STORAGE_KEY = 'togt_auth';
+
+async function saveAuth(data) {
+  await SecureStore.setItemAsync(STORAGE_KEY, JSON.stringify(data));
+}
+async function readAuth() {
+  const raw = await SecureStore.getItemAsync(STORAGE_KEY);
+  return raw ? JSON.parse(raw) : null;
+}
+async function clearAuth() {
+  await SecureStore.deleteItemAsync(STORAGE_KEY);
+}
 
 export const loginThunk = createAsyncThunk('auth/login', async (credentials, { rejectWithValue }) => {
   try {
     const data = await authService.login(credentials);
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    await saveAuth(data);
     return data;
   } catch (err) {
     return rejectWithValue(err.response?.data?.error || 'Login failed');
@@ -17,19 +29,19 @@ export const loginThunk = createAsyncThunk('auth/login', async (credentials, { r
 export const registerThunk = createAsyncThunk('auth/register', async (data, { rejectWithValue }) => {
   try {
     const result = await authService.register(data);
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(result));
+    await saveAuth(result);
     return result;
   } catch (err) {
     return rejectWithValue(err.response?.data?.error || 'Registration failed');
   }
 });
 
-// Restore session from AsyncStorage on app launch
+// Restore session from SecureStore on app launch
 export const restoreSessionThunk = createAsyncThunk('auth/restore', async (_, { rejectWithValue }) => {
   try {
-    const stored = await AsyncStorage.getItem(STORAGE_KEY);
+    const stored = await readAuth();
     if (!stored) return rejectWithValue('No session');
-    return JSON.parse(stored);
+    return stored;
   } catch {
     return rejectWithValue('Failed to restore');
   }
@@ -50,7 +62,7 @@ const authSlice = createSlice({
       state.user = null;
       state.accessToken = null;
       state.refreshToken = null;
-      AsyncStorage.removeItem(STORAGE_KEY).catch(() => {});
+      clearAuth().catch(() => {});
     },
     setTokens(state, action) {
       state.accessToken = action.payload.accessToken;
@@ -61,13 +73,12 @@ const authSlice = createSlice({
     },
     updateUser(state, action) {
       state.user = { ...state.user, ...action.payload };
-      // Persist updated user to AsyncStorage
       const stored = {
         user: state.user,
         accessToken: state.accessToken,
         refreshToken: state.refreshToken,
       };
-      AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(stored)).catch(() => {});
+      saveAuth(stored).catch(() => {});
     },
   },
   extraReducers: (builder) => {

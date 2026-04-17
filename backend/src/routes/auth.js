@@ -1,7 +1,8 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const db = require('../config/db');
+const db = require("../config/db");
+const { authLimiter, refreshLimiter } = require("../middleware/rateLimit");
 const { jwtSecret, jwtRefreshSecret, jwtExpiresIn, jwtRefreshExpiresIn } = require('../config/env');
 
 const router = express.Router();
@@ -14,7 +15,7 @@ function generateTokens(user) {
 }
 
 // POST /auth/register
-router.post('/register', async (req, res, next) => {
+router.post('/register', authLimiter, async (req, res, next) => {
   try {
     const { name, email, phone, password, role } = req.body;
 
@@ -59,7 +60,7 @@ router.post('/register', async (req, res, next) => {
 });
 
 // POST /auth/login
-router.post('/login', async (req, res, next) => {
+router.post('/login', authLimiter, async (req, res, next) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) {
@@ -118,7 +119,7 @@ router.post('/push-token', require('../middleware/auth').authMiddleware, async (
 });
 
 // POST /auth/refresh
-router.post('/refresh', async (req, res, next) => {
+router.post('/refresh', refreshLimiter, async (req, res, next) => {
   try {
     const { refreshToken } = req.body;
     if (!refreshToken) {

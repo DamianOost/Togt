@@ -16,6 +16,7 @@ const earningsRoutes = require('./routes/earnings');
 const kycRoutes = require('./routes/kyc');
 const bookingExtRoutes = require('./routes/bookingExtensions');
 const safetyRoutes = require('./routes/safety');
+const uploadRoutes = require('./routes/upload');
 const initLocationSockets = require('./sockets/location');
 const initChatSockets = require('./sockets/chat');
 
@@ -52,6 +53,8 @@ app.use('/api/earnings', earningsRoutes);
 app.use('/api/kyc', kycRoutes);
 app.use('/api/bookings', bookingExtRoutes);
 app.use('/api/safety', safetyRoutes);
+app.use('/api/upload', uploadRoutes);
+app.use('/upload', uploadRoutes);
 
 // Legacy routes (backward compat)
 app.use('/labourers', labourerRoutes);

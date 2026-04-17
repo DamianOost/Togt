@@ -4,7 +4,9 @@ import {
   StyleSheet, SafeAreaView, Alert, ActivityIndicator, Image,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { useSelector } from 'react-redux';
 import api from '../../services/api';
+import { uploadProfileImage } from '../../services/imageUpload';
 
 const ALL_SKILLS = [
   'Plumbing', 'Electrical', 'Painting', 'Building', 'Tiling',
@@ -21,6 +23,9 @@ export default function ProfileSetupScreen({ navigation }) {
   const [avatarUri, setAvatarUri] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+
+  const accessToken = useSelector((state) => state.auth.accessToken);
 
   useEffect(() => {
     async function loadProfile() {
@@ -78,8 +83,20 @@ export default function ProfileSetupScreen({ navigation }) {
       });
 
       if (avatarUri) {
-        // In production, upload to storage first; for now pass URI directly
-        await api.put('/labourers/avatar', { avatar_url: avatarUri });
+        // Upload to Cloudinary via backend, then save the returned URL
+        setUploading(true);
+        try {
+          const { url } = await uploadProfileImage(avatarUri, accessToken);
+          await api.put('/labourers/avatar', { avatar_url: url });
+        } catch (uploadErr) {
+          Alert.alert(
+            'Photo upload failed',
+            uploadErr.message || 'Could not upload profile photo. Your other changes were saved.',
+          );
+          // Don't rethrow — profile data was already saved
+        } finally {
+          setUploading(false);
+        }
       }
 
       Alert.alert('Saved!', 'Profile updated successfully.');
@@ -98,12 +115,17 @@ export default function ProfileSetupScreen({ navigation }) {
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
 
         {/* Avatar */}
-        <TouchableOpacity style={styles.avatarContainer} onPress={pickImage}>
+        <TouchableOpacity style={styles.avatarContainer} onPress={pickImage} disabled={uploading}>
           {avatarUri ? (
             <Image source={{ uri: avatarUri }} style={styles.avatar} />
           ) : (
             <View style={styles.avatarPlaceholder}>
               <Text style={styles.avatarPlaceholderText}>Add Photo</Text>
+            </View>
+          )}
+          {uploading && (
+            <View style={styles.avatarUploadingOverlay}>
+              <ActivityIndicator color="#fff" />
             </View>
           )}
         </TouchableOpacity>
@@ -171,8 +193,12 @@ export default function ProfileSetupScreen({ navigation }) {
           keyboardType="phone-pad"
         />
 
-        <TouchableOpacity style={styles.saveBtn} onPress={handleSave} disabled={saving}>
-          {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>Save Profile</Text>}
+        <TouchableOpacity style={styles.saveBtn} onPress={handleSave} disabled={saving || uploading}>
+          {saving || uploading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.saveBtnText}>Save Profile</Text>
+          )}
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
@@ -190,6 +216,13 @@ const styles = StyleSheet.create({
     borderWidth: 2, borderColor: '#1A6B3A', borderStyle: 'dashed',
   },
   avatarPlaceholderText: { color: '#1A6B3A', fontWeight: '600', fontSize: 13 },
+  avatarUploadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 50,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   label: { fontSize: 14, fontWeight: '700', color: '#374151', marginTop: 16, marginBottom: 6 },
   sublabel: { fontSize: 12, color: '#9CA3AF', marginBottom: 10, marginTop: -4 },
   skillsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },

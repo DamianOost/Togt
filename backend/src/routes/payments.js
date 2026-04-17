@@ -2,6 +2,7 @@ const express = require('express');
 const axios = require('axios');
 const db = require('../config/db');
 const { authMiddleware } = require('../middleware/auth');
+const crypto = require('crypto');
 const { peach } = require('../config/env');
 
 const router = express.Router();
@@ -79,9 +80,42 @@ router.post('/initiate', authMiddleware, async (req, res, next) => {
 });
 
 // POST /payments/webhook — Peach Payments result notification
-router.post('/webhook', express.raw({ type: '*/*' }), async (req, res, next) => {
+router.post('/webhook', async (req, res, next) => {
   try {
-    const { checkoutId, resultCode } = req.body;
+    // Signature verification — defence in depth.
+    // When PEACH_WEBHOOK_SECRET is set, compute HMAC-SHA256 over the raw body
+    // and compare (timing-safe) against the X-Signature header.
+    // NOTE: Peach's signature scheme varies by product (COPYandPAY vs S2S).
+    // Confirm the exact header name and encoding with the Peach integration
+    // contact before going to production.
+    if (peach.webhookSecret) {
+      const sig = req.header('X-Signature') || req.header('x-signature');
+      if (!sig) {
+        return res.status(401).json({ error: 'Missing signature' });
+      }
+      // HMAC-SHA256 computed over the raw body (captured pre-parse in app.js).
+      if (!req.rawBody) {
+        return res.status(400).json({ error: 'Raw body unavailable for signature check' });
+      }
+      const expected = crypto
+        .createHmac('sha256', peach.webhookSecret)
+        .update(req.rawBody)
+        .digest('base64');
+      try {
+        const provided = Buffer.from(sig, 'base64');
+        const expectedBuf = Buffer.from(expected, 'base64');
+        if (provided.length !== expectedBuf.length || !crypto.timingSafeEqual(provided, expectedBuf)) {
+          return res.status(401).json({ error: 'Invalid signature' });
+        }
+      } catch {
+        return res.status(401).json({ error: 'Invalid signature' });
+      }
+    } else if (process.env.NODE_ENV === 'production') {
+      console.warn('[peach webhook] PEACH_WEBHOOK_SECRET not set in production — accepting unsigned webhook');
+    }
+
+    // Body was parsed by express.json (or is empty object for non-JSON requests).
+    const { checkoutId, resultCode } = req.body || {};
 
     if (!checkoutId) {
       return res.status(400).json({ error: 'checkoutId required' });

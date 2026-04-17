@@ -44,7 +44,16 @@ app.set('io', io);
 
 // Middleware
 app.use(cors(corsOptions));
-app.use(express.json());
+// Preserve raw body for webhook HMAC verification (Peach signature check).
+// express.json consumes the stream, so we capture the Buffer via the verify hook
+// before parsing. Only the payments webhook needs this.
+app.use(express.json({
+  verify: (req, res, buf) => {
+    if (req.originalUrl && req.originalUrl.includes('/payments/webhook')) {
+      req.rawBody = buf;
+    }
+  },
+}));
 
 // Health check
 app.get('/health', (req, res) => res.json({ status: 'ok' }));

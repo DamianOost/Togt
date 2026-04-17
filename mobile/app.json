@@ -47,7 +47,8 @@
       ],
       "@react-native-community/datetimepicker",
       "expo-asset",
-      "expo-font"
+      "expo-font",
+      "expo-secure-store"
     ],
     "extra": {
       "apiUrl": "http://192.168.10.69:3002"

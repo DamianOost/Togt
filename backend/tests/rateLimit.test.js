@@ -1,3 +1,5 @@
+// Force real rate limiter in this file — defeats the test-env passthrough in rateLimit.js.
+process.env.RATELIMIT_FORCE = '1';
 const { request, app, truncateAll, db } = require('./helpers');
 
 beforeEach(async () => {

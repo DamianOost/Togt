@@ -2,8 +2,10 @@ const express = require('express');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
+const crypto = require('crypto');
+const { sendPasswordResetEmail } = require('../services/email');
 const db = require('../config/db');
-const { authLimiter, refreshLimiter } = require('../middleware/rateLimit');
+const { authLimiter, refreshLimiter, forgotPasswordLimiter, resetPasswordLimiter } = require('../middleware/rateLimit');
 const { jwtSecret, jwtRefreshSecret, jwtExpiresIn, jwtRefreshExpiresIn } = require('../config/env');
 const { authMiddleware } = require('../middleware/auth');
 
@@ -221,6 +223,98 @@ router.post('/logout', authMiddleware, async (req, res, next) => {
       }
     }
     await db.query('UPDATE users SET push_token = NULL WHERE id = $1', [req.user.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const RESET_CODE_TTL_MS = 15 * 60 * 1000;
+
+function hashResetCode(code) {
+  return crypto.createHash('sha256').update(String(code)).digest('hex');
+}
+
+function generateSixDigitCode() {
+  return String(crypto.randomInt(100000, 1000000));
+}
+
+// POST /auth/forgot-password — always 200 (don't leak whether email is registered).
+router.post('/forgot-password', forgotPasswordLimiter, async (req, res, next) => {
+  try {
+    const { email } = req.body || {};
+    if (!email) return res.status(400).json({ error: 'Email is required' });
+
+    const u = await db.query('SELECT id FROM users WHERE email = $1', [email.toLowerCase()]);
+    if (u.rows.length === 0) {
+      return res.json({ ok: true });
+    }
+
+    await db.query(
+      'UPDATE password_resets SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL',
+      [u.rows[0].id]
+    );
+
+    const code = generateSixDigitCode();
+    const expiresAt = new Date(Date.now() + RESET_CODE_TTL_MS);
+    await db.query(
+      'INSERT INTO password_resets (user_id, code_hash, expires_at) VALUES ($1, $2, $3)',
+      [u.rows[0].id, hashResetCode(code), expiresAt]
+    );
+
+    try {
+      await sendPasswordResetEmail({ to: email, code });
+    } catch (err) {
+      console.error('[forgot-password] email send failed:', err.message);
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /auth/reset-password — verify code + update password + revoke all sessions.
+router.post('/reset-password', resetPasswordLimiter, async (req, res, next) => {
+  try {
+    const { email, code, new_password } = req.body || {};
+    if (!email || !code || !new_password) {
+      return res.status(400).json({ error: 'email, code, and new_password are required' });
+    }
+    if (String(new_password).length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    }
+
+    const u = await db.query('SELECT id FROM users WHERE email = $1', [email.toLowerCase()]);
+    if (u.rows.length === 0) {
+      return res.status(400).json({ error: 'Invalid or expired code' });
+    }
+    const userId = u.rows[0].id;
+
+    const resetRow = await db.query(
+      `SELECT id, expires_at, used_at FROM password_resets
+       WHERE user_id = $1 AND code_hash = $2
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [userId, hashResetCode(code)]
+    );
+    if (resetRow.rows.length === 0) {
+      return res.status(400).json({ error: 'Invalid or expired code' });
+    }
+    const row = resetRow.rows[0];
+    if (row.used_at) {
+      return res.status(400).json({ error: 'Invalid or expired code' });
+    }
+    if (new Date(row.expires_at).getTime() <= Date.now()) {
+      return res.status(400).json({ error: 'Invalid or expired code' });
+    }
+
+    const password_hash = await bcrypt.hash(new_password, 10);
+    await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [password_hash, userId]);
+    await db.query('UPDATE password_resets SET used_at = NOW() WHERE id = $1', [row.id]);
+
+    await revokeAllForUser(userId);
+    await db.query('UPDATE users SET push_token = NULL WHERE id = $1', [userId]);
+
     res.json({ ok: true });
   } catch (err) {
     next(err);

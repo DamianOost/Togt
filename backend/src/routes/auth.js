@@ -1,17 +1,46 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const db = require("../config/db");
-const { authLimiter, refreshLimiter } = require("../middleware/rateLimit");
+const { v4: uuidv4 } = require('uuid');
+const db = require('../config/db');
+const { authLimiter, refreshLimiter } = require('../middleware/rateLimit');
 const { jwtSecret, jwtRefreshSecret, jwtExpiresIn, jwtRefreshExpiresIn } = require('../config/env');
+const { authMiddleware } = require('../middleware/auth');
 
 const router = express.Router();
 
-function generateTokens(user) {
+// Refresh-token lifetime in ms (must match jwtRefreshExpiresIn = '7d').
+const REFRESH_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Issue an access+refresh token pair AND persist the refresh jti so we can
+// revoke it later (logout, rotation, replay detection).
+async function issueTokens(user) {
+  const jti = uuidv4();
   const payload = { id: user.id, email: user.email, role: user.role };
   const accessToken = jwt.sign(payload, jwtSecret, { expiresIn: jwtExpiresIn });
-  const refreshToken = jwt.sign(payload, jwtRefreshSecret, { expiresIn: jwtRefreshExpiresIn });
-  return { accessToken, refreshToken };
+  const refreshToken = jwt.sign({ ...payload, jti }, jwtRefreshSecret, {
+    expiresIn: jwtRefreshExpiresIn,
+  });
+  const expiresAt = new Date(Date.now() + REFRESH_LIFETIME_MS);
+  await db.query(
+    'INSERT INTO refresh_tokens (jti, user_id, expires_at) VALUES ($1, $2, $3)',
+    [jti, user.id, expiresAt]
+  );
+  return { accessToken, refreshToken, jti };
+}
+
+async function revokeJti(jti, replacedBy = null) {
+  await db.query(
+    'UPDATE refresh_tokens SET revoked_at = NOW(), replaced_by = $2 WHERE jti = $1 AND revoked_at IS NULL',
+    [jti, replacedBy]
+  );
+}
+
+async function revokeAllForUser(userId) {
+  await db.query(
+    'UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL',
+    [userId]
+  );
 }
 
 // POST /auth/register
@@ -44,7 +73,6 @@ router.post('/register', authLimiter, async (req, res, next) => {
 
     const user = result.rows[0];
 
-    // Create labourer profile record if role is labourer
     if (role === 'labourer') {
       await db.query(
         'INSERT INTO labourer_profiles (user_id, skills, hourly_rate) VALUES ($1, $2, $3)',
@@ -52,8 +80,12 @@ router.post('/register', authLimiter, async (req, res, next) => {
       );
     }
 
-    const tokens = generateTokens(user);
-    res.status(201).json({ user, ...tokens });
+    const tokens = await issueTokens(user);
+    res.status(201).json({
+      user,
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+    });
   } catch (err) {
     next(err);
   }
@@ -82,15 +114,19 @@ router.post('/login', authLimiter, async (req, res, next) => {
     }
 
     delete user.password_hash;
-    const tokens = generateTokens(user);
-    res.json({ user, ...tokens });
+    const tokens = await issueTokens(user);
+    res.json({
+      user,
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+    });
   } catch (err) {
     next(err);
   }
 });
 
 // GET /api/auth/me — return full user profile including kyc_status
-router.get('/me', require('../middleware/auth').authMiddleware, async (req, res, next) => {
+router.get('/me', authMiddleware, async (req, res, next) => {
   try {
     const result = await db.query(
       `SELECT id, name, email, phone, role, avatar_url, kyc_status, created_at
@@ -107,7 +143,7 @@ router.get('/me', require('../middleware/auth').authMiddleware, async (req, res,
 });
 
 // POST /auth/push-token — save Expo push token for notifications
-router.post('/push-token', require('../middleware/auth').authMiddleware, async (req, res, next) => {
+router.post('/push-token', authMiddleware, async (req, res, next) => {
   try {
     const { token } = req.body;
     if (!token) return res.status(400).json({ error: 'Token required' });
@@ -118,7 +154,7 @@ router.post('/push-token', require('../middleware/auth').authMiddleware, async (
   }
 });
 
-// POST /auth/refresh
+// POST /auth/refresh — rotate: revoke old jti, issue new one
 router.post('/refresh', refreshLimiter, async (req, res, next) => {
   try {
     const { refreshToken } = req.body;
@@ -126,7 +162,31 @@ router.post('/refresh', refreshLimiter, async (req, res, next) => {
       return res.status(400).json({ error: 'Refresh token required' });
     }
 
-    const decoded = jwt.verify(refreshToken, jwtRefreshSecret);
+    let decoded;
+    try {
+      decoded = jwt.verify(refreshToken, jwtRefreshSecret);
+    } catch {
+      return res.status(401).json({ error: 'Invalid or expired refresh token' });
+    }
+    if (!decoded.jti) {
+      return res.status(401).json({ error: 'Invalid refresh token' });
+    }
+
+    const tokenRow = await db.query(
+      'SELECT jti, user_id, revoked_at FROM refresh_tokens WHERE jti = $1',
+      [decoded.jti]
+    );
+    if (tokenRow.rows.length === 0) {
+      return res.status(401).json({ error: 'Unknown refresh token' });
+    }
+    if (tokenRow.rows[0].revoked_at) {
+      // Replay detection: the attacker has an old token — revoke everything
+      // active for this user so the legitimate "live" token is also killed.
+      // The legitimate user logs in again; the attacker is locked out.
+      await revokeAllForUser(tokenRow.rows[0].user_id);
+      return res.status(401).json({ error: 'Refresh token reuse detected' });
+    }
+
     const result = await db.query(
       'SELECT id, name, email, phone, role, avatar_url FROM users WHERE id = $1',
       [decoded.id]
@@ -136,10 +196,34 @@ router.post('/refresh', refreshLimiter, async (req, res, next) => {
     }
 
     const user = result.rows[0];
-    const tokens = generateTokens(user);
-    res.json({ user, ...tokens });
-  } catch {
-    res.status(401).json({ error: 'Invalid or expired refresh token' });
+    const tokens = await issueTokens(user);
+    await revokeJti(decoded.jti, tokens.jti);
+    res.json({
+      user,
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /auth/logout — revoke provided refresh token + clear push_token
+router.post('/logout', authMiddleware, async (req, res, next) => {
+  try {
+    const { refreshToken } = req.body || {};
+    if (refreshToken) {
+      try {
+        const decoded = jwt.verify(refreshToken, jwtRefreshSecret);
+        if (decoded.jti) await revokeJti(decoded.jti);
+      } catch {
+        // token bad or expired — fall through, still clear push_token
+      }
+    }
+    await db.query('UPDATE users SET push_token = NULL WHERE id = $1', [req.user.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
   }
 });
 

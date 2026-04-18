@@ -13,7 +13,19 @@ export const authService = {
     const res = await api.post('/auth/refresh', { refreshToken });
     return res.data;
   },
-  async logout({ accessToken, refreshToken }) {
+  async forgotPassword(email) {
+    const res = await api.post('/auth/forgot-password', { email });
+    return res.data;
+  },
+  async resetPassword({ email, code, newPassword }) {
+    const res = await api.post('/auth/reset-password', {
+      email,
+      code,
+      new_password: newPassword,
+    });
+    return res.data;
+  },
+    async logout({ accessToken, refreshToken }) {
     // Best-effort — the user wants out now, so never throw.
     // On success the server revokes the refresh jti and clears push_token.
     try {

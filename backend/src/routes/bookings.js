@@ -18,6 +18,14 @@ router.post('/', authMiddleware, async (req, res, next) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
+    const scheduledDate = new Date(scheduled_at);
+    if (Number.isNaN(scheduledDate.getTime())) {
+      return res.status(400).json({ error: 'Invalid scheduled_at' });
+    }
+    if (scheduledDate.getTime() <= Date.now()) {
+      return res.status(400).json({ error: 'scheduled_at must be in the future' });
+    }
+
     // Check labourer exists and is available
     const labourerCheck = await db.query(
       `SELECT u.id, u.name, lp.hourly_rate, lp.is_available

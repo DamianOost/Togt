@@ -13,4 +13,17 @@ export const authService = {
     const res = await api.post('/auth/refresh', { refreshToken });
     return res.data;
   },
+  async logout({ accessToken, refreshToken }) {
+    // Best-effort — the user wants out now, so never throw.
+    // On success the server revokes the refresh jti and clears push_token.
+    try {
+      await api.post(
+        '/auth/logout',
+        { refreshToken },
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+    } catch {
+      // Swallowed — local state will still be cleared.
+    }
+  },
 };

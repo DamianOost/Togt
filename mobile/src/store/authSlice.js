@@ -47,6 +47,17 @@ export const restoreSessionThunk = createAsyncThunk('auth/restore', async (_, { 
   }
 });
 
+// Server-side logout: revokes refresh-token jti + clears push_token.
+// Always clears local state even if the API call fails.
+export const logoutThunk = createAsyncThunk('auth/logout', async (_, { getState }) => {
+  const { accessToken, refreshToken } = getState().auth;
+  if (accessToken && refreshToken) {
+    await authService.logout({ accessToken, refreshToken });
+  }
+  await clearAuth();
+  return true;
+});
+
 const authSlice = createSlice({
   name: 'auth',
   initialState: {
@@ -58,12 +69,6 @@ const authSlice = createSlice({
     restored: false,
   },
   reducers: {
-    logout(state) {
-      state.user = null;
-      state.accessToken = null;
-      state.refreshToken = null;
-      clearAuth().catch(() => {});
-    },
     setTokens(state, action) {
       state.accessToken = action.payload.accessToken;
       state.refreshToken = action.payload.refreshToken;
@@ -109,9 +114,14 @@ const authSlice = createSlice({
       })
       .addCase(restoreSessionThunk.rejected, (state) => {
         state.restored = true;
+      })
+      .addCase(logoutThunk.fulfilled, (state) => {
+        state.user = null;
+        state.accessToken = null;
+        state.refreshToken = null;
       });
   },
 });
 
-export const { logout, setTokens, clearError, updateUser } = authSlice.actions;
+export const { setTokens, clearError, updateUser } = authSlice.actions;
 export default authSlice.reducer;

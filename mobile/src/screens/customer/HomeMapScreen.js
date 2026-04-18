@@ -7,7 +7,7 @@ import {
 import MapView, { Marker } from 'react-native-maps';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSelector, useDispatch } from 'react-redux';
-import { logout } from '../../store/authSlice';
+import { logoutThunk } from '../../store/authSlice';
 import { locationService } from '../../services/locationService';
 import api from '../../services/api';
 import { formatZAR } from '../../utils/formatters';
@@ -185,7 +185,7 @@ export default function HomeMapScreen({ navigation }) {
           <Text style={styles.searchText}>
             {user?.name?.split(' ')[0]}'s location
           </Text>
-          <TouchableOpacity style={styles.avatarBtn} onPress={() => dispatch(logout())}>
+          <TouchableOpacity style={styles.avatarBtn} onPress={() => dispatch(logoutThunk())}>
             <Text style={styles.avatarText}>{user?.name?.[0] || 'U'}</Text>
           </TouchableOpacity>
         </View>

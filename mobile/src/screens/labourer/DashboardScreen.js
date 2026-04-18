@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSelector, useDispatch } from 'react-redux';
-import { logout } from '../../store/authSlice';
+import { logoutThunk } from '../../store/authSlice';
 import { fetchMyBookings } from '../../store/bookingSlice';
 import api from '../../services/api';
 import BookingStatusBadge from '../../components/BookingStatusBadge';
@@ -115,7 +115,7 @@ export default function DashboardScreen({ navigation }) {
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.profileBtn, styles.logoutBtn]}
-                    onPress={() => dispatch(logout())}
+                    onPress={() => dispatch(logoutThunk())}
                   >
                     <Text style={styles.profileBtnText}>🚪</Text>
                   </TouchableOpacity>

@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
-    "migrate": "node src/db/migrate.js"
+    "migrate": "node src/db/migrate.js",
+    "test": "jest --runInBand",
+    "test:watch": "jest --runInBand --watch"
   },
   "dependencies": {
     "axios": "^1.6.0",
@@ -25,6 +27,8 @@
     "uuid": "^9.0.1"
   },
   "devDependencies": {
-    "nodemon": "^3.0.2"
+    "jest": "^30.3.0",
+    "nodemon": "^3.0.2",
+    "supertest": "^7.2.2"
   }
 }

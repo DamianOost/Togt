@@ -87,8 +87,10 @@ initChatSockets(io);
 // Error handler (must be last)
 app.use(errorHandler);
 
-server.listen(port, () => {
-  console.log(`Togt API running on port ${port}`);
-});
+if (require.main === module) {
+  server.listen(port, () => {
+    console.log(`Togt API running on port ${port}`);
+  });
+}
 
 module.exports = { app, server };

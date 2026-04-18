@@ -6,6 +6,9 @@ module.exports = {
   testMatch: ['<rootDir>/tests/**/*.test.js'],
   testTimeout: 15000,
   forceExit: true,
-  moduleNameMapper: { 'expo-server-sdk': '<rootDir>/tests/__mocks__/expo-server-sdk.js' },
+  moduleNameMapper: {
+    'expo-server-sdk': '<rootDir>/tests/__mocks__/expo-server-sdk.js',
+    '^resend$': '<rootDir>/tests/__mocks__/resend.js',
+  },
 
 };

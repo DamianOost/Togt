@@ -22,6 +22,10 @@ module.exports = {
   jwtExpiresIn: '15m',
   jwtRefreshExpiresIn: '7d',
   corsOrigins: (process.env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean),
+  resend: {
+    apiKey: process.env.RESEND_API_KEY,
+    fromAddress: process.env.RESEND_FROM || 'Togt <onboarding@resend.dev>',
+  },
   peach: {
     entityId: process.env.PEACH_ENTITY_ID,
     accessToken: process.env.PEACH_ACCESS_TOKEN,

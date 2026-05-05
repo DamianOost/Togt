@@ -41,37 +41,9 @@ function StarRow({ rating, size = 14 }) {
           ★
         </Text>
       ))}
-      <TouchableOpacity
-        style={requestNowStyles.fab}
-        onPress={() => navigation.navigate('RequestMatch')}
-      >
-        <Text style={requestNowStyles.fabIcon}>⚡</Text>
-        <Text style={requestNowStyles.fabText}>Request now</Text>
-      </TouchableOpacity>
     </View>
   );
 }
-
-const requestNowStyles = StyleSheet.create({
-  fab: {
-    position: 'absolute',
-    bottom: 28,
-    alignSelf: 'center',
-    backgroundColor: '#f59e0b',
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-    borderRadius: 999,
-    flexDirection: 'row',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.25,
-    shadowRadius: 16,
-    elevation: 10,
-  },
-  fabIcon: { fontSize: 18, marginRight: 8 },
-  fabText: { color: '#1a1a2e', fontWeight: '800', fontSize: 16 },
-});
 
 export default function HomeMapScreen({ navigation }) {
   const dispatch = useDispatch();

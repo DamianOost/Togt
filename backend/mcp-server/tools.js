@@ -22,25 +22,73 @@ async function findLabourers(ctx, { skill, lat, lng, radius_km = 50, limit = 5 }
     throw new Error('skill, lat, lng are required');
   }
   const candidates = await matcher.selectCandidates({ skill, lat, lng, radiusKm: radius_km, limit });
-  return candidates.map((c) => ({
-    user_id: c.user_id,
-    name: c.name,
-    rating: Number(c.rating_avg) || 0,
-    hourly_rate: Number(c.hourly_rate),
-    distance_km: Number(c.distance_km).toFixed(2),
-  }));
+  return candidates.map((c) => {
+    const hourlyRate = Number(c.hourly_rate);
+    return {
+      user_id: c.user_id,
+      name: c.name,
+      // ─── Trust signals (memo 1: "review_count alongside rating") ─────────
+      rating: Number(c.rating_avg) || 0,
+      review_count: Number(c.rating_count) || 0,
+      // ─── Risk signals (memo 1: "acceptance_rate per labourer") ──────────
+      acceptance_rate_pct: c.acceptance_rate_pct === null ? null : Number(c.acceptance_rate_pct),
+      completion_rate_pct: c.completion_rate_pct === null ? null : Number(c.completion_rate_pct),
+      pinged_last_30d: c.pinged_30d,
+      bookings_last_30d: c.bookings_30d,
+      days_since_last_booking: c.days_since_last_booking,
+      // ─── Cost signals (memo 1: "all-in cost upfront") ──────────────────
+      hourly_rate: hourlyRate,
+      currency: 'ZAR',
+      estimated_minimum_total: hourlyRate, // 1-hour minimum; future: per-labourer minimums
+      // ─── Geographic ─────────────────────────────────────────────────────
+      distance_km: Number(c.distance_km).toFixed(2),
+    };
+  });
 }
 
 async function estimateBookingCost(ctx, { labourer_id, hours }) {
   if (!labourer_id || !hours) throw new Error('labourer_id and hours are required');
-  const r = await db.query('SELECT hourly_rate FROM labourer_profiles WHERE user_id = $1', [labourer_id]);
-  if (r.rows.length === 0) throw new Error(`Labourer ${labourer_id} not found`);
-  const rate = Number(r.rows[0].hourly_rate);
+  const profile = await db.query(
+    'SELECT hourly_rate, rating_avg, rating_count FROM labourer_profiles WHERE user_id = $1',
+    [labourer_id]
+  );
+  if (profile.rows.length === 0) throw new Error(`Labourer ${labourer_id} not found`);
+  const rate = Number(profile.rows[0].hourly_rate);
   const subtotal = +(rate * Number(hours)).toFixed(2);
+  const platformFee = 0; // POC: no fee taken; integrators must still see the field so the breakdown is structurally complete
+  const total = +(subtotal + platformFee).toFixed(2);
+
+  // expected_completion_rate_pct (last 30d) — memo 3 ("supply_confidence_score")
+  const stats = await db.query(
+    `SELECT
+       COUNT(*) FILTER (WHERE status = 'completed' AND created_at > NOW() - INTERVAL '30 days') AS completed_30d,
+       COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '30 days') AS bookings_30d
+       FROM bookings WHERE labourer_id = $1`,
+    [labourer_id]
+  );
+  const b30 = Number(stats.rows[0].bookings_30d);
+  const c30 = Number(stats.rows[0].completed_30d);
+  const expectedCompletionPct = b30 > 0 ? +(((c30 / b30) * 100).toFixed(1)) : null;
+
   return {
-    hourly_rate: rate, hours: Number(hours), subtotal, total: subtotal,
+    hourly_rate: rate,
+    hours: Number(hours),
+    // structured breakdown (memo 1 + memo 3) — no surprise fees post-booking
+    subtotal,
+    platform_fee: platformFee,
+    total,
     currency: 'ZAR',
-    cancellation_policy: 'Free cancellation within 3 minutes of match acceptance.',
+    // cancellation semantics surfaced (memo 1 #3)
+    cancellation_window_seconds: 180,
+    cancellation_penalty: { within_window: 0, after_window: total, currency: 'ZAR' },
+    cancellation_policy: 'Free cancellation within 3 minutes of match acceptance. Full charge thereafter.',
+    // confidence signal (memo 3 #5)
+    expected_completion_rate_pct: expectedCompletionPct,
+    completed_bookings_30d: c30,
+    total_bookings_30d: b30,
+    // labourer trust signals (memo 1 #1)
+    labourer_rating: Number(profile.rows[0].rating_avg) || 0,
+    labourer_review_count: Number(profile.rows[0].rating_count) || 0,
   };
 }
 
@@ -145,6 +193,82 @@ async function forceExpireMatch(_ctx, { match_id }) {
   return { ok: true, match_id };
 }
 
+
+async function marketplaceStats(_ctx, { skill, region } = {}) {
+  // Aggregate, non-sensitive supply/demand metrics. Helps integrators evaluate
+  // Togt without writing test bookings (memo 3 #1 + #2). Helps the personal
+  // assistant decide whether Togt is even worth trying for a given task.
+  const skillFilter = skill ? `AND $1 = ANY(lp.skills)` : '';
+  const params = skill ? [skill] : [];
+
+  const [supply, demand, completion, latency] = await Promise.all([
+    // Active verified labourers, by skill
+    db.query(
+      `SELECT lp.skills, COUNT(*)::int AS n
+         FROM labourer_profiles lp
+         JOIN users u ON u.id = lp.user_id
+        WHERE lp.is_available = true AND u.kyc_status = 'verified'
+        GROUP BY lp.skills`
+    ),
+    // Bookings last 7 / 30 days
+    db.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days')::int AS last_7d,
+         COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '30 days')::int AS last_30d
+         FROM bookings`
+    ),
+    // Completion rate last 30 days
+    db.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE status = 'completed' AND created_at > NOW() - INTERVAL '30 days')::int AS completed_30d,
+         COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '30 days')::int AS bookings_30d
+         FROM bookings`
+    ),
+    // Average match-to-acceptance latency last 30 days
+    db.query(
+      `SELECT
+         AVG(EXTRACT(EPOCH FROM (responded_at - pinged_at)))::numeric(10,1) AS avg_seconds
+         FROM match_attempts
+        WHERE status = 'accepted'
+          AND pinged_at > NOW() - INTERVAL '30 days'
+          AND responded_at IS NOT NULL`
+    ),
+  ]);
+
+  // Flatten skills into a histogram
+  const skillHistogram = {};
+  for (const row of supply.rows) {
+    for (const sk of (row.skills || [])) {
+      skillHistogram[sk] = (skillHistogram[sk] || 0) + Number(row.n);
+    }
+  }
+
+  const b30 = Number(completion.rows[0].bookings_30d);
+  const c30 = Number(completion.rows[0].completed_30d);
+
+  return {
+    supply: {
+      active_verified_labourers: supply.rows.reduce((acc, r) => acc + Number(r.n), 0),
+      by_skill: skillHistogram,
+    },
+    demand: {
+      bookings_last_7d: demand.rows[0].last_7d,
+      bookings_last_30d: demand.rows[0].last_30d,
+    },
+    quality: {
+      completion_rate_pct_30d: b30 > 0 ? +(((c30 / b30) * 100).toFixed(1)) : null,
+      completed_30d: c30,
+      total_bookings_30d: b30,
+    },
+    performance: {
+      avg_match_to_acceptance_seconds: latency.rows[0].avg_seconds === null
+        ? null
+        : Number(latency.rows[0].avg_seconds),
+    },
+    snapshot_at: new Date().toISOString(),
+  };
+}
+
 // ─── Tool catalog ────────────────────────────────────────────────────────────
 
 const TOOLS = [
@@ -216,6 +340,17 @@ const TOOLS = [
     inputSchema: { type: 'object', required: ['match_id'],
       properties: { match_id: { type: 'string', format: 'uuid' } } },
     handler: forceExpireMatch,
+  },
+  { name: 'marketplace_stats', scope: 'mcp:read_only',
+    description: 'Aggregate, non-sensitive supply/demand metrics for evaluating Togt as a partner marketplace. Returns active labourer counts (total + by skill), bookings last 7/30 days, completion rate last 30 days, average match-to-acceptance latency. Use this to decide whether to route a user request to Togt vs another marketplace.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        skill: { type: 'string', description: 'Optional: scope stats to a single skill (e.g. "Plumbing").' },
+        region: { type: 'string', description: 'Reserved for future geographic scoping; ignored today.' },
+      },
+    },
+    handler: marketplaceStats,
   },
 ];
 

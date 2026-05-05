@@ -37,10 +37,30 @@ function resetPingTimeoutForTesting() { PING_TIMEOUT_MS = 30 * 1000; }
 // ─── Candidate selection ─────────────────────────────────────────────────────
 
 async function selectCandidates({ skill, lat, lng, radiusKm = RADIUS_KM, limit = MAX_CANDIDATES }) {
-  // Haversine in SQL — small dataset so no spatial index needed yet.
+  // Haversine in SQL + decision-context fields the agentic-introspection
+  // sub-agents flagged as load-bearing for confident booking:
+  //   - rating_avg + rating_count (reviews) — single rating without count is misleading
+  //   - acceptance_rate over last 30 days from match_attempts
+  //   - completion_rate over last 30 days from bookings
+  //   - last_active_at — most recent booking touched
   // 6371 = Earth radius km.
   const sql = `
-    SELECT lp.user_id, u.name, lp.hourly_rate, lp.rating_avg,
+    WITH attempt_stats AS (
+      SELECT labourer_id,
+             COUNT(*) FILTER (WHERE pinged_at > NOW() - INTERVAL '30 days') AS pinged_30d,
+             COUNT(*) FILTER (WHERE status = 'accepted' AND pinged_at > NOW() - INTERVAL '30 days') AS accepted_30d
+        FROM match_attempts
+       GROUP BY labourer_id
+    ),
+    booking_stats AS (
+      SELECT labourer_id,
+             COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '30 days') AS bookings_30d,
+             COUNT(*) FILTER (WHERE status = 'completed' AND created_at > NOW() - INTERVAL '30 days') AS completed_30d,
+             MAX(created_at) AS last_booking_at
+        FROM bookings
+       GROUP BY labourer_id
+    )
+    SELECT lp.user_id, u.name, lp.hourly_rate, lp.rating_avg, lp.rating_count,
            lp.current_lat, lp.current_lng,
            (6371 * acos(
              LEAST(1.0,
@@ -48,9 +68,25 @@ async function selectCandidates({ skill, lat, lng, radiusKm = RADIUS_KM, limit =
                cos(radians(lp.current_lng) - radians($2)) +
                sin(radians($1)) * sin(radians(lp.current_lat))
              )
-           )) AS distance_km
+           )) AS distance_km,
+           COALESCE(a.pinged_30d, 0)::int AS pinged_30d,
+           COALESCE(a.accepted_30d, 0)::int AS accepted_30d,
+           CASE WHEN COALESCE(a.pinged_30d, 0) > 0
+                THEN ROUND((a.accepted_30d::numeric / a.pinged_30d) * 100, 1)
+                ELSE NULL END AS acceptance_rate_pct,
+           COALESCE(b.bookings_30d, 0)::int AS bookings_30d,
+           COALESCE(b.completed_30d, 0)::int AS completed_30d,
+           CASE WHEN COALESCE(b.bookings_30d, 0) > 0
+                THEN ROUND((b.completed_30d::numeric / b.bookings_30d) * 100, 1)
+                ELSE NULL END AS completion_rate_pct,
+           b.last_booking_at,
+           CASE WHEN b.last_booking_at IS NOT NULL
+                THEN EXTRACT(DAY FROM (NOW() - b.last_booking_at))::int
+                ELSE NULL END AS days_since_last_booking
       FROM labourer_profiles lp
       JOIN users u ON u.id = lp.user_id
+      LEFT JOIN attempt_stats a ON a.labourer_id = lp.user_id
+      LEFT JOIN booking_stats b ON b.labourer_id = lp.user_id
      WHERE lp.is_available = true
        AND $3 = ANY(lp.skills)
        AND u.kyc_status = 'verified'

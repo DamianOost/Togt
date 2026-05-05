@@ -321,26 +321,50 @@ async function getActiveAttemptForLabourer(matchId, labourerId) {
 }
 
 async function cancelByCustomer(matchId, customerId) {
-  // Cancel any pending attempts so dispatcher unblocks
-  const attempts = await db.query(
-    `SELECT id FROM match_attempts WHERE match_request_id = $1 AND status = 'pinged'`,
-    [matchId]
-  );
-  for (const a of attempts.rows) {
-    await db.query(
-      `UPDATE match_attempts SET status = 'cancelled', responded_at = NOW() WHERE id = $1`,
-      [a.id]
+  // Wrap the cancel in a transaction so we cannot leave stranded
+  // 'cancelled' attempts attached to a still-'pending' match if the
+  // process dies mid-way. Lock the match row first so a concurrent
+  // accept either commits before us (we then return false and the
+  // route layer surfaces 409 already_matched) or blocks until we commit.
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+    const lock = await client.query(
+      `SELECT id, status FROM match_requests
+         WHERE id = $1 AND customer_id = $2
+         FOR UPDATE`,
+      [matchId, customerId]
     );
-    notifyResponse(a.id, 'cancelled');
+    if (lock.rows.length === 0 || lock.rows[0].status !== 'pending') {
+      await client.query('ROLLBACK');
+      return false;
+    }
+    const attempts = await client.query(
+      `SELECT id FROM match_attempts
+         WHERE match_request_id = $1 AND status = 'pinged'`,
+      [matchId]
+    );
+    await client.query(
+      `UPDATE match_attempts
+          SET status = 'cancelled', responded_at = NOW()
+        WHERE match_request_id = $1 AND status = 'pinged'`,
+      [matchId]
+    );
+    await client.query(
+      `UPDATE match_requests SET status = 'cancelled' WHERE id = $1`,
+      [matchId]
+    );
+    await client.query('COMMIT');
+    // Drain in-memory waiters AFTER commit so the dispatcher sees a
+    // consistent DB state when its loop's next loadMatch fires.
+    for (const a of attempts.rows) notifyResponse(a.id, 'cancelled');
+    return true;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
   }
-  const r = await db.query(
-    `UPDATE match_requests
-        SET status = 'cancelled'
-      WHERE id = $1 AND customer_id = $2 AND status = 'pending'
-      RETURNING id`,
-    [matchId, customerId]
-  );
-  return r.rowCount > 0;
 }
 
 

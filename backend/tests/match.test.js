@@ -27,10 +27,28 @@ async function makeVerifiedLabourer(opts = {}) {
   return u;
 }
 
+async function waitForAttempt(matchId, count = 1, timeoutMs = 3000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const r = await db.query(
+      'SELECT id FROM match_attempts WHERE match_request_id = $1',
+      [matchId]
+    );
+    if (r.rows.length >= count) return r.rows;
+    await new Promise((res) => setTimeout(res, 25));
+  }
+  throw new Error(`waitForAttempt timed out (matchId=${matchId}, expected ${count})`);
+}
+
 beforeEach(async () => {
   await truncateAll();
   await db.query('DELETE FROM match_attempts');
   await db.query('DELETE FROM match_requests');
+});
+
+afterEach(() => {
+  // Always reset, even if the test threw. Stops PING_TIMEOUT_MS bleed.
+  matcher.__resetPingTimeoutForTesting();
 });
 
 afterAll(async () => {
@@ -184,8 +202,7 @@ describe('POST /api/match', () => {
       hours_est: 2,
     });
     const matchId = create.body.match.id;
-
-    await new Promise((r) => setTimeout(r, 100)); // first ping fires
+    await waitForAttempt(matchId); // first ping fires
 
     const decline1 = await request(app).post(`/api/match/${matchId}/decline`).set(authHeader(l1.accessToken));
     expect(decline1.status).toBe(200);
@@ -221,8 +238,7 @@ describe('POST /api/match', () => {
       hours_est: 2,
     });
     const matchId = create.body.match.id;
-
-    await new Promise((r) => setTimeout(r, 100));
+    await waitForAttempt(matchId);
 
     const cancel = await request(app).post(`/api/match/${matchId}/cancel`).set(authHeader(customer.accessToken));
     expect(cancel.status).toBe(200);
@@ -247,8 +263,7 @@ describe('POST /api/match', () => {
       hours_est: 2,
     });
     const matchId = create.body.match.id;
-
-    await new Promise((r) => setTimeout(r, 100));
+    await waitForAttempt(matchId);
 
     const get = await request(app).get(`/api/match/${matchId}`).set(authHeader(customer.accessToken));
     expect(get.status).toBe(200);
@@ -278,7 +293,7 @@ describe('POST /api/match', () => {
       hours_est: 2,
     });
     const matchId = create.body.match.id;
-    await new Promise((r) => setTimeout(r, 100));
+    await waitForAttempt(matchId);
 
     const res = await request(app)
       .post(`/api/match/${matchId}/accept`)
@@ -326,7 +341,7 @@ describe('reviewer-flagged race conditions', () => {
       scheduled_at: FUTURE_ISO(), hours_est: 2,
     });
     const matchId = create.body.match.id;
-    await new Promise((r) => setTimeout(r, 100));
+    await waitForAttempt(matchId);
 
     await request(app).post(`/api/match/${matchId}/cancel`).set(authHeader(customer.accessToken));
 
@@ -348,7 +363,7 @@ describe('reviewer-flagged race conditions', () => {
       scheduled_at: FUTURE_ISO(), hours_est: 2,
     });
     const matchId = create.body.match.id;
-    await new Promise((r) => setTimeout(r, 100));
+    await waitForAttempt(matchId);
 
     const accept = await request(app).post(`/api/match/${matchId}/accept`).set(authHeader(labourer.accessToken));
     expect(accept.status).toBe(200);
@@ -396,7 +411,7 @@ describe('reviewer-flagged race conditions', () => {
       scheduled_at: FUTURE_ISO(), hours_est: 2,
     });
     const matchId = create.body.match.id;
-    await new Promise((r) => setTimeout(r, 100));
+    await waitForAttempt(matchId);
 
     expect(matcher.__pendingSize()).toBeGreaterThan(0);
 

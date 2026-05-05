@@ -4,6 +4,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Text } from 'react-native';
 
 import HomeMapScreen from '../screens/customer/HomeMapScreen';
+import RequestMatchScreen from '../screens/customer/RequestMatchScreen';
 import LabourerProfileScreen from '../screens/customer/LabourerProfileScreen';
 import BookingFormScreen from '../screens/customer/BookingFormScreen';
 import ActiveBookingScreen from '../screens/customer/ActiveBookingScreen';
@@ -29,6 +30,7 @@ function HomeStack() {
   return (
     <Stack.Navigator screenOptions={screenOptions}>
       <Stack.Screen name="HomeMap" component={HomeMapScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="RequestMatch" component={RequestMatchScreen} options={{ headerShown: false }} />
       <Stack.Screen name="LabourerProfile" component={LabourerProfileScreen} options={{ title: 'Labourer Profile' }} />
       <Stack.Screen name="BookingForm" component={BookingFormScreen} options={{ title: 'Book Now' }} />
       <Stack.Screen name="ActiveBooking" component={ActiveBookingScreen} options={{ title: 'Active Booking' }} />

@@ -17,8 +17,10 @@ const kycRoutes = require('./routes/kyc');
 const bookingExtRoutes = require('./routes/bookingExtensions');
 const safetyRoutes = require('./routes/safety');
 const uploadRoutes = require('./routes/upload');
+const matchRoutes = require('./routes/match');
 const initLocationSockets = require('./sockets/location');
 const initChatSockets = require('./sockets/chat');
+const initMatchSockets = require('./sockets/match');
 
 const app = express();
 const server = http.createServer(app);
@@ -39,8 +41,10 @@ const io = new Server(server, {
       : { origin: '*', methods: ['GET', 'POST'] },
 });
 
-// Make io available to routes (for message broadcast)
+// Make io available to routes (for message broadcast) AND to the matcher
+// dispatcher which fires from setImmediate (outside any req scope).
 app.set('io', io);
+global.__togt_io = io;
 
 // Middleware
 app.use(cors(corsOptions));
@@ -73,6 +77,7 @@ app.use('/api/kyc', kycRoutes);
 app.use('/api/bookings', bookingExtRoutes);
 app.use('/api/safety', safetyRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/match', matchRoutes);
 app.use('/upload', uploadRoutes);
 
 // Legacy routes (backward compat)
@@ -84,11 +89,18 @@ app.use('/ratings', ratingRoutes);
 // Socket.io
 initLocationSockets(io);
 initChatSockets(io);
+initMatchSockets(io);
 
 // Error handler (must be last)
 app.use(errorHandler);
 
 if (require.main === module) {
+  // Boot-time recovery: kill any 'pending' match_requests stranded by the
+  // previous process. See matcher.js sweepStalePending().
+  require('./services/matcher').sweepStalePending()
+    .then((n) => { if (n > 0) console.log(`[matcher] swept ${n} stale pending match(es) on boot`); })
+    .catch((err) => console.error('[matcher] boot sweep failed:', err.message));
+
   server.listen(port, () => {
     console.log(`Togt API running on port ${port}`);
   });

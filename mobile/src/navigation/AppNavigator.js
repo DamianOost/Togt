@@ -6,6 +6,7 @@ import { useSelector } from 'react-redux';
 import AuthStack from './AuthStack';
 import CustomerStack from './CustomerStack';
 import LabourerStack from './LabourerStack';
+import IncomingMatchModal from '../components/IncomingMatchModal';
 
 const RootStack = createNativeStackNavigator();
 
@@ -23,6 +24,7 @@ export default function AppNavigator() {
           <RootStack.Screen name="Labourer" component={LabourerStack} />
         )}
       </RootStack.Navigator>
+      <IncomingMatchModal />
     </NavigationContainer>
   );
 }

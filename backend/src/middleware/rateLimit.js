@@ -45,6 +45,17 @@ const forgotPasswordLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Match creation: a customer should not spam matches. 5 per 10 min per IP
+// is generous for legitimate use (typo, retry, change skill) and stops a
+// prankster from lighting up every labourer's phone.
+const matchCreateLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 5,
+  message: { error: 'Too many match requests, please try again later' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Looser on the actual verify step (user may typo code once or twice):
 // 10 requests / hour / IP.
 const resetPasswordLimiter = rateLimit({
@@ -60,4 +71,5 @@ module.exports = {
   refreshLimiter: maybe(refreshLimiter),
   forgotPasswordLimiter: maybe(forgotPasswordLimiter),
   resetPasswordLimiter: maybe(resetPasswordLimiter),
+  matchCreateLimiter: maybe(matchCreateLimiter),
 };

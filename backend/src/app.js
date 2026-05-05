@@ -64,6 +64,13 @@ app.use(express.json({
 // Health check
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
+// Self-description endpoints for agents (RFC 5785 well-known)
+const openapiSpec = require('./openapi');
+const agentsManifest = require('./agentsJson');
+app.get('/.well-known/openapi.json', (req, res) => res.json(openapiSpec));
+app.get('/openapi.json', (req, res) => res.json(openapiSpec));
+app.get('/.well-known/agents.json', (req, res) => res.json(agentsManifest));
+
 // Routes
 app.use('/auth', authRoutes);
 app.use('/api/auth', authRoutes);

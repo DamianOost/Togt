@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../config/db');
 const { authMiddleware, requireRole } = require('../middleware/auth');
 const { matchCreateLimiter } = require('../middleware/rateLimit');
+const { idempotencyMiddleware } = require('../middleware/idempotency');
 const matcher = require('../services/matcher');
 
 const router = express.Router();
@@ -9,7 +10,7 @@ const router = express.Router();
 const REQUEST_TTL_MS = 10 * 60 * 1000;
 
 // POST /api/match — customer creates an auto-match request
-router.post('/', matchCreateLimiter, authMiddleware, requireRole('customer'), async (req, res, next) => {
+router.post('/', matchCreateLimiter, authMiddleware, idempotencyMiddleware(), requireRole('customer'), async (req, res, next) => {
   try {
     const { skill_needed, address, location_lat, location_lng,
             scheduled_at, hours_est, notes } = req.body || {};

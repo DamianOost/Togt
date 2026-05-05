@@ -2,13 +2,14 @@ const express = require('express');
 const axios = require('axios');
 const db = require('../config/db');
 const { authMiddleware } = require('../middleware/auth');
+const { idempotencyMiddleware } = require('../middleware/idempotency');
 const crypto = require('crypto');
 const { peach } = require('../config/env');
 
 const router = express.Router();
 
 // POST /payments/initiate — create a Peach Payments checkout for a completed booking
-router.post('/initiate', authMiddleware, async (req, res, next) => {
+router.post('/initiate', authMiddleware, idempotencyMiddleware(), async (req, res, next) => {
   try {
     const { booking_id } = req.body;
     if (!booking_id) return res.status(400).json({ error: 'booking_id required' });
@@ -169,7 +170,7 @@ router.get('/status/:bookingId', authMiddleware, async (req, res, next) => {
 });
 
 // POST /payments/cash — mark booking as paid via cash (fallback)
-router.post('/cash', authMiddleware, async (req, res, next) => {
+router.post('/cash', authMiddleware, idempotencyMiddleware(), async (req, res, next) => {
   try {
     const { booking_id } = req.body;
     if (!booking_id) return res.status(400).json({ error: 'booking_id required' });

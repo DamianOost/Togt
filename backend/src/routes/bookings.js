@@ -1,12 +1,13 @@
 const express = require('express');
 const db = require('../config/db');
 const { authMiddleware } = require('../middleware/auth');
+const { idempotencyMiddleware } = require('../middleware/idempotency');
 const { notifyUser } = require('../services/notifications');
 
 const router = express.Router();
 
 // POST /bookings — customer creates a booking request
-router.post('/', authMiddleware, async (req, res, next) => {
+router.post('/', authMiddleware, idempotencyMiddleware(), async (req, res, next) => {
   try {
     if (req.user.role !== 'customer') {
       return res.status(403).json({ error: 'Only customers can create bookings' });

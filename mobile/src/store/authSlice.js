@@ -47,6 +47,22 @@ export const restoreSessionThunk = createAsyncThunk('auth/restore', async (_, { 
   }
 });
 
+// Silent token rotation called from api.js 401 interceptor.
+// Rejects with rejectWithValue if there is no refresh token; throws via
+// rejectWithValue if /auth/refresh itself fails (expired/revoked) — caller
+// then triggers logoutThunk.
+export const refreshTokensThunk = createAsyncThunk('auth/refreshTokens', async (_, { getState, rejectWithValue }) => {
+  const { refreshToken } = getState().auth;
+  if (!refreshToken) return rejectWithValue('No refresh token');
+  try {
+    const data = await authService.refresh(refreshToken);
+    await saveAuth(data);
+    return data;
+  } catch (err) {
+    return rejectWithValue(err.response?.data?.error || 'Refresh failed');
+  }
+});
+
 // Server-side logout: revokes refresh-token jti + clears push_token.
 // Always clears local state even if the API call fails.
 export const logoutThunk = createAsyncThunk('auth/logout', async (_, { getState }) => {
@@ -119,6 +135,11 @@ const authSlice = createSlice({
         state.user = null;
         state.accessToken = null;
         state.refreshToken = null;
+      })
+      .addCase(refreshTokensThunk.fulfilled, (state, action) => {
+        state.user = action.payload.user;
+        state.accessToken = action.payload.accessToken;
+        state.refreshToken = action.payload.refreshToken;
       });
   },
 });

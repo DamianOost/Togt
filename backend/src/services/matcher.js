@@ -172,6 +172,15 @@ async function commitAttemptToBooking(matchId, attemptId, labourerId) {
     );
 
     await client.query('COMMIT');
+    // Push notification #1 of the 3-push chain (matched / en-route / arrived).
+    // Customer learns who their labourer is the moment a match commits.
+    const labourerName = (await db.query('SELECT name FROM users WHERE id = $1', [labourerId])).rows[0]?.name || 'Your labourer';
+    notifyUser(
+      m.customer_id,
+      'Match found!',
+      `${labourerName} accepted your job — they'll be in touch soon.`,
+      { type: 'match_accepted', booking_id: booking.id, labourer_id: labourerId }
+    ).catch(() => {});
     return { ok: true, booking };
   } catch (err) {
     await client.query('ROLLBACK');

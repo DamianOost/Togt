@@ -33,7 +33,7 @@ module.exports = {
         'list_my_bookings',
         'get_booking',
       ],
-      status: 'planned',
+      status: 'available',
     },
   ],
   capabilities: {

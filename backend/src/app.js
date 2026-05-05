@@ -19,6 +19,8 @@ const bookingExtRoutes = require('./routes/bookingExtensions');
 const safetyRoutes = require('./routes/safety');
 const uploadRoutes = require('./routes/upload');
 const matchRoutes = require('./routes/match');
+const apiKeyRoutes = require('./routes/apiKeys');
+const mcpHttpRoutes = require('../mcp-server/httpHandler');
 const initLocationSockets = require('./sockets/location');
 const initChatSockets = require('./sockets/chat');
 const initMatchSockets = require('./sockets/match');
@@ -86,6 +88,8 @@ app.use('/api/bookings', bookingExtRoutes);
 app.use('/api/safety', safetyRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/match', matchRoutes);
+app.use('/api/api-keys', apiKeyRoutes);
+app.use('/mcp', mcpHttpRoutes);
 app.use('/upload', uploadRoutes);
 
 // Legacy routes (backward compat)

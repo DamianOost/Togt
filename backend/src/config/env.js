@@ -22,6 +22,11 @@ module.exports = {
   jwtExpiresIn: '15m',
   jwtRefreshExpiresIn: '7d',
   corsOrigins: (process.env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean),
+  verifynow: {
+    apiKey: process.env.VERIFYNOW_API_KEY,
+    mode: process.env.VERIFYNOW_MODE || 'sandbox',
+    baseUrl: process.env.VERIFYNOW_BASE_URL || 'https://www.verifynow.co.za/api/external',
+  },
   resend: {
     apiKey: process.env.RESEND_API_KEY,
     fromAddress: process.env.RESEND_FROM || 'Togt <onboarding@resend.dev>',

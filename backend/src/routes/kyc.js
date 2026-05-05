@@ -1,43 +1,40 @@
 /**
- * POC-grade KYC: structural SA ID validation only (no external provider).
+ * KYC: structural SA ID validation + (when configured) VerifyNow real DHA check.
  *
- * - Validates the SA ID against Luhn mod-10 checksum
- * - Parses DOB, sex, citizenship from the 13 digits
- * - Rejects anyone under 18
+ * Strategy:
+ *   1. Local structural Luhn / DOB / age check (free, instant). Catches ~99% of
+ *      typos and obviously-fake IDs without burning a paid credit.
+ *   2. If structural passes AND verifynow is configured, hit VerifyNow's
+ *      said_verification endpoint (1 credit, R2.99). On success, mark
+ *      provider=verifynow and store the HANIS-returned name/surname.
+ *   3. If verifynow is configured but the call FAILS (network / 5xx / quota),
+ *      fall back to structural-only verification with provider=poc_structural
+ *      and log the failure. The user is not penalised for a vendor outage.
  *
- * This does NOT confirm the ID exists in the SA National Population Register.
- * It catches ~99% of typos and casual fraud but not determined attackers with
- * a valid-but-not-theirs number.
- *
- * Upgrade path: swap `verifyStructural()` for a call to VerifyNow / VerifyID /
- * Smile ID and mark `provider` on the kyc_verifications row so records can
- * later be re-run through a real DHA check.
+ * Records carry the `provider` column so we can later batch-reverify any
+ * `poc_structural` rows once we want a stricter posture.
  */
 
 const express = require('express');
 const saId = require('south-african-id-parser');
 const db = require('../config/db');
 const { authMiddleware } = require('../middleware/auth');
+const verifynow = require('../services/verifynow');
 
 const router = express.Router();
 
 const MIN_AGE = 18;
 
 function yearsBetween(from, to) {
-  const ms = to - from;
-  return ms / (1000 * 60 * 60 * 24 * 365.25);
+  return (to - from) / (1000 * 60 * 60 * 24 * 365.25);
 }
 
-/**
- * @returns {{ok: true, parsed: {dob: Date, isMale: boolean, isCitizen: boolean}} | {ok: false, error: string}}
- */
 function verifyStructural(idNumber) {
   if (typeof idNumber !== 'string' || !/^\d{13}$/.test(idNumber)) {
     return { ok: false, error: 'id_invalid_format' };
   }
   const parsed = saId.parse(idNumber);
   if (!parsed || parsed.isValid === false || !parsed.dateOfBirth) {
-    // parser returns isValid=false for bad checksums, invalid dates, or wrong length
     return { ok: false, error: 'id_invalid_checksum' };
   }
   const dob = new Date(parsed.dateOfBirth);
@@ -59,7 +56,6 @@ async function upsertKyc({ userId, idNumber, status, fullName, parsed, provider 
     'SELECT id FROM kyc_verifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1',
     [userId]
   );
-
   const verifiedAt = status === 'verified' ? new Date() : null;
   const verifiedName = status === 'verified' ? fullName : null;
   const parsedDob = parsed ? parsed.dob : null;
@@ -91,7 +87,6 @@ async function setUserKycStatus(userId, status) {
   if (status === 'verified') {
     await db.query(`UPDATE users SET kyc_status = 'verified' WHERE id = $1`, [userId]);
   } else if (status === 'failed') {
-    // Only move from 'unverified' to 'failed' — don't overwrite a prior 'verified'.
     await db.query(
       `UPDATE users SET kyc_status = 'failed' WHERE id = $1 AND kyc_status != 'verified'`,
       [userId]
@@ -101,10 +96,6 @@ async function setUserKycStatus(userId, status) {
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
 
-/**
- * POST /api/kyc/verify-id
- * Body: { idNumber, firstName, lastName }
- */
 router.post('/verify-id', authMiddleware, async (req, res, next) => {
   try {
     const { idNumber, firstName, lastName } = req.body || {};
@@ -112,15 +103,16 @@ router.post('/verify-id', authMiddleware, async (req, res, next) => {
       return res.status(400).json({ error: 'idNumber, firstName, and lastName are required' });
     }
 
+    // 1. Free structural pre-check
     const v = verifyStructural(idNumber);
-    const fullName = `${firstName} ${lastName}`;
+    const submittedFullName = `${firstName} ${lastName}`;
 
     if (!v.ok) {
       await upsertKyc({
         userId: req.user.id,
         idNumber,
         status: 'failed',
-        fullName,
+        fullName: submittedFullName,
         parsed: null,
         provider: 'poc_structural',
       });
@@ -128,53 +120,87 @@ router.post('/verify-id', authMiddleware, async (req, res, next) => {
       return res.status(400).json({ error: v.error });
     }
 
+    // 2. Real DHA check via VerifyNow if configured. Failures fall back to
+    //    structural-only so a vendor outage doesn't block onboarding.
+    let provider = 'poc_structural';
+    let verifiedName = submittedFullName;
+    let vendorPayload = null;
+
+    if (verifynow.isConfigured()) {
+      try {
+        const vn = await verifynow.verifyId({ idNumber, firstName, lastName });
+        vendorPayload = vn;
+        if (vn.verified) {
+          provider = 'verifynow';
+          // Use HANIS-returned name where available — closer to the source of truth.
+          if (vn.name && vn.surname) {
+            verifiedName = `${vn.name} ${vn.surname}`;
+          }
+        } else {
+          // VerifyNow says: ID does not exist in NPR, or is flagged dead/blocked.
+          await upsertKyc({
+            userId: req.user.id,
+            idNumber,
+            status: 'failed',
+            fullName: submittedFullName,
+            parsed: v.parsed,
+            provider: 'verifynow',
+          });
+          await setUserKycStatus(req.user.id, 'failed');
+          return res.status(400).json({
+            error: 'id_not_in_npr',
+            details: 'ID not found in National Population Register',
+          });
+        }
+      } catch (err) {
+        console.warn('[kyc] VerifyNow call failed, falling back to structural-only:', err.message);
+        provider = 'poc_structural';
+      }
+    }
+
     await upsertKyc({
       userId: req.user.id,
       idNumber,
       status: 'verified',
-      fullName,
+      fullName: verifiedName,
       parsed: v.parsed,
-      provider: 'poc_structural',
+      provider,
     });
     await setUserKycStatus(req.user.id, 'verified');
 
     return res.json({
       verified: true,
-      poc_mode: true,
-      name: fullName,
+      provider,
+      poc_mode: provider === 'poc_structural',
+      name: verifiedName,
       dob: v.parsed.dob.toISOString().slice(0, 10),
       parsed_is_male: v.parsed.isMale,
       parsed_is_citizen: v.parsed.isCitizen,
+      vendor: vendorPayload ? {
+        request_id: vendorPayload.vendor_request_id,
+        smart_card: vendorPayload.smart_card,
+        on_hanis: vendorPayload.on_hanis,
+        on_npr: vendorPayload.on_npr,
+        marital_status: vendorPayload.marital_status,
+      } : null,
     });
   } catch (err) {
     next(err);
   }
 });
 
-/**
- * POST /api/kyc/selfie-enroll
- * POC: no-op that accepts the selfie and returns success so the mobile flow
- * can complete. Does not alter kyc_status (already set by /verify-id).
- * Upgrade path: wire into VerifyNow liveness or a manual review queue.
- */
 router.post('/selfie-enroll', authMiddleware, async (req, res, next) => {
   try {
     const { selfieBase64 } = req.body || {};
     if (!selfieBase64) {
       return res.status(400).json({ error: 'selfieBase64 is required' });
     }
-    // In POC we don't store base64 blobs in Postgres. The real cloud-upload
-    // path lives in /upload/profile-image (Cloudinary) — the mobile can call
-    // that with the selfie directly if we want persistent evidence later.
     return res.json({ enrolled: true, poc_mode: true, manual_review: true });
   } catch (err) {
     next(err);
   }
 });
 
-/**
- * GET /api/kyc/status
- */
 router.get('/status', authMiddleware, async (req, res, next) => {
   try {
     const userRes = await db.query(

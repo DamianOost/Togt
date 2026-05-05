@@ -5,6 +5,7 @@ const cors = require('cors');
 
 const { port, corsOrigins, nodeEnv } = require('./config/env');
 const errorHandler = require('./middleware/errorHandler');
+const { problemHandler } = require('./lib/problemJson');
 const authRoutes = require('./routes/auth');
 const labourerRoutes = require('./routes/labourers');
 const bookingRoutes = require('./routes/bookings');
@@ -92,7 +93,7 @@ initChatSockets(io);
 initMatchSockets(io);
 
 // Error handler (must be last)
-app.use(errorHandler);
+app.use(problemHandler);
 
 if (require.main === module) {
   // Boot-time recovery: kill any 'pending' match_requests stranded by the

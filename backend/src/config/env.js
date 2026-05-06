@@ -21,6 +21,7 @@ module.exports = {
   jwtRefreshSecret: required('JWT_REFRESH_SECRET', 'dev_jwt_refresh_secret_do_not_use_in_prod'),
   jwtExpiresIn: '15m',
   jwtRefreshExpiresIn: '7d',
+  webhookSecretEncryptionKey: required('WEBHOOK_SECRET_ENCRYPTION_KEY', 'a'.repeat(64)),
   corsOrigins: (process.env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean),
   verifynow: {
     apiKey: process.env.VERIFYNOW_API_KEY,

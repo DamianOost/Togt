@@ -1,9 +1,11 @@
 const express = require('express');
 const db = require('../config/db');
+const { withTx } = require('../config/db');
 const { authMiddleware, requireRole } = require('../middleware/auth');
 const { matchCreateLimiter } = require('../middleware/rateLimit');
 const { idempotencyMiddleware } = require('../middleware/idempotency');
 const matcher = require('../services/matcher');
+const { emitEvent } = require('../services/events');
 
 const router = express.Router();
 
@@ -27,16 +29,26 @@ router.post('/', matchCreateLimiter, authMiddleware, idempotencyMiddleware(), re
     }
 
     const expiresAt = new Date(Date.now() + REQUEST_TTL_MS);
-    const ins = await db.query(
-      `INSERT INTO match_requests
-         (customer_id, skill_needed, address, location_lat, location_lng,
-          scheduled_at, hours_est, notes, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-       RETURNING *`,
-      [req.user.id, skill_needed, address, location_lat, location_lng,
-       sched, hours_est || null, notes || null, expiresAt]
-    );
-    const match = ins.rows[0];
+    const match = await withTx(async (client) => {
+      const ins = await client.query(
+        `INSERT INTO match_requests
+           (customer_id, skill_needed, address, location_lat, location_lng,
+            scheduled_at, hours_est, notes, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING *`,
+        [req.user.id, skill_needed, address, location_lat, location_lng,
+         sched, hours_est || null, notes || null, expiresAt]
+      );
+      const row = ins.rows[0];
+      await emitEvent(client, {
+        eventType: 'match_request.created',
+        resourceType: 'match_request',
+        resourceId: row.id,
+        state: row.status,
+        data: row,
+      });
+      return row;
+    });
 
     matcher.dispatchMatch(match.id);
     res.status(201).json({ match });

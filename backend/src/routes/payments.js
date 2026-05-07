@@ -1,10 +1,12 @@
 const express = require('express');
 const axios = require('axios');
 const db = require('../config/db');
+const { withTx } = require('../config/db');
 const { authMiddleware } = require('../middleware/auth');
 const { idempotencyMiddleware } = require('../middleware/idempotency');
 const crypto = require('crypto');
 const { peach } = require('../config/env');
+const { emitEvent } = require('../services/events');
 
 const router = express.Router();
 
@@ -138,10 +140,25 @@ router.post('/webhook', async (req, res, next) => {
     const isSuccess = /^(000\.000\.|000\.100\.1|000\.[36])/.test(code);
     const newStatus = isSuccess ? 'paid' : 'failed';
 
-    await db.query(
-      `UPDATE payments SET status = $1, peach_result_code = $2 WHERE peach_checkout_id = $3`,
-      [newStatus, code, checkoutId]
-    );
+    await withTx(async (client) => {
+      const upd = await client.query(
+        `UPDATE payments SET status = $1, peach_result_code = $2
+          WHERE peach_checkout_id = $3
+          RETURNING *`,
+        [newStatus, code, checkoutId]
+      );
+      const row = upd.rows[0];
+      if (row) {
+        await emitEvent(client, {
+          eventType: isSuccess ? 'payment.succeeded' : 'payment.failed',
+          resourceType: 'payment',
+          resourceId: row.id,
+          previousState: 'pending',
+          state: row.status,
+          data: row,
+        });
+      }
+    });
 
     res.json({ received: true });
   } catch (err) {

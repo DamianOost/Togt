@@ -2,6 +2,7 @@ const { v4: uuidv4 } = require('uuid');
 
 const EVENT_TYPES = Object.freeze([
   'booking.created',
+  'booking.accepted',
   'booking.matched',
   'booking.in_progress',
   'booking.completed',

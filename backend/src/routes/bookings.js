@@ -1,8 +1,17 @@
 const express = require('express');
 const db = require('../config/db');
+const { withTx } = require('../config/db');
 const { authMiddleware } = require('../middleware/auth');
 const { idempotencyMiddleware } = require('../middleware/idempotency');
 const { notifyUser } = require('../services/notifications');
+const { emitEvent } = require('../services/events');
+
+const STATUS_TO_EVENT = {
+  accepted: 'booking.accepted',
+  in_progress: 'booking.in_progress',
+  completed: 'booking.completed',
+  cancelled: 'booking.cancelled',
+};
 
 const router = express.Router();
 
@@ -41,17 +50,26 @@ router.post('/', authMiddleware, idempotencyMiddleware(), async (req, res, next)
 
     const total_amount = hours_est ? (labourer.hourly_rate * parseFloat(hours_est)).toFixed(2) : null;
 
-    const result = await db.query(
-      `INSERT INTO bookings
-         (customer_id, labourer_id, skill_needed, address, location_lat, location_lng,
-          scheduled_at, hours_est, total_amount, notes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       RETURNING *`,
-      [req.user.id, labourer_id, skill_needed, address, location_lat, location_lng,
-       scheduled_at, hours_est || null, total_amount, notes || null]
-    );
-
-    const booking = result.rows[0];
+    const booking = await withTx(async (client) => {
+      const result = await client.query(
+        `INSERT INTO bookings
+           (customer_id, labourer_id, skill_needed, address, location_lat, location_lng,
+            scheduled_at, hours_est, total_amount, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING *`,
+        [req.user.id, labourer_id, skill_needed, address, location_lat, location_lng,
+         scheduled_at, hours_est || null, total_amount, notes || null]
+      );
+      const row = result.rows[0];
+      await emitEvent(client, {
+        eventType: 'booking.created',
+        resourceType: 'booking',
+        resourceId: row.id,
+        state: row.status,
+        data: row,
+      });
+      return row;
+    });
 
     // Notify labourer of new booking request
     const customerResult = await db.query('SELECT name FROM users WHERE id = $1', [req.user.id]);
@@ -181,7 +199,22 @@ async function transition(req, res, next, allowedRoles, fromStatuses, toStatus) 
     }
     updateQuery += ' WHERE id = $2 RETURNING *';
 
-    const updated = await db.query(updateQuery, updateParams);
+    const updated = await withTx(async (client) => {
+      const r = await client.query(updateQuery, updateParams);
+      const row = r.rows[0];
+      const eventType = STATUS_TO_EVENT[toStatus];
+      if (row && eventType) {
+        await emitEvent(client, {
+          eventType,
+          resourceType: 'booking',
+          resourceId: row.id,
+          previousState: booking.status,
+          state: row.status,
+          data: row,
+        });
+      }
+      return r;
+    });
 
     // Push notifications based on transition
     const actorName = await db.query('SELECT name FROM users WHERE id = $1', [req.user.id]);

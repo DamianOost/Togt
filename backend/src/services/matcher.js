@@ -21,6 +21,8 @@
  */
 
 const db = require('../config/db');
+const { withTx } = require('../config/db');
+const { emitEvent } = require('./events');
 const { notifyUser } = require('./notifications');
 
 let PING_TIMEOUT_MS = 30 * 1000;
@@ -114,14 +116,28 @@ async function loadMatch(matchId) {
 }
 
 async function expireMatch(matchId, reason) {
-  await db.query(
-    `UPDATE match_requests
-        SET status = 'expired', expire_reason = $2
-      WHERE id = $1 AND status = 'pending'`,
-    [matchId, reason]
-  );
-  // Notify the customer (best-effort)
-  const m = await loadMatch(matchId);
+  const m = await withTx(async (client) => {
+    const upd = await client.query(
+      `UPDATE match_requests
+          SET status = 'expired', expire_reason = $2
+        WHERE id = $1 AND status = 'pending'
+        RETURNING *`,
+      [matchId, reason]
+    );
+    const row = upd.rows[0];
+    if (row) {
+      await emitEvent(client, {
+        eventType: 'match_request.expired',
+        resourceType: 'match_request',
+        resourceId: row.id,
+        previousState: 'pending',
+        state: 'expired',
+        data: { ...row, expire_reason: reason },
+      });
+    }
+    return row;
+  });
+  // Notify the customer (best-effort) — same row we just transitioned
   if (m) {
     notifyUser(m.customer_id, 'No labourer available',
       'Sorry, no one is available right now. Please try again or schedule for later.',
@@ -197,15 +213,36 @@ async function commitAttemptToBooking(matchId, attemptId, labourerId) {
       [matchId, attemptId]
     );
 
-    await client.query(
+    const matchUpd = await client.query(
       `UPDATE match_requests
           SET status = 'matched',
               matched_booking_id = $2,
               matched_labourer_id = $3,
               matched_at = NOW()
-        WHERE id = $1`,
+        WHERE id = $1
+        RETURNING *`,
       [matchId, booking.id, labourerId]
     );
+
+    // Emit lifecycle events INSIDE the tx so they commit/rollback with the
+    // resource mutation (transactional outbox). Two events fire here because
+    // two resources changed state: the match_request matched, and a new
+    // booking exists.
+    await emitEvent(client, {
+      eventType: 'match_request.matched',
+      resourceType: 'match_request',
+      resourceId: matchId,
+      previousState: 'pending',
+      state: 'matched',
+      data: matchUpd.rows[0],
+    });
+    await emitEvent(client, {
+      eventType: 'booking.created',
+      resourceType: 'booking',
+      resourceId: booking.id,
+      state: booking.status,
+      data: booking,
+    });
 
     await client.query('COMMIT');
     // Push notification #1 of the 3-push chain (matched / en-route / arrived).
@@ -395,10 +432,18 @@ async function cancelByCustomer(matchId, customerId) {
         WHERE match_request_id = $1 AND status = 'pinged'`,
       [matchId]
     );
-    await client.query(
-      `UPDATE match_requests SET status = 'cancelled' WHERE id = $1`,
+    const cancelled = await client.query(
+      `UPDATE match_requests SET status = 'cancelled' WHERE id = $1 RETURNING *`,
       [matchId]
     );
+    await emitEvent(client, {
+      eventType: 'match_request.cancelled',
+      resourceType: 'match_request',
+      resourceId: matchId,
+      previousState: 'pending',
+      state: 'cancelled',
+      data: cancelled.rows[0],
+    });
     await client.query('COMMIT');
     // Drain in-memory waiters AFTER commit so the dispatcher sees a
     // consistent DB state when its loop's next loadMatch fires.
@@ -417,13 +462,25 @@ async function cancelByCustomer(matchId, customerId) {
 // have no in-memory dispatcher tied to them. Expire them so customers don't
 // see ghost rows. The customer is notified via expireMatch's notifyUser.
 async function sweepStalePending() {
-  const r = await db.query(
-    `UPDATE match_requests
-        SET status = 'expired', expire_reason = 'server_restart'
-      WHERE status = 'pending'
-      RETURNING id, customer_id`
-  );
-  return r.rowCount;
+  return withTx(async (client) => {
+    const r = await client.query(
+      `UPDATE match_requests
+          SET status = 'expired', expire_reason = 'server_restart'
+        WHERE status = 'pending'
+        RETURNING *`
+    );
+    for (const row of r.rows) {
+      await emitEvent(client, {
+        eventType: 'match_request.expired',
+        resourceType: 'match_request',
+        resourceId: row.id,
+        previousState: 'pending',
+        state: 'expired',
+        data: row,
+      });
+    }
+    return r.rowCount;
+  });
 }
 
 module.exports = {

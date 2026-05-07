@@ -105,9 +105,9 @@ describe('webhookDispatcher', () => {
       `INSERT INTO webhook_subscriptions
          (owner_user_id, url, secret_encrypted, secret_previous_encrypted, secret_previous_expires_at, event_types)
        VALUES ($1, $2, $3, $4, NOW() + INTERVAL '6 hours', $5)`,
-      [u.user.id, `http://127.0.0.1:${port}/h`, encryptSecret(newSecret), encryptSecret(oldSecret), ['booking.matched']]
+      [u.user.id, `http://127.0.0.1:${port}/h`, encryptSecret(newSecret), encryptSecret(oldSecret), ['booking.accepted']]
     );
-    await emitEvent(db, { eventType: 'booking.matched', resourceType: 'booking', resourceId: 'rg', data: {} });
+    await emitEvent(db, { eventType: 'booking.accepted', resourceType: 'booking', resourceId: 'rg', data: {} });
 
     await tick();
     await closeReceiver(server);

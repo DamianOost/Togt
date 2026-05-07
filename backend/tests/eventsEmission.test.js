@@ -14,7 +14,7 @@ afterAll(async () => {
 describe('EVENT_TYPES', () => {
   test('exports the expected booking + match_request + payment lifecycle events', () => {
     expect(EVENT_TYPES).toEqual(expect.arrayContaining([
-      'booking.created', 'booking.matched', 'booking.in_progress', 'booking.completed', 'booking.cancelled',
+      'booking.created', 'booking.accepted', 'booking.in_progress', 'booking.completed', 'booking.cancelled',
       'match_request.created', 'match_request.matched', 'match_request.expired', 'match_request.cancelled',
       'payment.succeeded', 'payment.failed',
     ]));

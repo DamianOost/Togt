@@ -23,7 +23,13 @@ const axios = require('axios');
 const db = require('../config/db');
 const { signPayload } = require('../lib/webhookSignature');
 const { decryptSecret } = require('../lib/webhookSecretCrypto');
+const { assertPublicHost } = require('../lib/safeFetch');
 
+// Index calc below is `min(max(attempt_count - 1, 0), len - 1)`. It RELIES
+// on attempt_count being the JUST-INCREMENTED value (the claim query does
+// `attempt_count = attempt_count + 1 RETURNING *`). On the first failure
+// attempt_count is 1 -> idx 0 -> 30s. If you ever switch to reading the
+// pre-increment value, this calc has to change.
 const RETRY_SCHEDULE_SECONDS = [30, 120, 600, 3600];
 const DEAD_AT_SECONDS = 86400;
 const HTTP_TIMEOUT_MS = 10000;
@@ -62,6 +68,19 @@ async function deliverOne(delivery) {
     return;
   }
 
+  // SSRF defence: in production (or when WEBHOOK_SSRF_FORCE=1) refuse to
+  // post to private/loopback/link-local addresses. Dev/test default-allows
+  // 127.0.0.1 so the local receiver tests can run.
+  try {
+    await assertPublicHost(sub.url);
+  } catch (ssrfErr) {
+    await db.query(
+      `UPDATE webhook_deliveries SET status = 'dead', dead_at = NOW(), last_error = $2 WHERE id = $1`,
+      [delivery.id, String(ssrfErr.message || ssrfErr).slice(0, 1024)]
+    );
+    return;
+  }
+
   const body = JSON.stringify(delivery.payload);
   const secret = decryptSecret(sub.secret_encrypted);
   let previousSecret = null;
@@ -83,16 +102,22 @@ async function deliverOne(delivery) {
       timeout: HTTP_TIMEOUT_MS,
       validateStatus: s => s >= 200 && s < 300,
       transformRequest: [d => d],
+      // Receiver-controlled redirects are an SSRF amplifier — a public URL
+      // could 302 to an internal target. Always disable.
+      maxRedirects: 0,
     });
+    // Do NOT persist response body: a hostile receiver could return PII or
+    // secret-shaped strings and we'd leak them via the deliveries endpoint
+    // to the caller (or to ops querying the table). Status code is enough.
     await db.query(
       `UPDATE webhook_deliveries
           SET status = 'succeeded',
               succeeded_at = NOW(),
               last_http_status = $2,
-              last_response_body = $3,
+              last_response_body = NULL,
               last_error = NULL
         WHERE id = $1`,
-      [delivery.id, resp.status, String(resp.data ?? '').slice(0, 4096)]
+      [delivery.id, resp.status]
     );
     await db.query(
       `UPDATE webhook_subscriptions SET last_success_at = NOW(), consecutive_failures = 0 WHERE id = $1`,

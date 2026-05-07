@@ -175,6 +175,38 @@ describe('webhook-subscriptions REST', () => {
     expect(Math.abs(expiry - expected)).toBeLessThan(60_000);
   });
 
+  test('rotate-secret refuses while a prior rotation grace window is still active', async () => {
+    const u = await registerUser({ role: 'customer' });
+    const create = await request(app)
+      .post('/api/webhook-subscriptions')
+      .set(authHeader(u.accessToken))
+      .send({ url: 'https://example.test/grace', event_types: ['booking.created'] });
+
+    // First rotation succeeds (no prior previous secret)
+    const first = await request(app)
+      .post(`/api/webhook-subscriptions/${create.body.id}/rotate-secret`)
+      .set(authHeader(u.accessToken))
+      .send({});
+    expect(first.status).toBe(200);
+
+    // Immediate second rotation must be refused
+    const second = await request(app)
+      .post(`/api/webhook-subscriptions/${create.body.id}/rotate-secret`)
+      .set(authHeader(u.accessToken))
+      .send({});
+    expect(second.status).toBe(409);
+    expect(second.body.type).toMatch(/errors\/webhook-rotation-grace-active/);
+    expect(second.body.extensions.previous_secret_expires_at).toBeDefined();
+
+    // The original previous secret is preserved (clobber would be the bug)
+    const { rows } = await db.query(
+      `SELECT secret_previous_encrypted FROM webhook_subscriptions WHERE id = $1`,
+      [create.body.id]
+    );
+    const { decryptSecret: dec } = require('../src/lib/webhookSecretCrypto');
+    expect(dec(rows[0].secret_previous_encrypted)).toBe(create.body.secret);
+  });
+
   test('rotate-secret on another user subscription returns 404', async () => {
     const owner = await registerUser({ role: 'customer' });
     const create = await request(app)

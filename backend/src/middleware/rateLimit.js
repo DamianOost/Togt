@@ -66,10 +66,22 @@ const resetPasswordLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Webhook secret rotation: 5 per 10 min per IP. An attacker with a stolen
+// JWT could otherwise rotate-spam to overwrite the subscriber's previous
+// secret repeatedly, locking out the legitimate consumer mid-rollout.
+const rotateSecretLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 5,
+  message: { error: 'Too many rotate-secret requests, please try again later' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 module.exports = {
   authLimiter: maybe(authLimiter),
   refreshLimiter: maybe(refreshLimiter),
   forgotPasswordLimiter: maybe(forgotPasswordLimiter),
   resetPasswordLimiter: maybe(resetPasswordLimiter),
   matchCreateLimiter: maybe(matchCreateLimiter),
+  rotateSecretLimiter: maybe(rotateSecretLimiter),
 };

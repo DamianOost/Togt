@@ -177,7 +177,7 @@ const spec = {
         properties: {
           event_id: { type: 'string', format: 'uuid', description: 'Logical event id; identical across retries — use as consumer-side dedup key.' },
           event_type: { type: 'string', enum: [
-            'booking.created', 'booking.accepted', 'booking.matched', 'booking.in_progress', 'booking.completed', 'booking.cancelled',
+            'booking.created', 'booking.accepted', 'booking.in_progress', 'booking.completed', 'booking.cancelled',
             'match_request.created', 'match_request.matched', 'match_request.expired', 'match_request.cancelled',
             'payment.succeeded', 'payment.failed',
           ] },
@@ -630,6 +630,7 @@ const spec = {
     { type: 'refresh_token_reuse', status: 401, description: 'Replay detection — supplied refresh token was already revoked. All sessions terminated.' },
     { type: 'webhook-not-found', status: 404, description: 'Webhook subscription does not exist or is not owned by the caller.' },
     { type: 'webhook-delivery-not-replayable', status: 404, description: 'Delivery row is in a non-replayable state (i.e. still pending). Only dead or succeeded deliveries can be replayed.' },
+    { type: 'webhook-rotation-grace-active', status: 409, description: 'Cannot rotate webhook secret while a prior rotation is still in its 24h grace window — would clobber the in-flight previous secret.' },
     { type: 'unknown-event-type', status: 400, description: 'Subscriber requested an event type Togt does not emit. extensions.known_types lists every supported type.' },
     { type: 'invalid-event-types', status: 400, description: 'event_types must be a non-empty array of strings.' },
     { type: 'invalid-webhook-url', status: 400, description: 'url must be http(s); production refuses non-https.' },

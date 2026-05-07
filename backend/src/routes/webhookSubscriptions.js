@@ -18,8 +18,10 @@ const express = require('express');
 const crypto = require('crypto');
 const db = require('../config/db');
 const { authMiddleware } = require('../middleware/auth');
+const { rotateSecretLimiter } = require('../middleware/rateLimit');
 const { ProblemError } = require('../lib/problemJson');
 const { encryptSecret } = require('../lib/webhookSecretCrypto');
+const { assertPublicHost } = require('../lib/safeFetch');
 const { EVENT_TYPES } = require('../services/events');
 
 const router = express.Router();
@@ -84,6 +86,9 @@ router.post('/', authMiddleware, async (req, res, next) => {
     const { url, event_types, description } = req.body || {};
     validateUrl(url);
     validateEventTypes(event_types);
+    // SSRF: in production refuse private/loopback resolutions early so we
+    // don't accept the subscription in the first place.
+    await assertPublicHost(url);
 
     const plainSecret = generateSecret();
     const { rows } = await db.query(
@@ -143,14 +148,27 @@ router.delete('/:id', authMiddleware, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post('/:id/rotate-secret', authMiddleware, async (req, res, next) => {
+router.post('/:id/rotate-secret', rotateSecretLimiter, authMiddleware, async (req, res, next) => {
   try {
     const owns = await db.query(
-      `SELECT id FROM webhook_subscriptions WHERE id = $1 AND owner_user_id = $2`,
+      `SELECT id, secret_previous_expires_at FROM webhook_subscriptions WHERE id = $1 AND owner_user_id = $2`,
       [req.params.id, req.user.id]
     );
     if (!owns.rows.length) {
       throw new ProblemError({ type: 'webhook-not-found', title: 'Webhook subscription not found', status: 404 });
+    }
+    // Refuse to rotate if a prior rotation's 24h grace window is still
+    // active — clobbering the in-flight previous secret would dark out
+    // any consumer that hasn't finished migrating yet.
+    const priorExpiry = owns.rows[0].secret_previous_expires_at;
+    if (priorExpiry && new Date(priorExpiry) > new Date()) {
+      throw new ProblemError({
+        type: 'webhook-rotation-grace-active',
+        title: 'Previous rotation grace window is still active',
+        status: 409,
+        detail: 'A prior rotate-secret call is still in its 24h grace period. Wait for it to expire before rotating again, otherwise the in-flight previous secret would be lost.',
+        extensions: { previous_secret_expires_at: priorExpiry },
+      });
     }
     const plainSecret = generateSecret();
     const expiresAt = new Date(Date.now() + ROTATION_GRACE_MS);

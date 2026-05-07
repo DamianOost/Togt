@@ -65,7 +65,6 @@ module.exports = {
     event_types: [
       'booking.created',
       'booking.accepted',
-      'booking.matched',
       'booking.in_progress',
       'booking.completed',
       'booking.cancelled',

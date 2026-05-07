@@ -12,8 +12,11 @@
  * enforces it.
  */
 
+const crypto = require('crypto');
 const db = require('../src/config/db');
 const matcher = require('../src/services/matcher');
+const { encryptSecret } = require('../src/lib/webhookSecretCrypto');
+const { EVENT_TYPES } = require('../src/services/events');
 
 // ─── Tool implementations ────────────────────────────────────────────────────
 
@@ -269,6 +272,117 @@ async function marketplaceStats(_ctx, { skill, region } = {}) {
   };
 }
 
+// ─── Webhook subscription management ─────────────────────────────────────────
+
+const ROTATION_GRACE_MS = 24 * 60 * 60 * 1000;
+
+function generateWebhookSecret() {
+  return `whsec_${crypto.randomBytes(32).toString('hex')}`;
+}
+
+async function createWebhookSubscription(ctx, { url, event_types, description }) {
+  if (typeof url !== 'string' || !/^https?:\/\//.test(url)) {
+    throw new Error('url must be an http(s) URL');
+  }
+  if (!Array.isArray(event_types) || event_types.length === 0) {
+    throw new Error('event_types must be a non-empty array');
+  }
+  const unknown = event_types.filter((e) => !EVENT_TYPES.includes(e));
+  if (unknown.length) {
+    throw new Error(`Unknown event_types: ${unknown.join(', ')}. Known: ${EVENT_TYPES.join(', ')}`);
+  }
+  const plain = generateWebhookSecret();
+  const r = await db.query(
+    `INSERT INTO webhook_subscriptions (owner_user_id, url, secret_encrypted, event_types, description)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING id, url, event_types, description, enabled, created_at`,
+    [ctx.userId, url, encryptSecret(plain), event_types, description || null]
+  );
+  return {
+    ...r.rows[0],
+    secret: plain,
+    decision_context: {
+      secret_visible_only_now: true,
+      retry_policy: { schedule_seconds: [30, 120, 600, 3600], dead_after_seconds: 86400 },
+      signature_header: 'X-Togt-Signature',
+      signature_format: 't=<unix>,v1=<hmac_sha256_hex>',
+      grace_window_hours_on_rotate: 24,
+    },
+  };
+}
+
+async function listWebhookSubscriptions(ctx) {
+  const r = await db.query(
+    `SELECT id, url, event_types, description, enabled, created_at, updated_at,
+            last_success_at, last_failure_at, consecutive_failures, secret_previous_expires_at
+       FROM webhook_subscriptions
+      WHERE owner_user_id = $1
+      ORDER BY created_at DESC`,
+    [ctx.userId]
+  );
+  return { subscriptions: r.rows };
+}
+
+async function deleteWebhookSubscription(ctx, { id }) {
+  if (!id) throw new Error('id is required');
+  const r = await db.query(
+    `DELETE FROM webhook_subscriptions WHERE id = $1 AND owner_user_id = $2`,
+    [id, ctx.userId]
+  );
+  return { deleted: r.rowCount > 0 };
+}
+
+async function rotateWebhookSecret(ctx, { id }) {
+  if (!id) throw new Error('id is required');
+  const owns = await db.query(
+    `SELECT id FROM webhook_subscriptions WHERE id = $1 AND owner_user_id = $2`,
+    [id, ctx.userId]
+  );
+  if (!owns.rows.length) throw new Error('subscription not found');
+  const plain = generateWebhookSecret();
+  const expiresAt = new Date(Date.now() + ROTATION_GRACE_MS);
+  const r = await db.query(
+    `UPDATE webhook_subscriptions
+        SET secret_previous_encrypted = secret_encrypted,
+            secret_previous_expires_at = $2,
+            secret_encrypted = $3,
+            updated_at = NOW()
+      WHERE id = $1
+      RETURNING id, url, event_types, enabled, secret_previous_expires_at`,
+    [id, expiresAt, encryptSecret(plain)]
+  );
+  return {
+    ...r.rows[0],
+    secret: plain,
+    previous_secret_expires_at: r.rows[0].secret_previous_expires_at,
+    decision_context: {
+      secret_visible_only_now: true,
+      grace_window_hours: 24,
+      signature_during_grace: 'multi-v1: t=<unix>,v1=<new>,v1=<old>',
+      instruction: 'Roll your endpoint to verify the new secret. The old secret continues to verify deliveries for 24h.',
+    },
+  };
+}
+
+async function replayWebhookDelivery(ctx, { subscription_id, delivery_id }) {
+  if (!subscription_id || !delivery_id) throw new Error('subscription_id and delivery_id are required');
+  const owns = await db.query(
+    `SELECT id FROM webhook_subscriptions WHERE id = $1 AND owner_user_id = $2`,
+    [subscription_id, ctx.userId]
+  );
+  if (!owns.rows.length) throw new Error('subscription not found');
+  const r = await db.query(
+    `UPDATE webhook_deliveries
+        SET status = 'pending', next_retry_at = NOW(), attempt_count = 0,
+            dead_at = NULL, last_error = NULL, last_http_status = NULL
+      WHERE id = $1 AND subscription_id = $2 AND status IN ('dead', 'succeeded')
+      RETURNING id, status, next_retry_at`,
+    [delivery_id, subscription_id]
+  );
+  if (!r.rows.length) throw new Error('delivery not found or not replayable');
+  return r.rows[0];
+}
+
 // ─── Tool catalog ────────────────────────────────────────────────────────────
 
 const TOOLS = [
@@ -351,6 +465,45 @@ const TOOLS = [
       },
     },
     handler: marketplaceStats,
+  },
+  { name: 'create_webhook_subscription', scope: 'mcp:full',
+    description: 'Subscribe to lifecycle events (booking.*, match_request.*, payment.*). Returns the signing secret ONCE — store it and use it to verify the X-Togt-Signature header on incoming POSTs.',
+    inputSchema: {
+      type: 'object', required: ['url', 'event_types'],
+      properties: {
+        url: { type: 'string', format: 'uri', description: 'http(s) endpoint that will receive POSTed events.' },
+        event_types: { type: 'array', items: { type: 'string' }, minItems: 1 },
+        description: { type: 'string' },
+      },
+    },
+    handler: createWebhookSubscription,
+  },
+  { name: 'list_webhook_subscriptions', scope: 'mcp:read_only',
+    description: 'List my webhook subscriptions (no secrets included).',
+    inputSchema: { type: 'object', properties: {} },
+    handler: listWebhookSubscriptions,
+  },
+  { name: 'delete_webhook_subscription', scope: 'mcp:full',
+    description: 'Delete one of my webhook subscriptions.',
+    inputSchema: { type: 'object', required: ['id'],
+      properties: { id: { type: 'string', format: 'uuid' } } },
+    handler: deleteWebhookSubscription,
+  },
+  { name: 'rotate_webhook_secret', scope: 'mcp:full',
+    description: 'Rotate the signing secret. Old secret stays valid for 24h; during the grace window the dispatcher signs with both, so receivers can roll endpoints at their own pace. Returns new secret ONCE.',
+    inputSchema: { type: 'object', required: ['id'],
+      properties: { id: { type: 'string', format: 'uuid' } } },
+    handler: rotateWebhookSecret,
+  },
+  { name: 'replay_webhook_delivery', scope: 'mcp:full',
+    description: 'Re-queue a dead or succeeded webhook delivery for re-dispatch (e.g. after a receiver outage).',
+    inputSchema: { type: 'object', required: ['subscription_id', 'delivery_id'],
+      properties: {
+        subscription_id: { type: 'string', format: 'uuid' },
+        delivery_id: { type: 'string', format: 'uuid' },
+      },
+    },
+    handler: replayWebhookDelivery,
   },
 ];
 

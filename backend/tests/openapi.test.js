@@ -41,4 +41,38 @@ describe('Self-description endpoints (agent discovery)', () => {
     expect(types).toContain('already_matched');
     expect(types).toContain('refresh_token_reuse');
   });
+
+  test('OpenAPI spec lists every webhook subscription endpoint and the WebhookEventEnvelope schema', async () => {
+    const res = await request(app).get('/.well-known/openapi.json');
+    expect(res.body.paths['/api/webhook-subscriptions']).toBeDefined();
+    expect(res.body.paths['/api/webhook-subscriptions/{id}']).toBeDefined();
+    expect(res.body.paths['/api/webhook-subscriptions/{id}/rotate-secret']).toBeDefined();
+    expect(res.body.paths['/api/webhook-subscriptions/{id}/deliveries']).toBeDefined();
+    expect(res.body.paths['/api/webhook-subscriptions/{id}/deliveries/{deliveryId}/replay']).toBeDefined();
+    expect(res.body.components.schemas.WebhookEventEnvelope).toBeDefined();
+    expect(res.body.components.schemas.WebhookSubscription).toBeDefined();
+    expect(res.body.components.schemas.WebhookDelivery).toBeDefined();
+    const types = res.body['x-error-types'].map((e) => e.type);
+    expect(types).toEqual(expect.arrayContaining([
+      'webhook-not-found',
+      'webhook-delivery-not-replayable',
+      'unknown-event-type',
+      'invalid-event-types',
+      'invalid-webhook-url',
+    ]));
+  });
+
+  test('agents.json declares the webhooks block + flips capabilities.webhooks=true', async () => {
+    const res = await request(app).get('/.well-known/agents.json');
+    expect(res.body.capabilities.webhooks).toBe(true);
+    expect(res.body.webhooks).toBeDefined();
+    expect(res.body.webhooks.signature_header).toBe('X-Togt-Signature');
+    expect(res.body.webhooks.retry_policy.schedule_seconds).toEqual([30, 120, 600, 3600]);
+    expect(res.body.webhooks.retry_policy.dead_after_seconds).toBe(86400);
+    expect(res.body.webhooks.rotation_supported).toBe(true);
+    expect(res.body.webhooks.grace_window_hours).toBe(24);
+    expect(res.body.webhooks.event_types).toEqual(expect.arrayContaining([
+      'booking.created', 'booking.completed', 'payment.succeeded', 'match_request.matched',
+    ]));
+  });
 });

@@ -115,6 +115,14 @@ if (require.main === module) {
     .then((n) => { if (n > 0) console.log(`[matcher] swept ${n} stale pending match(es) on boot`); })
     .catch((err) => console.error('[matcher] boot sweep failed:', err.message));
 
+  // Webhook dispatcher: claims due deliveries every 5s and POSTs them to subscribers.
+  // Skipped under NODE_ENV=test because the test suite drives tick() directly.
+  if (process.env.NODE_ENV !== 'test') {
+    const webhookDispatcher = require('./services/webhookDispatcher');
+    webhookDispatcher.start();
+    console.log('[webhookDispatcher] started');
+  }
+
   server.listen(port, () => {
     console.log(`Togt API running on port ${port}`);
   });

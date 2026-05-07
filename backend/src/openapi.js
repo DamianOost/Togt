@@ -142,6 +142,69 @@ const spec = {
           created_at: { type: 'string', format: 'date-time' },
         },
       },
+      WebhookSubscription: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+          url: { type: 'string', format: 'uri' },
+          event_types: { type: 'array', items: { type: 'string' } },
+          description: { type: 'string', nullable: true },
+          enabled: { type: 'boolean' },
+          created_at: { type: 'string', format: 'date-time' },
+          updated_at: { type: 'string', format: 'date-time' },
+          last_success_at: { type: 'string', format: 'date-time', nullable: true },
+          last_failure_at: { type: 'string', format: 'date-time', nullable: true },
+          consecutive_failures: { type: 'integer' },
+          secret_previous_expires_at: { type: 'string', format: 'date-time', nullable: true, description: 'Non-null while a previous secret is still valid (24h grace post-rotation).' },
+        },
+      },
+      WebhookSubscriptionWithSecret: {
+        allOf: [
+          { $ref: '#/components/schemas/WebhookSubscription' },
+          {
+            type: 'object',
+            required: ['secret'],
+            properties: {
+              secret: { type: 'string', description: 'Returned ONCE at creation or rotate-secret. Use to verify X-Togt-Signature on incoming POSTs. Never returned on subsequent reads.' },
+            },
+          },
+        ],
+      },
+      WebhookEventEnvelope: {
+        type: 'object',
+        description: 'Payload posted to the subscriber URL with X-Togt-Signature header.',
+        required: ['event_id', 'event_type', 'resource_type', 'resource_id', 'occurred_at', 'data'],
+        properties: {
+          event_id: { type: 'string', format: 'uuid', description: 'Logical event id; identical across retries — use as consumer-side dedup key.' },
+          event_type: { type: 'string', enum: [
+            'booking.created', 'booking.accepted', 'booking.matched', 'booking.in_progress', 'booking.completed', 'booking.cancelled',
+            'match_request.created', 'match_request.matched', 'match_request.expired', 'match_request.cancelled',
+            'payment.succeeded', 'payment.failed',
+          ] },
+          resource_type: { type: 'string', enum: ['booking', 'match_request', 'payment'] },
+          resource_id: { type: 'string', format: 'uuid' },
+          previous_state: { type: 'string', nullable: true },
+          state: { type: 'string', nullable: true },
+          occurred_at: { type: 'string', format: 'date-time', description: 'ISO-8601 with timezone (UTC).' },
+          data: { type: 'object', additionalProperties: true, description: 'Snapshot of the resource at event time.' },
+        },
+      },
+      WebhookDelivery: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+          event_id: { type: 'string', format: 'uuid' },
+          event_type: { type: 'string' },
+          attempt_count: { type: 'integer' },
+          status: { type: 'string', enum: ['pending', 'succeeded', 'dead', 'replayed'] },
+          next_retry_at: { type: 'string', format: 'date-time' },
+          last_http_status: { type: 'integer', nullable: true },
+          last_error: { type: 'string', nullable: true },
+          created_at: { type: 'string', format: 'date-time' },
+          succeeded_at: { type: 'string', format: 'date-time', nullable: true },
+          dead_at: { type: 'string', format: 'date-time', nullable: true },
+        },
+      },
     },
     responses: {
       Problem400: { description: 'Bad request', content: { 'application/problem+json': { schema: { $ref: '#/components/schemas/Problem' } } } },
@@ -448,6 +511,110 @@ const spec = {
         },
       },
     },
+    '/api/webhook-subscriptions': {
+      post: {
+        operationId: 'create_webhook_subscription',
+        summary: 'Subscribe to lifecycle events.',
+        description: 'Returns the signing secret ONCE. Use it to verify X-Togt-Signature on incoming POSTs.',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['url', 'event_types'],
+                properties: {
+                  url: { type: 'string', format: 'uri' },
+                  event_types: { type: 'array', items: { type: 'string' }, minItems: 1 },
+                  description: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '201': { description: 'Created (secret returned once)', content: { 'application/json': { schema: { $ref: '#/components/schemas/WebhookSubscriptionWithSecret' } } } },
+          '400': { $ref: '#/components/responses/Problem400' },
+          '401': { $ref: '#/components/responses/Problem401' },
+        },
+      },
+      get: {
+        operationId: 'list_webhook_subscriptions',
+        summary: 'List my webhook subscriptions (no secrets).',
+        responses: {
+          '200': {
+            description: 'OK',
+            content: { 'application/json': { schema: { type: 'object', properties: { subscriptions: { type: 'array', items: { $ref: '#/components/schemas/WebhookSubscription' } } } } } },
+          },
+          '401': { $ref: '#/components/responses/Problem401' },
+        },
+      },
+    },
+    '/api/webhook-subscriptions/{id}': {
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+      get: {
+        operationId: 'get_webhook_subscription',
+        summary: 'Read one of my webhook subscriptions.',
+        responses: {
+          '200': { description: 'OK', content: { 'application/json': { schema: { $ref: '#/components/schemas/WebhookSubscription' } } } },
+          '401': { $ref: '#/components/responses/Problem401' },
+          '404': { $ref: '#/components/responses/Problem404' },
+        },
+      },
+      delete: {
+        operationId: 'delete_webhook_subscription',
+        summary: 'Delete a webhook subscription.',
+        responses: {
+          '204': { description: 'Deleted' },
+          '401': { $ref: '#/components/responses/Problem401' },
+          '404': { $ref: '#/components/responses/Problem404' },
+        },
+      },
+    },
+    '/api/webhook-subscriptions/{id}/rotate-secret': {
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+      post: {
+        operationId: 'rotate_webhook_secret',
+        summary: 'Rotate the signing secret. 24h grace, multi-v1 during transition.',
+        description: 'The current secret moves to secret_previous_encrypted with a 24h expiry. During the grace window the dispatcher signs deliveries with both secrets and emits a multi-v1 X-Togt-Signature header (t=<ts>,v1=<new>,v1=<old>) so receivers can roll their endpoint at any pace within the window.',
+        responses: {
+          '200': { description: 'New secret returned once', content: { 'application/json': { schema: { $ref: '#/components/schemas/WebhookSubscriptionWithSecret' } } } },
+          '401': { $ref: '#/components/responses/Problem401' },
+          '404': { $ref: '#/components/responses/Problem404' },
+        },
+      },
+    },
+    '/api/webhook-subscriptions/{id}/deliveries': {
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+      get: {
+        operationId: 'list_webhook_deliveries',
+        summary: 'List recent deliveries for a subscription (newest first).',
+        parameters: [{ name: 'limit', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 200, default: 50 } }],
+        responses: {
+          '200': {
+            description: 'OK',
+            content: { 'application/json': { schema: { type: 'object', properties: { deliveries: { type: 'array', items: { $ref: '#/components/schemas/WebhookDelivery' } } } } } },
+          },
+          '401': { $ref: '#/components/responses/Problem401' },
+          '404': { $ref: '#/components/responses/Problem404' },
+        },
+      },
+    },
+    '/api/webhook-subscriptions/{id}/deliveries/{deliveryId}/replay': {
+      parameters: [
+        { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
+        { name: 'deliveryId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
+      ],
+      post: {
+        operationId: 'replay_webhook_delivery',
+        summary: 'Re-queue a dead or succeeded delivery for re-dispatch.',
+        responses: {
+          '200': { description: 'Re-queued', content: { 'application/json': { schema: { $ref: '#/components/schemas/WebhookDelivery' } } } },
+          '401': { $ref: '#/components/responses/Problem401' },
+          '404': { $ref: '#/components/responses/Problem404' },
+        },
+      },
+    },
   },
   'x-error-types': [
     { type: 'scheduled_at_in_past', status: 400, description: 'Booking scheduled_at is at or before now.' },
@@ -461,6 +628,11 @@ const spec = {
     { type: 'already_matched', status: 409, description: 'Match already produced a booking; cancel the booking instead.' },
     { type: 'attempt_not_active', status: 409, description: 'Labourer tried to accept an attempt that was already cancelled or timed out.' },
     { type: 'refresh_token_reuse', status: 401, description: 'Replay detection — supplied refresh token was already revoked. All sessions terminated.' },
+    { type: 'webhook-not-found', status: 404, description: 'Webhook subscription does not exist or is not owned by the caller.' },
+    { type: 'webhook-delivery-not-replayable', status: 404, description: 'Delivery row is in a non-replayable state (i.e. still pending). Only dead or succeeded deliveries can be replayed.' },
+    { type: 'unknown-event-type', status: 400, description: 'Subscriber requested an event type Togt does not emit. extensions.known_types lists every supported type.' },
+    { type: 'invalid-event-types', status: 400, description: 'event_types must be a non-empty array of strings.' },
+    { type: 'invalid-webhook-url', status: 400, description: 'url must be http(s); production refuses non-https.' },
   ],
 };
 

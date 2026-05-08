@@ -34,12 +34,36 @@ const RETRY_SCHEDULE_SECONDS = [30, 120, 600, 3600];
 const DEAD_AT_SECONDS = 86400;
 const HTTP_TIMEOUT_MS = 10000;
 const TICK_BATCH = 50;
+// Visibility timeout: when a tick claims a row, it pushes next_retry_at
+// out by this many seconds so a process crash mid-deliverOne does NOT
+// cause the very next tick to immediately re-claim the same row. The
+// success/failure UPDATEs reset next_retry_at to its real value before
+// the visibility timeout matters; the timeout is the safety net for
+// crashes only. Receivers will see at most one duplicate delivery per
+// crash spaced ~CLAIM_VISIBILITY_TIMEOUT_SECONDS apart instead of two
+// rapid-fire deliveries 5s apart.
+const CLAIM_VISIBILITY_TIMEOUT_SECONDS = 60;
+// Cap how much error message / response we persist. Receivers can return
+// arbitrarily large bodies (we DON'T persist response body — see the
+// success path below — but errMsg can also be receiver-controlled via
+// e.g. socket-hangup messages with embedded bytes).
+const ERROR_MSG_MAX_CHARS = 1024;
+// Outbound HTTP body cap. axios buffers the full response in memory before
+// we discard it; an actively malicious receiver streaming a giant body
+// would otherwise pressure the dispatcher's heap.
+const HTTP_RESPONSE_MAX_BYTES = 65536;
 
 let timer = null;
 let stopped = false;
 
 async function tick() {
   if (stopped) return;
+  // Claim batch: increment attempt_count AND push next_retry_at out by the
+  // visibility timeout. The success/failure UPDATE will reset next_retry_at
+  // to its real value before this matters. If the process crashes between
+  // claim and the result UPDATE, the row stays 'pending' but the visibility
+  // timeout means the next tick won't re-claim immediately — at-least-once
+  // semantics survive but rapid double-firing on crash does not.
   const { rows } = await db.query(
     `WITH claimed AS (
        SELECT id FROM webhook_deliveries
@@ -48,10 +72,12 @@ async function tick() {
         LIMIT $1
         FOR UPDATE SKIP LOCKED
      )
-     UPDATE webhook_deliveries SET attempt_count = attempt_count + 1
+     UPDATE webhook_deliveries
+        SET attempt_count = attempt_count + 1,
+            next_retry_at = NOW() + (INTERVAL '1 second' * $2)
        WHERE id IN (SELECT id FROM claimed)
        RETURNING *`,
-    [TICK_BATCH]
+    [TICK_BATCH, CLAIM_VISIBILITY_TIMEOUT_SECONDS]
   );
   if (rows.length === 0) return;
   await Promise.allSettled(rows.map(deliverOne));
@@ -76,7 +102,7 @@ async function deliverOne(delivery) {
   } catch (ssrfErr) {
     await db.query(
       `UPDATE webhook_deliveries SET status = 'dead', dead_at = NOW(), last_error = $2 WHERE id = $1`,
-      [delivery.id, String(ssrfErr.message || ssrfErr).slice(0, 1024)]
+      [delivery.id, String(ssrfErr.message || ssrfErr).slice(0, ERROR_MSG_MAX_CHARS)]
     );
     return;
   }
@@ -105,6 +131,11 @@ async function deliverOne(delivery) {
       // Receiver-controlled redirects are an SSRF amplifier — a public URL
       // could 302 to an internal target. Always disable.
       maxRedirects: 0,
+      // Cap the body axios will buffer from the receiver before discarding
+      // it. Without this a malicious receiver streaming gigabytes pressures
+      // the dispatcher heap.
+      maxContentLength: HTTP_RESPONSE_MAX_BYTES,
+      maxBodyLength: HTTP_RESPONSE_MAX_BYTES,
     });
     // Do NOT persist response body: a hostile receiver could return PII or
     // secret-shaped strings and we'd leak them via the deliveries endpoint
@@ -125,7 +156,7 @@ async function deliverOne(delivery) {
     );
   } catch (err) {
     const httpStatus = err.response?.status || null;
-    const errMsg = String(err.message || err).slice(0, 1024);
+    const errMsg = String(err.message || err).slice(0, ERROR_MSG_MAX_CHARS);
     const ageSeconds = Math.floor((Date.now() - new Date(delivery.created_at).getTime()) / 1000);
     if (ageSeconds >= DEAD_AT_SECONDS) {
       await db.query(

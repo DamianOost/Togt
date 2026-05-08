@@ -44,7 +44,7 @@ describe('webhookDispatcher', () => {
        VALUES ($1, $2, $3, $4) RETURNING id`,
       [u.user.id, `http://127.0.0.1:${port}/h`, encryptSecret(plain), ['booking.created']]
     );
-    await emitEvent(db, { eventType: 'booking.created', resourceType: 'booking', resourceId: 'r1', data: { id: 'r1' } });
+    await emitEvent(db, { eventType: 'booking.created', resourceType: 'booking', resourceId: 'r1', actorUserIds: [u.user.id], data: { id: 'r1' } });
 
     await tick();
     await closeReceiver(server);
@@ -76,7 +76,7 @@ describe('webhookDispatcher', () => {
        VALUES ($1, $2, $3, $4)`,
       [u.user.id, `http://127.0.0.1:${port}/h`, encryptSecret('whsec_disp2'), ['booking.cancelled']]
     );
-    await emitEvent(db, { eventType: 'booking.cancelled', resourceType: 'booking', resourceId: 'r2', data: {} });
+    await emitEvent(db, { eventType: 'booking.cancelled', resourceType: 'booking', resourceId: 'r2', actorUserIds: [u.user.id], data: {} });
 
     await tick();
     await closeReceiver(server);
@@ -107,7 +107,7 @@ describe('webhookDispatcher', () => {
        VALUES ($1, $2, $3, $4, NOW() + INTERVAL '6 hours', $5)`,
       [u.user.id, `http://127.0.0.1:${port}/h`, encryptSecret(newSecret), encryptSecret(oldSecret), ['booking.accepted']]
     );
-    await emitEvent(db, { eventType: 'booking.accepted', resourceType: 'booking', resourceId: 'rg', data: {} });
+    await emitEvent(db, { eventType: 'booking.accepted', resourceType: 'booking', resourceId: 'rg', actorUserIds: [u.user.id], data: {} });
 
     await tick();
     await closeReceiver(server);
@@ -135,7 +135,7 @@ describe('webhookDispatcher', () => {
        VALUES ($1, $2, $3, $4, NOW() - INTERVAL '1 hour', $5)`,
       [u.user.id, `http://127.0.0.1:${port}/h`, encryptSecret(newSecret), encryptSecret(oldSecret), ['booking.completed']]
     );
-    await emitEvent(db, { eventType: 'booking.completed', resourceType: 'booking', resourceId: 're', data: {} });
+    await emitEvent(db, { eventType: 'booking.completed', resourceType: 'booking', resourceId: 're', actorUserIds: [u.user.id], data: {} });
 
     await tick();
     await closeReceiver(server);

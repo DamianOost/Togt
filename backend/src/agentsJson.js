@@ -22,7 +22,7 @@ module.exports = {
     {
       type: 'mcp',
       url: '/mcp',
-      transport: 'http',
+      transport: 'streamable-http',
       auth: 'bearer',
       tools: [
         'find_labourers',
@@ -51,7 +51,7 @@ module.exports = {
   webhooks: {
     signature_header: 'X-Togt-Signature',
     signature_format: 't=<unix_seconds>,v1=<hmac_sha256_hex>[,v1=<hmac_sha256_hex>]',
-    signature_format_note: 'Multi-v1 entries appear during the 24h secret-rotation grace window. Verify any matching v1 — if any matches, the signature is valid.',
+    signature_format_note: 'Multi-v1 entries appear during the 24h secret-rotation grace window. Verifiers MUST treat the order of v1 entries as non-significant — try every v1 and accept the signature if any verifies.',
     event_id_header: 'X-Togt-Event-Id',
     event_type_header: 'X-Togt-Event-Type',
     delivery_attempt_header: 'X-Togt-Delivery-Attempt',
@@ -62,6 +62,10 @@ module.exports = {
     },
     rotation_supported: true,
     grace_window_hours: 24,
+    delivery_semantics: 'at-least-once',
+    delivery_semantics_note: 'Network failures, receiver timeouts, or backend restarts may cause the same event_id to be delivered more than once. Consumers MUST dedupe by X-Togt-Event-Id. The Delivery-Attempt header is a hint, not a contract — duplicate deliveries with the same attempt number are possible after a backend crash mid-delivery.',
+    tenant_scoping: 'per-owner',
+    tenant_scoping_note: 'A subscription only receives events for which the subscription owner is a participant (booking.* events fire to BOTH customer and labourer subscriptions; match_request.* fires to the customer; payment.* fires to both customer and labourer of the underlying booking).',
     event_types: [
       'booking.created',
       'booking.accepted',

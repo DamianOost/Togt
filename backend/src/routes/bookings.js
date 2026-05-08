@@ -65,6 +65,7 @@ router.post('/', authMiddleware, idempotencyMiddleware(), async (req, res, next)
         eventType: 'booking.created',
         resourceType: 'booking',
         resourceId: row.id,
+        actorUserIds: [row.customer_id, row.labourer_id],
         state: row.status,
         data: row,
       });
@@ -208,6 +209,7 @@ async function transition(req, res, next, allowedRoles, fromStatuses, toStatus) 
           eventType,
           resourceType: 'booking',
           resourceId: row.id,
+          actorUserIds: [row.customer_id, row.labourer_id],
           previousState: booking.status,
           state: row.status,
           data: row,

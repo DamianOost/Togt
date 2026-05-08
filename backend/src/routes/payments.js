@@ -149,14 +149,25 @@ router.post('/webhook', async (req, res, next) => {
       );
       const row = upd.rows[0];
       if (row) {
-        await emitEvent(client, {
-          eventType: isSuccess ? 'payment.succeeded' : 'payment.failed',
-          resourceType: 'payment',
-          resourceId: row.id,
-          previousState: 'pending',
-          state: row.status,
-          data: row,
-        });
+        // Look up the booking's customer + labourer so the per-tenant
+        // event filter routes the payment event to both their subscriptions.
+        const bookingRes = await client.query(
+          `SELECT customer_id, labourer_id FROM bookings WHERE id = $1`,
+          [row.booking_id]
+        );
+        const b = bookingRes.rows[0];
+        const actorUserIds = b ? [b.customer_id, b.labourer_id].filter(Boolean) : [];
+        if (actorUserIds.length) {
+          await emitEvent(client, {
+            eventType: isSuccess ? 'payment.succeeded' : 'payment.failed',
+            resourceType: 'payment',
+            resourceId: row.id,
+            actorUserIds,
+            previousState: 'pending',
+            state: row.status,
+            data: row,
+          });
+        }
       }
     });
 

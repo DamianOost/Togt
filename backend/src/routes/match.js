@@ -44,6 +44,7 @@ router.post('/', matchCreateLimiter, authMiddleware, idempotencyMiddleware(), re
         eventType: 'match_request.created',
         resourceType: 'match_request',
         resourceId: row.id,
+        actorUserIds: [row.customer_id],
         state: row.status,
         data: row,
       });

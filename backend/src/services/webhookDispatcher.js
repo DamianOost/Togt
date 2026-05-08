@@ -56,6 +56,21 @@ const HTTP_RESPONSE_MAX_BYTES = 65536;
 let timer = null;
 let stopped = false;
 
+// Rolling counters exposed for the /health/deep + /admin/metrics endpoints.
+// `last_tick_at` is the freshness signal — if it's older than ~3× the
+// configured intervalMs, the dispatcher is stuck and /health/deep should
+// fail. Counters reset on `start()` so a launchd restart shows fresh stats.
+const stats = {
+  ticks_total: 0,
+  claimed_total: 0,
+  succeeded_total: 0,
+  failed_total: 0,
+  dead_total: 0,
+  last_tick_at: null,
+  started_at: null,
+  interval_ms: null,
+};
+
 async function tick() {
   if (stopped) return;
   // Claim batch: increment attempt_count AND push next_retry_at out by the
@@ -79,8 +94,30 @@ async function tick() {
        RETURNING *`,
     [TICK_BATCH, CLAIM_VISIBILITY_TIMEOUT_SECONDS]
   );
+  stats.ticks_total += 1;
+  stats.last_tick_at = new Date().toISOString();
   if (rows.length === 0) return;
-  await Promise.allSettled(rows.map(deliverOne));
+  stats.claimed_total += rows.length;
+  const results = await Promise.allSettled(rows.map(deliverOne));
+  // deliverOne never throws (it catches and writes status to DB), so
+  // results.status is always 'fulfilled'. The value tells us terminal-state.
+  let succeeded = 0, failed = 0, dead = 0;
+  for (const r of results) {
+    if (r.status === 'fulfilled') {
+      if (r.value === 'succeeded') succeeded += 1;
+      else if (r.value === 'dead') dead += 1;
+      else failed += 1;
+    } else {
+      // Defence in depth — should not happen.
+      failed += 1;
+    }
+  }
+  stats.succeeded_total += succeeded;
+  stats.failed_total += failed;
+  stats.dead_total += dead;
+  console.log(
+    `[webhookDispatcher] tick: claimed=${rows.length} succeeded=${succeeded} failed=${failed} dead=${dead}`
+  );
 }
 
 async function deliverOne(delivery) {
@@ -91,7 +128,7 @@ async function deliverOne(delivery) {
       `UPDATE webhook_deliveries SET status = 'dead', dead_at = NOW(), last_error = $2 WHERE id = $1`,
       [delivery.id, 'subscription disabled or deleted']
     );
-    return;
+    return 'dead';
   }
 
   // SSRF defence: in production (or when WEBHOOK_SSRF_FORCE=1) refuse to
@@ -104,7 +141,7 @@ async function deliverOne(delivery) {
       `UPDATE webhook_deliveries SET status = 'dead', dead_at = NOW(), last_error = $2 WHERE id = $1`,
       [delivery.id, String(ssrfErr.message || ssrfErr).slice(0, ERROR_MSG_MAX_CHARS)]
     );
-    return;
+    return 'dead';
   }
 
   const body = JSON.stringify(delivery.payload);
@@ -154,6 +191,7 @@ async function deliverOne(delivery) {
       `UPDATE webhook_subscriptions SET last_success_at = NOW(), consecutive_failures = 0 WHERE id = $1`,
       [sub.id]
     );
+    return 'succeeded';
   } catch (err) {
     const httpStatus = err.response?.status || null;
     const errMsg = String(err.message || err).slice(0, ERROR_MSG_MAX_CHARS);
@@ -187,12 +225,28 @@ async function deliverOne(delivery) {
         WHERE id = $1`,
       [sub.id]
     );
+    return ageSeconds >= DEAD_AT_SECONDS ? 'dead' : 'failed';
   }
 }
 
 function start({ intervalMs = 5000 } = {}) {
   stopped = false;
   if (timer) clearInterval(timer);
+  // Reset rolling counters so a launchd restart shows fresh stats.
+  stats.ticks_total = 0;
+  stats.claimed_total = 0;
+  stats.succeeded_total = 0;
+  stats.failed_total = 0;
+  stats.dead_total = 0;
+  stats.last_tick_at = null;
+  stats.started_at = new Date().toISOString();
+  stats.interval_ms = intervalMs;
+  console.log(
+    `[webhookDispatcher] started: tick=${intervalMs}ms batch=${TICK_BATCH} ` +
+    `retry_schedule=${JSON.stringify(RETRY_SCHEDULE_SECONDS)}s ` +
+    `dead_after=${DEAD_AT_SECONDS}s ` +
+    `visibility_timeout=${CLAIM_VISIBILITY_TIMEOUT_SECONDS}s`
+  );
   timer = setInterval(() => {
     tick().catch(e => console.error('[webhookDispatcher] tick error:', e));
   }, intervalMs);
@@ -207,11 +261,22 @@ function stop() {
   }
 }
 
+function isFresh(intervalMs = stats.interval_ms || 5000, freshnessFactor = 3) {
+  // Used by /health/deep: was the last tick recent enough to consider the
+  // dispatcher alive? Returns false if start() has never run, or if the
+  // last tick is older than freshnessFactor × the configured interval.
+  if (!stats.last_tick_at) return false;
+  const age = Date.now() - new Date(stats.last_tick_at).getTime();
+  return age < intervalMs * freshnessFactor;
+}
+
 module.exports = {
   start,
   stop,
   tick,
   deliverOne,
+  isFresh,
+  stats,
   RETRY_SCHEDULE_SECONDS,
   DEAD_AT_SECONDS,
 };

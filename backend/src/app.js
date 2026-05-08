@@ -4,7 +4,6 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 
 const { port, corsOrigins, nodeEnv } = require('./config/env');
-const errorHandler = require('./middleware/errorHandler');
 const { problemHandler } = require('./lib/problemJson');
 const authRoutes = require('./routes/auth');
 const labourerRoutes = require('./routes/labourers');

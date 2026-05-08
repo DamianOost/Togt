@@ -274,6 +274,29 @@ describe('webhook-subscriptions REST', () => {
     expect(rows[0].last_error).toBeNull();
   });
 
+  test('POST refuses creation when caller already has 50 subscriptions (per-user cap)', async () => {
+    const u = await registerUser({ role: 'customer' });
+    const { encryptSecret } = require('../src/lib/webhookSecretCrypto');
+    // Insert 50 subs directly so we don't hit the rate limiter on the
+    // POST path. The cap is checked against the live count, not how
+    // they got there.
+    for (let i = 0; i < 50; i++) {
+      await db.query(
+        `INSERT INTO webhook_subscriptions (owner_user_id, url, secret_encrypted, event_types)
+         VALUES ($1, $2, $3, ARRAY['booking.created'])`,
+        [u.user.id, `https://example.test/h${i}`, encryptSecret(`whsec_cap_${i}`)]
+      );
+    }
+    const res = await request(app)
+      .post('/api/webhook-subscriptions')
+      .set(authHeader(u.accessToken))
+      .send({ url: 'https://example.test/over-cap', event_types: ['booking.created'] });
+    expect(res.status).toBe(409);
+    expect(res.body.type).toMatch(/errors\/webhook-subscription-limit-reached/);
+    expect(res.body.extensions.limit).toBe(50);
+    expect(res.body.extensions.current).toBe(50);
+  });
+
   test('replay a pending delivery returns 404 (not replayable)', async () => {
     const u = await registerUser({ role: 'customer' });
     const create = await request(app)

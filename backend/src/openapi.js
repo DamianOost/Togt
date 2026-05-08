@@ -511,6 +511,104 @@ const spec = {
         },
       },
     },
+    '/api/api-keys': {
+      post: {
+        operationId: 'create_api_key',
+        summary: 'Mint a togt_live_ API key for downstream MCP / agent integration.',
+        description: 'JWT-authed (sign in via /auth/login first). The raw key is returned ONCE; subsequent GETs only return the prefix and metadata. Rate-limited to 5 mints / 10 minutes / IP.',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['scopes'],
+                properties: {
+                  scopes: {
+                    type: 'array',
+                    items: { type: 'string', enum: ['mcp:full', 'mcp:read_only', 'admin:full'] },
+                    minItems: 1,
+                    description: 'Capabilities the key grants. mcp:read_only is the most-restrictive; mcp:full unlocks mutating MCP tools; admin:full unlocks admin-only tools.',
+                  },
+                  description: { type: 'string', description: 'Human-readable label for the dashboard.' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '201': {
+            description: 'Created. The raw key is returned once.',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['key', 'id', 'prefix', 'scopes', 'created_at'],
+                  properties: {
+                    key: { type: 'string', description: 'The raw togt_live_ key. Store this NOW; it is never returned again.' },
+                    id: { type: 'string', format: 'uuid' },
+                    prefix: { type: 'string' },
+                    scopes: { type: 'array', items: { type: 'string' } },
+                    description: { type: 'string', nullable: true },
+                    created_at: { type: 'string', format: 'date-time' },
+                    warning: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+          '400': { $ref: '#/components/responses/Problem400' },
+          '401': { $ref: '#/components/responses/Problem401' },
+          '429': { $ref: '#/components/responses/Problem429' },
+        },
+      },
+      get: {
+        operationId: 'list_api_keys',
+        summary: 'List the caller’s API keys (prefix + metadata only — no raw key material).',
+        responses: {
+          '200': {
+            description: 'OK',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    keys: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          id: { type: 'string', format: 'uuid' },
+                          prefix: { type: 'string' },
+                          scopes: { type: 'array', items: { type: 'string' } },
+                          description: { type: 'string', nullable: true },
+                          created_at: { type: 'string', format: 'date-time' },
+                          last_used_at: { type: 'string', format: 'date-time', nullable: true },
+                          revoked_at: { type: 'string', format: 'date-time', nullable: true },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          '401': { $ref: '#/components/responses/Problem401' },
+        },
+      },
+    },
+    '/api/api-keys/{id}': {
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+      delete: {
+        operationId: 'revoke_api_key',
+        summary: 'Revoke an API key. Idempotent — already-revoked or unknown keys return 404.',
+        responses: {
+          '200': { description: 'Revoked.', content: { 'application/json': { schema: { type: 'object', properties: { ok: { type: 'boolean' } } } } } },
+          '401': { $ref: '#/components/responses/Problem401' },
+          '404': { $ref: '#/components/responses/Problem404' },
+        },
+      },
+    },
     '/api/webhook-subscriptions': {
       post: {
         operationId: 'create_webhook_subscription',
@@ -634,6 +732,14 @@ const spec = {
     { type: 'unknown-event-type', status: 400, description: 'Subscriber requested an event type Togt does not emit. extensions.known_types lists every supported type.' },
     { type: 'invalid-event-types', status: 400, description: 'event_types must be a non-empty array of strings.' },
     { type: 'invalid-webhook-url', status: 400, description: 'url must be http(s); production refuses non-https.' },
+    { type: 'webhook-subscription-limit-reached', status: 409, description: 'Per-user webhook-subscription cap reached. Delete an existing subscription before creating another.' },
+    { type: 'auth_missing_token', status: 401, description: 'No Authorization: Bearer header was supplied.' },
+    { type: 'auth_invalid_token', status: 401, description: 'JWT verification failed (expired or signature mismatch). Refresh via /auth/refresh or re-authenticate.' },
+    { type: 'auth_forbidden_role', status: 403, description: 'Caller authenticated but their role is not authorised for this endpoint.' },
+    { type: 'api_key_scopes_required', status: 400, description: 'POST /api/api-keys requires a non-empty scopes array.' },
+    { type: 'api_key_invalid_scope', status: 400, description: 'POST /api/api-keys received an unknown scope. extensions.valid_scopes lists every supported scope.' },
+    { type: 'api_key_not_found', status: 404, description: 'API key does not exist or is already revoked.' },
+    { type: 'idempotency_requires_auth', status: 401, description: 'Idempotency-Key requires an authenticated request.' },
   ],
 };
 

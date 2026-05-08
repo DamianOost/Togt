@@ -1,8 +1,14 @@
 const express = require('express');
 const db = require('../config/db');
 const { authMiddleware } = require('../middleware/auth');
+const { messageSendLimiter } = require('../middleware/rateLimit');
 
 const router = express.Router();
+
+// Cap individual chat message length so a compromised account can't pump
+// huge payloads into the counterparty's chat (and Socket.io broadcast).
+// 2KB is generous for a chat line; long-form should go through email.
+const MESSAGE_MAX_CHARS = 2048;
 
 // GET /api/messages/:bookingId — fetch messages for a booking
 router.get('/:bookingId', authMiddleware, async (req, res, next) => {
@@ -46,13 +52,18 @@ router.get('/:bookingId', authMiddleware, async (req, res, next) => {
 });
 
 // POST /api/messages/:bookingId — send a message
-router.post('/:bookingId', authMiddleware, async (req, res, next) => {
+router.post('/:bookingId', messageSendLimiter, authMiddleware, async (req, res, next) => {
   try {
     const { bookingId } = req.params;
     const { body } = req.body;
 
     if (!body || !body.trim()) {
       return res.status(400).json({ error: 'Message body is required' });
+    }
+    if (typeof body !== 'string' || body.length > MESSAGE_MAX_CHARS) {
+      return res.status(400).json({
+        error: `Message body too long (max ${MESSAGE_MAX_CHARS} chars)`,
+      });
     }
 
     // Verify user is part of this booking

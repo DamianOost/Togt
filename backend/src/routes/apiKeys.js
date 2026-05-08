@@ -11,6 +11,7 @@
 
 const express = require('express');
 const { authMiddleware } = require('../middleware/auth');
+const { apiKeyMintLimiter } = require('../middleware/rateLimit');
 const { ProblemError } = require('../lib/problemJson');
 const { createKey, listKeys, revokeKey } = require('../lib/apiKey');
 
@@ -25,7 +26,7 @@ router.get('/', authMiddleware, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post('/', authMiddleware, async (req, res, next) => {
+router.post('/', apiKeyMintLimiter, authMiddleware, async (req, res, next) => {
   try {
     const { scopes, description } = req.body || {};
     if (!Array.isArray(scopes) || scopes.length === 0) {

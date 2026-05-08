@@ -27,6 +27,11 @@ const { EVENT_TYPES } = require('../services/events');
 const router = express.Router();
 
 const ROTATION_GRACE_MS = 24 * 60 * 60 * 1000;
+// Per-user subscription cap. Bounds the bulk-emit fan-out — without this
+// a single hostile user could create 16k+ enabled subscriptions and DOS
+// the per-event INSERT (events.js chunks at 5000 placeholders/4 columns,
+// so the cap also keeps emit cost predictable).
+const MAX_SUBSCRIPTIONS_PER_USER = 50;
 
 function generateSecret() {
   return `whsec_${crypto.randomBytes(32).toString('hex')}`;
@@ -89,6 +94,21 @@ router.post('/', authMiddleware, async (req, res, next) => {
     // SSRF: in production refuse private/loopback resolutions early so we
     // don't accept the subscription in the first place.
     await assertPublicHost(url);
+
+    // Enforce per-user cap so emit fan-out cost stays bounded.
+    const countRes = await db.query(
+      `SELECT COUNT(*)::int AS n FROM webhook_subscriptions WHERE owner_user_id = $1`,
+      [req.user.id]
+    );
+    if (countRes.rows[0].n >= MAX_SUBSCRIPTIONS_PER_USER) {
+      throw new ProblemError({
+        type: 'webhook-subscription-limit-reached',
+        title: 'Webhook subscription limit reached',
+        status: 409,
+        detail: `Each account is capped at ${MAX_SUBSCRIPTIONS_PER_USER} webhook subscriptions. Delete an existing subscription to free a slot.`,
+        extensions: { limit: MAX_SUBSCRIPTIONS_PER_USER, current: countRes.rows[0].n },
+      });
+    }
 
     const plainSecret = generateSecret();
     const { rows } = await db.query(

@@ -9,6 +9,11 @@ const rateLimit = require('express-rate-limit');
 // Implementation: simply return a pass-through middleware when NODE_ENV=test
 // and the file that tests rate limiting (rateLimit.test.js) overrides this
 // via the process.env.RATELIMIT_FORCE flag.
+// In-memory rate-limit store note: express-rate-limit defaults to a
+// per-process MemoryStore. This is fine for the single-process Mac launchd
+// deployment today. A clustered / multi-instance deploy will need
+// rate-limit-redis (or similar) so an attacker can't bypass limits by
+// spreading requests across workers.
 const isTest = process.env.NODE_ENV === 'test' && process.env.RATELIMIT_FORCE !== '1';
 const passthrough = (req, res, next) => next();
 function maybe(limiter) { return isTest ? passthrough : limiter; }
@@ -77,6 +82,27 @@ const rotateSecretLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// API-key minting: a stolen 15-min JWT can otherwise mint hundreds of
+// long-lived togt_live_ keys before it expires. 5 / 10 min / IP.
+const apiKeyMintLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 5,
+  message: { error: 'Too many API-key mint attempts, please try again later' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Per-sender message rate limit. Stops a compromised account flooding
+// the counterparty's chat. 30 / minute / IP — generous for legitimate
+// typing speed, chokes spammers.
+const messageSendLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  message: { error: 'Too many messages, please slow down' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 module.exports = {
   authLimiter: maybe(authLimiter),
   refreshLimiter: maybe(refreshLimiter),
@@ -84,4 +110,6 @@ module.exports = {
   resetPasswordLimiter: maybe(resetPasswordLimiter),
   matchCreateLimiter: maybe(matchCreateLimiter),
   rotateSecretLimiter: maybe(rotateSecretLimiter),
+  apiKeyMintLimiter: maybe(apiKeyMintLimiter),
+  messageSendLimiter: maybe(messageSendLimiter),
 };

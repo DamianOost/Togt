@@ -141,13 +141,14 @@ app.use(problemHandler);
 // process when reloading; without this handler in-flight requests are
 // dropped and dispatcher ticks die mid-axios. The 10s force-kill ensures
 // we don't hang forever if something is genuinely stuck.
-function installShutdownHandlers(srv, dispatcher) {
+function installShutdownHandlers(srv, dispatcher, maintenance) {
   let shuttingDown = false;
   const shutdown = (sig) => {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`[shutdown] ${sig} received — draining`);
     if (dispatcher) dispatcher.stop();
+    if (maintenance) maintenance.stop();
     srv.close(async () => {
       try { await require('./config/db').end(); } catch (e) { /* ignore */ }
       console.log('[shutdown] clean exit');
@@ -172,12 +173,17 @@ if (require.main === module) {
   // Webhook dispatcher: claims due deliveries every 5s and POSTs them to subscribers.
   // Skipped under NODE_ENV=test because the test suite drives tick() directly.
   let bootDispatcher = null;
+  let bootMaintenance = null;
   if (process.env.NODE_ENV !== 'test') {
     bootDispatcher = require('./services/webhookDispatcher');
     bootDispatcher.start();
+    // Maintenance sweepers: hourly cleanup of expired idempotency keys
+    // and refresh tokens to keep those tables from growing unbounded.
+    bootMaintenance = require('./services/maintenanceSweepers');
+    bootMaintenance.start();
   }
 
-  installShutdownHandlers(server, bootDispatcher);
+  installShutdownHandlers(server, bootDispatcher, bootMaintenance);
 
   server.listen(port, () => {
     console.log(`Togt API running on port ${port}`);

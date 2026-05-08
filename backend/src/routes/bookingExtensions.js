@@ -1,7 +1,9 @@
 const express = require('express');
 const db = require('../config/db');
+const { withTx } = require('../config/db');
 const { authMiddleware } = require('../middleware/auth');
 const { notifyUser } = require('../services/notifications');
+const { emitEvent } = require('../services/events');
 
 const router = express.Router();
 
@@ -41,37 +43,45 @@ router.patch('/:id/confirm-scope', authMiddleware, async (req, res, next) => {
       return res.status(403).json({ error: 'Invalid role' });
     }
 
-    // Update this party's confirmation
-    await db.query(`UPDATE bookings SET ${updateFields} WHERE id = $1`, [booking.id]);
+    // Update this party's confirmation + (if both now confirmed) flip to
+    // in_progress AND emit booking.in_progress, all in the same tx.
+    const finalBooking = await withTx(async (client) => {
+      await client.query(`UPDATE bookings SET ${updateFields} WHERE id = $1`, [booking.id]);
+      const updated = await client.query('SELECT * FROM bookings WHERE id = $1', [booking.id]);
+      const b = updated.rows[0];
+      if (b.scope_confirmed_by_customer && b.scope_confirmed_by_labourer && b.status !== 'in_progress') {
+        const started = await client.query(
+          `UPDATE bookings
+              SET status = 'in_progress', scope_confirmed_at = NOW()
+            WHERE id = $1 RETURNING *`,
+          [booking.id]
+        );
+        const started_row = started.rows[0];
+        await emitEvent(client, {
+          eventType: 'booking.in_progress',
+          resourceType: 'booking',
+          resourceId: started_row.id,
+          actorUserIds: [started_row.customer_id, started_row.labourer_id],
+          previousState: booking.status,
+          state: 'in_progress',
+          data: started_row,
+        });
+        return started_row;
+      }
+      return b;
+    });
 
-    // Refetch to check if both have confirmed
-    const updated = await db.query('SELECT * FROM bookings WHERE id = $1', [booking.id]);
-    const b = updated.rows[0];
-
-    let finalBooking = b;
-
-    if (b.scope_confirmed_by_customer && b.scope_confirmed_by_labourer) {
-      // Both confirmed → auto-start job
-      const started = await db.query(
-        `UPDATE bookings
-         SET status = 'in_progress', scope_confirmed_at = NOW()
-         WHERE id = $1 RETURNING *`,
-        [booking.id]
-      );
-      finalBooking = started.rows[0];
-
-      // Notify both parties
+    if (finalBooking.status === 'in_progress' && finalBooking.scope_confirmed_at) {
+      // Notify both parties (best-effort, post-commit)
       notifyUser(booking.customer_id, '🚀 Job Started!',
         'Both parties confirmed scope. The job is now in progress.',
         { bookingId: booking.id, screen: 'ActiveBooking' });
       notifyUser(booking.labourer_id, '🚀 Job Started!',
         'Both parties confirmed scope. Start the job now!',
         { bookingId: booking.id, screen: 'ActiveJob' });
-    } else {
+    } else if (notifyTarget) {
       // Only one side confirmed — notify the other
-      if (notifyTarget) {
-        notifyUser(notifyTarget, notifyTitle, notifyBody, { bookingId: booking.id, screen: 'ScopeConfirm' });
-      }
+      notifyUser(notifyTarget, notifyTitle, notifyBody, { bookingId: booking.id, screen: 'ScopeConfirm' });
     }
 
     res.json({ booking: finalBooking });
@@ -97,35 +107,47 @@ router.post('/:id/make-recurring', authMiddleware, async (req, res, next) => {
       return res.status(403).json({ error: 'Only the customer can make a booking recurring' });
     }
 
-    // Mark the original as recurring
-    await db.query(
-      `UPDATE bookings SET is_recurring = true, recurrence_pattern = $1 WHERE id = $2`,
-      [pattern, booking.id]
-    );
-
+    // Wrap the parent flag flip + 4 child INSERTs + 4 booking.created emits
+    // in one tx so subscribers can't see a half-recurring state.
     const intervalDays = pattern === 'weekly' ? 7 : pattern === 'fortnightly' ? 14 : 30;
-    const createdBookings = [];
     const baseDate = new Date(booking.scheduled_at);
 
-    for (let i = 1; i <= 4; i++) {
-      const nextDate = new Date(baseDate);
-      nextDate.setDate(nextDate.getDate() + intervalDays * i);
-
-      const newBooking = await db.query(
-        `INSERT INTO bookings
-           (customer_id, labourer_id, skill_needed, address, location_lat, location_lng,
-            scheduled_at, hours_est, total_amount, notes, is_recurring, recurrence_pattern, parent_booking_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true,$11,$12)
-         RETURNING *`,
-        [
-          booking.customer_id, booking.labourer_id, booking.skill_needed,
-          booking.address, booking.location_lat, booking.location_lng,
-          nextDate.toISOString(), booking.hours_est, booking.total_amount,
-          booking.notes, pattern, booking.id,
-        ]
+    const createdBookings = await withTx(async (client) => {
+      await client.query(
+        `UPDATE bookings SET is_recurring = true, recurrence_pattern = $1 WHERE id = $2`,
+        [pattern, booking.id]
       );
-      createdBookings.push(newBooking.rows[0]);
-    }
+      const created = [];
+      for (let i = 1; i <= 4; i++) {
+        const nextDate = new Date(baseDate);
+        nextDate.setDate(nextDate.getDate() + intervalDays * i);
+
+        const newBooking = await client.query(
+          `INSERT INTO bookings
+             (customer_id, labourer_id, skill_needed, address, location_lat, location_lng,
+              scheduled_at, hours_est, total_amount, notes, is_recurring, recurrence_pattern, parent_booking_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true,$11,$12)
+           RETURNING *`,
+          [
+            booking.customer_id, booking.labourer_id, booking.skill_needed,
+            booking.address, booking.location_lat, booking.location_lng,
+            nextDate.toISOString(), booking.hours_est, booking.total_amount,
+            booking.notes, pattern, booking.id,
+          ]
+        );
+        const row = newBooking.rows[0];
+        await emitEvent(client, {
+          eventType: 'booking.created',
+          resourceType: 'booking',
+          resourceId: row.id,
+          actorUserIds: [row.customer_id, row.labourer_id],
+          state: row.status,
+          data: row,
+        });
+        created.push(row);
+      }
+      return created;
+    });
 
     res.json({ bookings: createdBookings, pattern });
   } catch (err) {

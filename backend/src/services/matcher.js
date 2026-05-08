@@ -473,6 +473,20 @@ async function sweepStalePending() {
         WHERE status = 'pending'
         RETURNING *`
     );
+    // Match-attempts attached to those expired requests need to flip to
+    // 'timeout' too — otherwise selectCandidates' acceptance_rate_pct
+    // calculation drags toward zero forever as those orphaned 'pinged'
+    // rows accumulate across restarts.
+    if (r.rows.length > 0) {
+      const matchIds = r.rows.map(row => row.id);
+      await client.query(
+        `UPDATE match_attempts
+            SET status = 'timeout', responded_at = NOW()
+          WHERE match_request_id = ANY($1::uuid[])
+            AND status = 'pinged'`,
+        [matchIds]
+      );
+    }
     for (const row of r.rows) {
       await emitEvent(client, {
         eventType: 'match_request.expired',

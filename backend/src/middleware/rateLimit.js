@@ -14,9 +14,24 @@ const rateLimit = require('express-rate-limit');
 // deployment today. A clustered / multi-instance deploy will need
 // rate-limit-redis (or similar) so an attacker can't bypass limits by
 // spreading requests across workers.
-const isTest = process.env.NODE_ENV === 'test' && process.env.RATELIMIT_FORCE !== '1';
-const passthrough = (req, res, next) => next();
-function maybe(limiter) { return isTest ? passthrough : limiter; }
+//
+// `maybe()` evaluates NODE_ENV + RATELIMIT_FORCE on every request rather
+// than once at module-load. That matters for jest: a test file that sets
+// process.env.RATELIMIT_FORCE='1' to assert real limiter behaviour
+// previously captured isTest=false at module-load and poisoned every
+// subsequent test file in the same run (jest tests share process.env but
+// have isolated module caches; whichever test file loaded rateLimit.js
+// first decided the behaviour for itself, but later files saw the
+// polluted env when they loaded rateLimit.js fresh).
+function isPassthrough() {
+  return process.env.NODE_ENV === 'test' && process.env.RATELIMIT_FORCE !== '1';
+}
+function maybe(limiter) {
+  return (req, res, next) => {
+    if (isPassthrough()) return next();
+    return limiter(req, res, next);
+  };
+}
 
 
 // Strict limit for credential-checking endpoints: 10 requests per 15 min per IP.

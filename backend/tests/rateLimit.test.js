@@ -1,4 +1,10 @@
-// Force real rate limiter in this file — defeats the test-env passthrough in rateLimit.js.
+// Force real rate limiter in this file — defeats the test-env passthrough
+// in rateLimit.js. The middleware re-reads process.env.RATELIMIT_FORCE on
+// every request (see comment in rateLimit.js), so we have to flip the env
+// var BEFORE the requests fire AND restore it afterwards so subsequent
+// test files in the same jest run don't pick up real limiters and start
+// hitting 429s on unrelated assertions.
+const ORIGINAL_RATELIMIT_FORCE = process.env.RATELIMIT_FORCE;
 process.env.RATELIMIT_FORCE = '1';
 const { request, app, truncateAll, db } = require('./helpers');
 
@@ -7,6 +13,10 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  // Restore so the next test file (jest shares process.env across files
+  // in --runInBand mode) sees the original value, not our '1' override.
+  if (ORIGINAL_RATELIMIT_FORCE === undefined) delete process.env.RATELIMIT_FORCE;
+  else process.env.RATELIMIT_FORCE = ORIGINAL_RATELIMIT_FORCE;
   if (db.end) await db.end();
 });
 

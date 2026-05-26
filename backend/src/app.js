@@ -107,6 +107,15 @@ app.get('/.well-known/openapi.json', (req, res) => res.json(openapiSpec));
 app.get('/openapi.json', (req, res) => res.json(openapiSpec));
 app.get('/.well-known/agents.json', (req, res) => res.json(agentsManifest));
 
+// Audit log: capture every authenticated request at response-finish.
+// Mounted globally; the middleware skips healthchecks, well-known, and
+// any request without an authenticated actor (req.user or req.apiKey).
+// res.on('finish') runs AFTER route auth middleware sets req.user / req.apiKey,
+// so the actor is resolvable even though this middleware sits before the
+// route mounts in the chain.
+const { auditLogMiddleware } = require('./middleware/auditLog');
+app.use(auditLogMiddleware());
+
 // Routes
 app.use('/auth', authRoutes);
 app.use('/api/auth', authRoutes);

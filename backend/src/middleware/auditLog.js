@@ -55,7 +55,15 @@ function auditLogMiddleware(opts = {}) {
     ? opts.skipPaths
     : DEFAULT_SKIP_PATHS;
 
+  // Hard-skip under NODE_ENV=test. Tests use truncateAll on each beforeEach;
+  // fire-and-forget INSERTs into audit_log racing with TRUNCATE ... CASCADE
+  // on users (which cascades to audit_log via FK) caused deadlocks. The
+  // existing dispatcher follows the same pattern — background workers
+  // and write-on-response middleware do not run under test.
+  const isTest = process.env.NODE_ENV === 'test';
+
   return function audit(req, res, next) {
+    if (isTest) return next();
     if (skipPaths.has(req.path)) return next();
 
     const start = Date.now();

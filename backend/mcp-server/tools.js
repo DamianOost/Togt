@@ -456,7 +456,10 @@ async function auditLogQuery(ctx, {
       const decoded = Buffer.from(String(cursor), 'base64').toString('utf-8');
       const [ts, id] = decoded.split('|');
       if (ts && id) {
-        filters.push(`(occurred_at, id) < ($${i++}, $${i++})`);
+        // Explicit casts so Postgres knows we're comparing timestamptz/uuid,
+        // not text. With us-precision text from a previous SELECT, the cast
+        // back to timestamptz preserves the full resolution.
+        filters.push(`(occurred_at, id) < ($${i++}::timestamptz, $${i++}::uuid)`);
         params.push(ts);
         params.push(id);
       }
@@ -466,8 +469,16 @@ async function auditLogQuery(ctx, {
   const safeLimit = Math.min(Math.max(1, parseInt(limit, 10) || 50), 200);
   params.push(safeLimit);
 
+  // We return occurred_at as Postgres's native text representation
+  // (microsecond precision) rather than letting pg-node convert it to
+  // a JS Date (millisecond precision). Otherwise the cursor round-trip
+  // truncates sub-ms and rows inserted within the same ms get filtered
+  // out incorrectly on the next page. Round-trip is lossless when the
+  // text comes from Postgres and goes back into a $N::timestamptz
+  // cursor parameter.
   const sql = `
-    SELECT id, occurred_at, actor_type, actor_user_id, api_key_id,
+    SELECT id, occurred_at::text AS occurred_at, actor_type,
+           actor_user_id, api_key_id,
            action, resource_type, resource_id, request_id, host(ip) AS ip,
            status_code, latency_ms, metadata, error_code
       FROM audit_log
@@ -480,10 +491,8 @@ async function auditLogQuery(ctx, {
   let next_cursor = null;
   if (rows.length === safeLimit) {
     const last = rows[rows.length - 1];
-    const ts = last.occurred_at instanceof Date
-      ? last.occurred_at.toISOString()
-      : String(last.occurred_at);
-    next_cursor = Buffer.from(`${ts}|${last.id}`).toString('base64');
+    // last.occurred_at is now a string from Postgres with us precision.
+    next_cursor = Buffer.from(`${last.occurred_at}|${last.id}`).toString('base64');
   }
 
   return { rows, next_cursor };

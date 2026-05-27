@@ -1,0 +1,35 @@
+# Fly.io app config for togt-api.
+# Region: lhr (London — closest to South Africa on Fly's free network).
+# Single shared-cpu-1x VM with auto-stop to stay under free-tier hours.
+# Public HTTP/HTTPS via Fly's edge proxy on port 443 → internal port 8080.
+
+app = "togt-api"
+primary_region = "lhr"
+kill_signal = "SIGTERM"
+kill_timeout = "11s"
+
+[build]
+  # Dockerfile lives in this same directory.
+
+[env]
+  # Sensitive values go via `flyctl secrets set`, NOT here.
+  # Non-sensitive defaults can live here.
+  NODE_ENV = "production"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

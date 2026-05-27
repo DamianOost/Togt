@@ -16,7 +16,7 @@ Owned by TOGT under the canonical george-brain department contract. Authority fi
 
 ## Goal
 
-Take TOGT from `localhost:3002` on the Mac mini (launchd `com.togt.backend`) to **`https://api.togt.co.za`** reachable by any external AI agent.
+Take TOGT from `localhost:3002` on the Mac mini (launchd `com.togt.backend`) to **`https://togt-api.fly.dev`** reachable by any external AI agent. A custom domain (`togt-api.fly.dev`) is a non-blocking follow-up — see "Future — Custom Domain Cutover" at the end.
 
 The Path B agent-native bet (RFC 9457 errors + Idempotency-Key + OpenAPI 3.1 + scoped API keys + MCP server + signed webhooks + audit log) is theoretical until this is done. Once done, any external Claude / Operator / A2A orchestrator can book a TOGT labourer end-to-end via HTTP MCP at `/mcp` without custom integration code.
 
@@ -43,31 +43,34 @@ The Path B agent-native bet (RFC 9457 errors + Idempotency-Key + OpenAPI 3.1 + s
 | Component | Vendor | Tier | Notes |
 |---|---|---|---|
 | Compute | Fly.io | Free (1x shared-cpu-1x) | Region `lhr` (London) — closest to SA for the agent traffic. Auto-stop when idle saves on free-tier hours |
-| Database | Neon | Free (0.5GB storage, 5GB egress / mo) | Serverless Postgres, supports branching for migration testing |
-| DNS + TLS | Cloudflare | Free | DNS for `togt.co.za`, proxied CNAME `api.togt.co.za` → `togt-api.fly.dev`, free TLS at edge, free DDoS, free analytics |
-| Domain registrar | .co.za registrar (Domains.co.za or Afrihost) | ~R150/yr | One-time per year |
-| Monitoring | HC.io (Healthchecks.io) | Free (20 checks) | Ping `/health/deep` every 5 min; alert on 3 consecutive failures via email + Slack |
-| Logging | Fly native (`flyctl logs`) | Free | Tail to local terminal; structured log shipping is a Phase 2 follow-up |
+| Database | Neon | Free (0.5GB storage, 5GB egress / mo, **7-day point-in-time recovery built-in**) | Serverless Postgres; PITR is the entire backup strategy at POC scale |
+| DNS + TLS (first deploy) | Fly native (`*.fly.dev`) | Free | `togt-api.fly.dev` with Let's-Encrypt cert auto-issued by Fly. No custom domain involvement |
+| Monitoring | HC.io (Healthchecks.io) | Free (20 checks) | Ping `/health/deep` every 5 min; alert on 3 consecutive failures via email |
+| Logging | Fly native (`flyctl logs`) | Free | Tail to local terminal; structured log shipping is a follow-up |
 
-**Total fixed cost at POC scale:** ~**R13/month** (just the .co.za domain amortised). Everything else free tier.
+**Total fixed cost at POC scale:** **R0**. All vendors covered by free tiers.
 
-**Mobile app:** Existing build pipeline; `API_BASE_URL` env at build time flips from Tailscale IP to `https://api.togt.co.za`.
+**Free-tier discipline:** if usage would push past any vendor's free tier (Neon 0.5GB / 5GB egress, Fly free hours, HC.io 20 checks), stop and ask before paying.
+
+**Mobile app:** Existing build pipeline; `API_BASE_URL` env at build time flips from Tailscale IP to `https://togt-api.fly.dev`.
 
 ## Phases (Sequential, Reversible)
 
-### Phase 0 — Pre-flight (vendor accounts + domain)
+### Phase 0 — Pre-flight (vendor accounts)
 
 **Tier:** L3 for each signup (per AGENTS row 16, vendor accounts attached to billing).
 
+Use email `georgeoosthuyzen@gmail.com` for all signups (matches existing GitHub + Tailscale).
+
 Actions Damian explicitly approves per vendor:
 
-- [ ] Register `togt.co.za` at a .co.za registrar (Damians.co.za, Afrihost, Domains.co.za, etc.). One-year minimum.
-- [ ] Create Cloudflare account → add `togt.co.za` zone → update registrar nameservers to Cloudflare's.
-- [ ] Create Fly.io account. Add payment method (free tier still requires it on signup).
+- [ ] Create Fly.io account. Add payment method (free tier still requires it on signup; no charge unless free-tier limits exceeded).
 - [ ] Create Neon account. Verify email.
 - [ ] Create HC.io account. Verify email.
 
-Evidence: account confirmation emails for each + Cloudflare zone showing the domain "Active".
+Custom domain (`togt.co.za`) registration + Cloudflare setup deliberately deferred. First deploy ships on `togt-api.fly.dev`. See "Future — Custom Domain Cutover" at the end of this spec for the non-disruptive add-on path.
+
+Evidence: account confirmation emails for each of the three vendors.
 
 ### Phase 1 — Local prep (no live infra writes)
 
@@ -113,16 +116,15 @@ Actions, executed by Damian via `flyctl` and `neonctl` (or web UI):
     CLOUDINARY_CLOUD_NAME='...' CLOUDINARY_API_KEY='...' CLOUDINARY_API_SECRET='...' \
     VERIFYNOW_API_KEY='...' VERIFYNOW_MODE=sandbox \
     RESEND_API_KEY='...' \
-    API_PUBLIC_BASE_URL='https://api.togt.co.za' \
+    API_PUBLIC_BASE_URL='https://togt-api.fly.dev' \
     HC_TOGT_BACKEND='https://hc-ping.com/<uuid-from-phase-6>'
   ```
 
   (The HC.io ping URL is filled in during Phase 6 and a second `flyctl secrets set HC_TOGT_BACKEND=...` adds it then.)
 
-- [ ] On Cloudflare DNS: add CNAME `api` → `togt-api.fly.dev`, **proxy ON** (orange cloud).
-- [ ] On Fly: `flyctl certs add api.togt.co.za --app togt-api`. Wait for "Certificate is valid" status (usually 1-5 minutes once Cloudflare resolves).
+- Fly auto-issues a Let's Encrypt cert for `togt-api.fly.dev` automatically — no manual cert step required for the first deploy. (Custom domain cert is added later in the optional follow-up phase.)
 
-Evidence: `flyctl secrets list --app togt-api` shows all expected keys (only digests, not values). `flyctl certs show api.togt.co.za` shows valid cert.
+Evidence: `flyctl secrets list --app togt-api` shows all expected keys (only digests, not values).
 
 ### Phase 3 — Schema migration on empty Neon DB
 
@@ -152,10 +154,10 @@ Actions:
 - [ ] `cd backend && flyctl deploy --remote-only --app togt-api`. Fly builds the Dockerfile remotely (avoids local Docker dependency).
 - [ ] Wait for "Deployment status changed to successful" and the health check passes (Fly polls `/health` automatically).
 - [ ] External smoke from any machine NOT on Tailscale:
-  - `curl https://api.togt.co.za/health` → `{"status":"ok"}` (200)
-  - `curl https://api.togt.co.za/health/deep` → `{"status":"ok","checks":{...}}` (200)
-  - `curl https://api.togt.co.za/.well-known/openapi.json | jq .info` → returns OpenAPI metadata
-  - `curl https://api.togt.co.za/.well-known/agents.json | jq .` → returns the agents manifest
+  - `curl https://togt-api.fly.dev/health` → `{"status":"ok"}` (200)
+  - `curl https://togt-api.fly.dev/health/deep` → `{"status":"ok","checks":{...}}` (200)
+  - `curl https://togt-api.fly.dev/.well-known/openapi.json | jq .info` → returns OpenAPI metadata
+  - `curl https://togt-api.fly.dev/.well-known/agents.json | jq .` → returns the agents manifest
 - [ ] `flyctl logs --app togt-api` shows the boot lines:
   - `Togt API running on port 8080`
   - `[matcher] swept N stale pending match(es) on boot` (probably 0)
@@ -170,13 +172,13 @@ Evidence: 4 green curls + log output captured to the runbook.
 
 Actions (Damian runs):
 
-- [ ] `curl -X POST https://api.togt.co.za/auth/register -H 'Content-Type: application/json' -d '{"name":"Damian Oosthuyzen","email":"<damian-prod-email>","phone":"+27...","password":"<strong-pw>","role":"customer"}'`
+- [ ] `curl -X POST https://togt-api.fly.dev/auth/register -H 'Content-Type: application/json' -d '{"name":"Damian Oosthuyzen","email":"<damian-prod-email>","phone":"+27...","password":"<strong-pw>","role":"customer"}'`
 - [ ] Capture the returned `accessToken`. Save the password in 1Password under "TOGT production — Damian admin login".
-- [ ] `curl -X POST https://api.togt.co.za/api/api-keys -H "Authorization: Bearer <accessToken>" -H 'Content-Type: application/json' -d '{"description":"Damian admin key 2026-05-27","scopes":["mcp:full","admin:full"]}'`
+- [ ] `curl -X POST https://togt-api.fly.dev/api/api-keys -H "Authorization: Bearer <accessToken>" -H 'Content-Type: application/json' -d '{"description":"Damian admin key 2026-05-27","scopes":["mcp:full","admin:full"]}'`
 - [ ] Capture the returned plaintext key (e.g. `togt_live_<32 hex>`). **Shown ONCE.** Save in 1Password under "TOGT production API key — admin".
 - [ ] Verify MCP HTTP works against production:
   ```bash
-  curl -X POST https://api.togt.co.za/mcp \
+  curl -X POST https://togt-api.fly.dev/mcp \
     -H "Authorization: Bearer togt_live_<new>" \
     -H "Content-Type: application/json" \
     -H "Accept: application/json, text/event-stream" \
@@ -208,7 +210,7 @@ Evidence: HC.io dashboard shows the check in "up" state with the last ping <10 m
 Actions:
 
 - [ ] Edit `mobile/src/services/api.js` (or wherever `API_BASE_URL` is set). Pick **one** approach (Option A for this first deploy; Option B is a follow-up cleanup):
-  - **Option A — hardcoded constant (simpler, this plan picks this):** Replace the Mac mini Tailscale IP / hostname with the literal string `https://api.togt.co.za`. One-line change.
+  - **Option A — hardcoded constant (simpler, this plan picks this):** Replace the Mac mini Tailscale IP / hostname with the literal string `https://togt-api.fly.dev`. One-line change.
   - Option B — env-driven (follow-up): Read `process.env.EXPO_PUBLIC_API_BASE_URL` set at build time in `app.json` / `eas.json`. Cleaner long-term (lets a dev build target Mac mini while a release build targets prod) but more moving parts for the first cutover.
 - [ ] Build Expo dev client targeting production: `cd mobile && npx expo run:android --variant release` (or iOS equivalent).
 - [ ] Smoke-test on Damian's Android device: register a NEW account (since production DB is empty), confirm it lands.
@@ -229,9 +231,9 @@ Actions:
   - How to SSH into the running VM: `flyctl ssh console --app togt-api`
   - How to run a one-off command (e.g. migrations): `flyctl ssh console --app togt-api -C "npm run migrate"`
   - HC.io alert email goes to `<damian-email>`
-  - Vendor support contacts (Fly: fly.io/discuss, Neon: neon.tech/docs, Cloudflare: dashboard support)
+  - Vendor support contacts (Fly: fly.io/discuss, Neon: neon.tech/docs, HC.io: dashboard support)
 - [ ] Update `Togt/CLAUDE.md` (project brief) with the new production paths.
-- [ ] Update `george-brain/business/togt/MEMORY.md` § "Stable Current Facts" — backend now lives at `api.togt.co.za` (via Fly.io + Neon + Cloudflare), Mac mini is staging.
+- [ ] Update `george-brain/business/togt/MEMORY.md` § "Stable Current Facts" — backend now lives at `togt-api.fly.dev` (via Fly.io + Neon), Mac mini is staging.
 - [ ] Update `george-brain/business/togt/INBOX.md`: move `[2026-05-27-C]` from Open → Done with evidence (commit SHAs, vendor account names, deployment date).
 - [ ] Append a `[T]` line to today's `memory/YYYY-MM-DD.md` summarising the deploy completion.
 
@@ -239,32 +241,47 @@ Evidence: runbook committed, INBOX entry moved to Done.
 
 ## Cutover Criteria — "deployed" is true when ALL pass:
 
-- [ ] `https://api.togt.co.za/health` returns 200 with `{"status":"ok"}`
-- [ ] `https://api.togt.co.za/health/deep` returns 200 with all checks `ok` or `skipped-in-test`
-- [ ] MCP HTTP call from Damian's browser against `api.togt.co.za` with the new admin key returns a valid `tools/list` JSON-RPC envelope
+- [ ] `https://togt-api.fly.dev/health` returns 200 with `{"status":"ok"}`
+- [ ] `https://togt-api.fly.dev/health/deep` returns 200 with all checks `ok` or `skipped-in-test`
+- [ ] MCP HTTP call from Damian's browser against `togt-api.fly.dev` with the new admin key returns a valid `tools/list` JSON-RPC envelope
 - [ ] HC.io shows the check in "up" state with 3 consecutive successful pings
-- [ ] Mobile app's production build authenticates against `api.togt.co.za` and creates an audit_log row
+- [ ] Mobile app's production build authenticates against `togt-api.fly.dev` and creates an audit_log row
 - [ ] `flyctl logs --app togt-api` shows the expected 4 boot lines and no error stacks since boot
-- [ ] Cloudflare DNS resolves `api.togt.co.za` from a non-Tailscale network and serves Fly's content (verified via `curl --resolve api.togt.co.za:443:1.1.1.1` or similar from a phone hotspot)
+- [ ] `togt-api.fly.dev` resolves and serves Fly's content from a non-Tailscale network (verify by switching Windows to phone hotspot and curling, or use any external machine)
+
+## Future — Custom Domain Cutover (deferred, non-blocking)
+
+When Damian registers `togt.co.za` and wants to swap the public hostname, the cutover is non-disruptive:
+
+1. Register `togt.co.za` at a .co.za registrar (Domains.co.za, Afrihost, etc.) — ~R150/yr.
+2. Add the domain to Cloudflare (free plan) — update registrar nameservers to Cloudflare's. Wait for "Active" status.
+3. Cloudflare DNS: add CNAME `api` → `togt-api.fly.dev`, proxy ON (orange cloud).
+4. `flyctl certs add api.togt.co.za --app togt-api` — Fly issues an additional cert that coexists with the original `togt-api.fly.dev` cert. Both hostnames now work.
+5. `flyctl secrets set API_PUBLIC_BASE_URL='https://api.togt.co.za' --app togt-api` — RFC 9457 error type URIs and the agents.json self-description flip to the custom hostname.
+6. Mobile app's `API_BASE_URL` constant updated to `https://api.togt.co.za` in the next release build. (Old builds continue working off `togt-api.fly.dev` — both routes serve the same app.)
+7. HC.io check URL updated to `https://api.togt.co.za/health/deep` for clarity.
+8. Verify externally + update runbook + MEMORY.md.
+
+Both hostnames keep serving traffic indefinitely. There's no flag-day cutover. Old API keys + old MCP integrations against `togt-api.fly.dev` keep working until they're explicitly migrated.
 
 ## Rollback
 
 | What broke | Recovery |
 |---|---|
 | Deploy bricks the app — health check failing | `flyctl releases --app togt-api`, identify the previous-good release id, `flyctl deploy --image <id> --app togt-api`. Recovery ~2 minutes. |
-| Schema migration on Neon broke production reads | Manual `psql` to drop the new column / index. Neon free tier has no point-in-time recovery; restore relies on the migration being reversible by hand. **Mitigation:** every migration must include a manual downgrade SQL block in a comment. |
-| Cloudflare proxy issue (TLS handshake failure, etc.) | Cloudflare dashboard → temporarily set the CNAME to **DNS-only** (grey cloud). Bypasses Cloudflare; talks direct to Fly. Adds latency penalty but bypasses CF outages. |
-| Fly region outage | Fly UI → scale to 2 regions (`lhr` + `fra`). Costs more, but adds redundancy. Out of scope for first deploy. |
+| Schema migration on Neon broke production reads | Use Neon's built-in 7-day point-in-time recovery via the Neon dashboard to restore the branch to before the migration ran. **Mitigation:** every migration should include a manual downgrade SQL block in a comment as a faster path than full PITR. |
+| Fly TLS / `*.fly.dev` cert issue | `flyctl certs check togt-api.fly.dev` to inspect. Fly auto-rotates Let's Encrypt certs; manual `flyctl certs add` re-triggers issuance if stuck. |
+| Fly region outage (lhr down) | Fly UI → scale to 2 regions (`lhr` + `fra`). Costs more but adds redundancy. Out of scope for first deploy at POC scale. |
 | Neon outage | No active mitigation at POC. Document the incident, wait for Neon. Future: switch to Fly Postgres or DO Managed Postgres if Neon proves unreliable. |
 | HC.io false-positive alert | HC.io dashboard → pause check temporarily, investigate. Real outage requires log inspection via `flyctl logs`. |
-| Mobile app crash after URL flip | Revert `API_BASE_URL` in the dev build. Production crash → out-of-band Expo update (or accept ~7-day Play/App Store review if it's a published build, which it isn't yet). |
+| Mobile app crash after URL flip | Revert the hardcoded `API_BASE_URL` constant in the next dev build. Production crash → out-of-band Expo update (or accept ~7-day Play/App Store review if it's a published build, which it isn't yet). |
 
-## Open Questions for Damian
+## Decisions Captured (2026-05-27 review)
 
-1. **Cost ceiling.** Free tiers cover POC. If real traffic ever exceeds free quotas, what's the monthly cap before we move workloads? Suggestion: **R500/mo hard cap**, alert at R300/mo.
-2. **Backup discipline beyond Neon's snapshots.** Neon free tier auto-snapshots every 24h. Is that enough until real customers, or do we want an off-platform `pg_dump` mirror to Drive? Suggestion: defer; Neon free auto-snapshots cover POC.
-3. **Domain ownership terms.** Who registers `togt.co.za`? Suggestion: Damian personally for now; transfer to TOGT entity (if/when registered) later.
-4. **Vendor email forwarding.** All vendor support emails will be sent to whichever email registers the accounts. Suggestion: use `damianoost@gmail.com` for now; route to `damian@togt.co.za` once Google Workspace / forwarding is set up.
+1. **Cost ceiling:** stay within free tiers only for POC. If any vendor's usage would push past its free tier, **stop and ask** before paying. No standing rand cap — just "free or pause".
+2. **Backup discipline:** Neon free tier's built-in **7-day point-in-time recovery** is the entire backup strategy at POC. No daily `pg_dump` cron, no manual exports, no ongoing operator burden. Revisit when real customer data exists and the 7-day window stops being long enough.
+3. **Domain:** custom `togt.co.za` deferred to a future session. First deploy ships on `togt-api.fly.dev` with Fly's auto-issued Let's Encrypt cert. See "Future — Custom Domain Cutover" below for the non-disruptive add-on path.
+4. **Vendor signup email:** `georgeoosthuyzen@gmail.com` (existing account already tied to GitHub + Tailscale + the planned MCP integrator path).
 
 ## Evidence Required Before Cutover Sign-off
 

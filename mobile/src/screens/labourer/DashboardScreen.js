@@ -12,6 +12,14 @@ import BookingStatusBadge from '../../components/BookingStatusBadge';
 import { formatDateTime, formatZAR } from '../../utils/formatters';
 import { colors, typography, spacing, borderRadius, shadows } from '../../theme';
 
+function formatApproxArea(item) {
+  const lat = Number(item?.approx_lat);
+  const lng = Number(item?.approx_lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const label = item.location_precision === 'approximate' ? 'Approx. area' : 'Area';
+  return `${label}: ${lat.toFixed(2)}, ${lng.toFixed(2)}`;
+}
+
 export default function DashboardScreen({ navigation }) {
   const dispatch = useDispatch();
   const { user } = useSelector((s) => s.auth);
@@ -248,7 +256,9 @@ export default function DashboardScreen({ navigation }) {
                     >
                       <Text style={styles.cardCustomer}>{b.customer_name}</Text>
                       <Text style={styles.cardSkill}>{b.skill_needed}</Text>
-                      <Text style={styles.cardAddress}>{b.address}</Text>
+                      <Text style={styles.cardAddress}>
+                        {b.address || formatApproxArea(b) || 'Location hidden until accepted'}
+                      </Text>
                       {b.total_amount && (
                         <Text style={styles.cardAmount}>{formatZAR(b.total_amount)} est.</Text>
                       )}

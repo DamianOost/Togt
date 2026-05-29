@@ -51,17 +51,25 @@ describe('POST /api/kyc/verify-id with VerifyNow configured', () => {
     expect(res.body.provider).toBe('verifynow');
     expect(res.body.poc_mode).toBe(false);
     expect(res.body.name).toBe('Thabo James Mokoena');
+    expect(res.body.id_last4).toBe('8080');
     expect(res.body.vendor.request_id).toBe('req-abc');
-    expect(res.body.vendor.on_npr).toBe(true);
-    expect(res.body.vendor.smart_card).toBe(true);
+    expect(res.body.vendor.on_npr).toBeUndefined();
+    expect(res.body.vendor.smart_card).toBeUndefined();
 
     const kyc = await db.query(
-      'SELECT provider, verified_name, status FROM kyc_verifications WHERE user_id = $1',
+      `SELECT id_number, provider, verified_name, status, id_last4, id_blind_index,
+              provider_request_id, raw_input_discarded_at
+         FROM kyc_verifications WHERE user_id = $1`,
       [u.user.id]
     );
+    expect(kyc.rows[0].id_number).toBeNull();
     expect(kyc.rows[0].provider).toBe('verifynow');
     expect(kyc.rows[0].verified_name).toBe('Thabo James Mokoena');
     expect(kyc.rows[0].status).toBe('verified');
+    expect(kyc.rows[0].id_last4).toBe('8080');
+    expect(kyc.rows[0].id_blind_index).toMatch(/^[a-f0-9]{64}$/);
+    expect(kyc.rows[0].provider_request_id).toBe('req-abc');
+    expect(kyc.rows[0].raw_input_discarded_at).toBeTruthy();
 
     expect(mockVerifyId).toHaveBeenCalledTimes(1);
     expect(mockVerifyId.mock.calls[0][0]).toMatchObject({

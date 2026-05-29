@@ -32,6 +32,13 @@ const SKILL_ICONS = {
 
 const SKILLS = Object.keys(SKILL_ICONS);
 
+function getPublicMarkerCoordinate(labourer) {
+  const lat = Number(labourer?.approx_lat);
+  const lng = Number(labourer?.approx_lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { latitude: lat, longitude: lng };
+}
+
 function StarRow({ rating, size = 14 }) {
   const filled = Math.round(rating || 0);
   return (
@@ -149,14 +156,12 @@ export default function HomeMapScreen({ navigation }) {
           showsUserLocation
           showsMyLocationButton={false}
         >
-          {labourers.map((l) =>
-            l.current_lat && l.current_lng ? (
+          {labourers.map((l) => {
+            const coordinate = getPublicMarkerCoordinate(l);
+            return coordinate ? (
               <Marker
                 key={l.id}
-                coordinate={{
-                  latitude: parseFloat(l.current_lat),
-                  longitude: parseFloat(l.current_lng),
-                }}
+                coordinate={coordinate}
                 onPress={() => onMarkerPress(l)}
               >
                 <View style={styles.markerContainer}>
@@ -168,8 +173,8 @@ export default function HomeMapScreen({ navigation }) {
                   <View style={styles.markerTail} />
                 </View>
               </Marker>
-            ) : null
-          )}
+            ) : null;
+          })}
         </MapView>
       ) : (
         <View style={styles.loadingMap}>

@@ -6,6 +6,12 @@ const { matchCreateLimiter } = require('../middleware/rateLimit');
 const { idempotencyMiddleware } = require('../middleware/idempotency');
 const matcher = require('../services/matcher');
 const { emitEvent } = require('../services/events');
+const {
+  serializeMatchForCustomer,
+  serializeMatchForLabourerCandidate,
+  serializeBookingForUser,
+} = require('../lib/privacy');
+const { recordPrivacyAudit } = require('../lib/privacyAudit');
 
 const router = express.Router();
 
@@ -52,7 +58,7 @@ router.post('/', matchCreateLimiter, authMiddleware, idempotencyMiddleware(), re
     });
 
     matcher.dispatchMatch(match.id);
-    res.status(201).json({ match });
+    res.status(201).json({ match: serializeMatchForCustomer(match) });
   } catch (err) {
     next(err);
   }
@@ -81,7 +87,10 @@ router.get('/:id', authMiddleware, async (req, res, next) => {
          ORDER BY pinged_at ASC`,
       [m.id]
     );
-    res.json({ match: m, attempts: attempts.rows });
+    const match = m.customer_id === req.user.id
+      ? serializeMatchForCustomer(m)
+      : serializeMatchForLabourerCandidate(m);
+    res.json({ match, attempts: attempts.rows });
   } catch (err) {
     next(err);
   }
@@ -100,7 +109,13 @@ router.post('/:id/accept', authMiddleware, requireRole('labourer'), async (req, 
       return res.status(409).json({ error: result.error });
     }
     matcher.recordResponse(attempt.id, 'accepted');
-    res.json({ booking: result.booking });
+    recordPrivacyAudit(req, {
+      action: 'privacy.booking.exact_address_revealed',
+      resource: { type: 'booking', id: result.booking.id },
+      statusCode: 200,
+      metadata: { reason: 'match_accept', booking_status: result.booking.status },
+    });
+    res.json({ booking: serializeBookingForUser(result.booking, req.user) });
   } catch (err) {
     next(err);
   }

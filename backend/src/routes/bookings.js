@@ -5,6 +5,8 @@ const { authMiddleware } = require('../middleware/auth');
 const { idempotencyMiddleware } = require('../middleware/idempotency');
 const { notifyUser } = require('../services/notifications');
 const { emitEvent } = require('../services/events');
+const { serializeBookingForUser } = require('../lib/privacy');
+const { recordPrivacyAudit } = require('../lib/privacyAudit');
 
 const STATUS_TO_EVENT = {
   accepted: 'booking.accepted',
@@ -82,7 +84,7 @@ router.post('/', authMiddleware, idempotencyMiddleware(), async (req, res, next)
       { bookingId: booking.id, screen: 'JobRequests' }
     );
 
-    res.status(201).json({ booking });
+    res.status(201).json({ booking: serializeBookingForUser(booking, req.user) });
   } catch (err) {
     next(err);
   }
@@ -105,7 +107,18 @@ router.get('/', authMiddleware, async (req, res, next) => {
        ORDER BY b.created_at DESC`,
       [req.user.id]
     );
-    res.json({ bookings: result.rows });
+    const bookings = result.rows.map((row) => serializeBookingForUser(row, req.user));
+    for (const b of bookings) {
+      if (b.customer_phone || b.labourer_phone) {
+        recordPrivacyAudit(req, {
+          action: 'privacy.contact.phone_revealed',
+          resource: { type: 'booking', id: b.id },
+          statusCode: 200,
+          metadata: { viewer_role: req.user.role, booking_status: b.status },
+        });
+      }
+    }
+    res.json({ bookings });
   } catch (err) {
     next(err);
   }
@@ -130,7 +143,18 @@ router.get('/my', authMiddleware, async (req, res, next) => {
       [req.user.id]
     );
 
-    res.json({ bookings: result.rows });
+    const bookings = result.rows.map((row) => serializeBookingForUser(row, req.user));
+    for (const b of bookings) {
+      if (b.customer_phone || b.labourer_phone) {
+        recordPrivacyAudit(req, {
+          action: 'privacy.contact.phone_revealed',
+          resource: { type: 'booking', id: b.id },
+          statusCode: 200,
+          metadata: { viewer_role: req.user.role, booking_status: b.status },
+        });
+      }
+    }
+    res.json({ bookings });
   } catch (err) {
     next(err);
   }
@@ -143,7 +167,7 @@ router.get('/:id', authMiddleware, async (req, res, next) => {
       `SELECT b.*,
               cu.name AS customer_name, cu.phone AS customer_phone, cu.avatar_url AS customer_avatar,
               lu.name AS labourer_name, lu.phone AS labourer_phone, lu.avatar_url AS labourer_avatar,
-              lp.hourly_rate, lp.skills, lp.current_lat, lp.current_lng,
+              lp.hourly_rate, lp.skills, lp.current_lat, lp.current_lng, lp.location_updated_at,
               p.status AS payment_status, p.id AS payment_id
        FROM bookings b
        JOIN users cu ON b.customer_id = cu.id
@@ -163,7 +187,32 @@ router.get('/:id', authMiddleware, async (req, res, next) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    res.json({ booking });
+    const safeBooking = serializeBookingForUser(booking, req.user);
+    if (safeBooking.customer_phone || safeBooking.labourer_phone) {
+      recordPrivacyAudit(req, {
+        action: 'privacy.contact.phone_revealed',
+        resource: { type: 'booking', id: safeBooking.id },
+        statusCode: 200,
+        metadata: { viewer_role: req.user.role, booking_status: safeBooking.status },
+      });
+    }
+    if (req.user.role === 'labourer' && safeBooking.address) {
+      recordPrivacyAudit(req, {
+        action: 'privacy.booking.exact_address_revealed',
+        resource: { type: 'booking', id: safeBooking.id },
+        statusCode: 200,
+        metadata: { viewer_role: req.user.role, booking_status: safeBooking.status },
+      });
+    }
+    if (req.user.role === 'customer' && (safeBooking.labourer_current_lat || safeBooking.labourer_current_lng)) {
+      recordPrivacyAudit(req, {
+        action: 'privacy.location.exact_location_revealed',
+        resource: { type: 'booking', id: safeBooking.id },
+        statusCode: 200,
+        metadata: { viewer_role: req.user.role, booking_status: safeBooking.status },
+      });
+    }
+    res.json({ booking: safeBooking });
   } catch (err) {
     next(err);
   }
@@ -244,7 +293,7 @@ async function transition(req, res, next, allowedRoles, fromStatuses, toStatus) 
         { bookingId: booking.id, screen: 'Rate' });
     }
 
-    res.json({ booking: updated.rows[0] });
+    res.json({ booking: serializeBookingForUser(updated.rows[0], req.user) });
   } catch (err) {
     next(err);
   }

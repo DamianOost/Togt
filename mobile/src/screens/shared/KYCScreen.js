@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -9,10 +9,8 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
-  Platform,
 } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
-import Constants from 'expo-constants';
 import api from '../../services/api';
 import { updateUser } from '../../store/authSlice';
 
@@ -38,6 +36,20 @@ const STEPS = {
   SUCCESS: 'success',
 };
 
+function VerificationSummary({ verification }) {
+  if (!verification?.status && !verification?.id_last4) return null;
+  return (
+    <View style={styles.statusCard}>
+      {verification.status ? (
+        <Text style={styles.statusText}>Status: {verification.status}</Text>
+      ) : null}
+      {verification.id_last4 ? (
+        <Text style={styles.statusText}>ID ending: {verification.id_last4}</Text>
+      ) : null}
+    </View>
+  );
+}
+
 export default function KYCScreen({ navigation }) {
   const dispatch = useDispatch();
   const { user } = useSelector((s) => s.auth);
@@ -47,6 +59,22 @@ export default function KYCScreen({ navigation }) {
   const [idError, setIdError] = useState('');
   const [loading, setLoading] = useState(false);
   const [verifiedName, setVerifiedName] = useState('');
+  const [verification, setVerification] = useState(null);
+
+  useEffect(() => {
+    loadKycStatus();
+  }, []);
+
+  async function loadKycStatus() {
+    try {
+      const res = await api.get('/api/kyc/status');
+      setVerification(res.data.verification || {
+        status: res.data.kyc_status,
+      });
+    } catch (_) {
+      // Status is optional UI context; verification flow can still continue.
+    }
+  }
 
   // ─── Step handlers ────────────────────────────────────────────────────────
 
@@ -79,6 +107,10 @@ export default function KYCScreen({ navigation }) {
 
       if (res.data.verified) {
         setVerifiedName(res.data.name || user?.name || '');
+        setVerification({
+          status: 'verified',
+          id_last4: res.data.id_last4,
+        });
         setStep(STEPS.SELFIE);
       } else {
         Alert.alert(
@@ -165,7 +197,6 @@ export default function KYCScreen({ navigation }) {
     try {
       const res = await api.post('/api/kyc/selfie-enroll', {
         selfieBase64: base64,
-        idNumber,
       });
 
       if (res.data.enrolled) {
@@ -178,6 +209,7 @@ export default function KYCScreen({ navigation }) {
         } catch (_) {
           // non-fatal
         }
+        await loadKycStatus();
         setStep(STEPS.SUCCESS);
       } else {
         Alert.alert(
@@ -217,6 +249,7 @@ export default function KYCScreen({ navigation }) {
 
           <Text style={styles.title}>Verify Your Identity</Text>
           <Text style={styles.subtitle}>Takes about 2 minutes</Text>
+          <VerificationSummary verification={verification} />
 
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Why we verify</Text>
@@ -233,7 +266,7 @@ export default function KYCScreen({ navigation }) {
 
           <View style={styles.stepsCard}>
             <Text style={styles.cardTitle}>What you'll need</Text>
-            <Text style={styles.bullet}>📋  Your 13-digit SA ID number</Text>
+            <Text style={styles.bullet}>📋  Your 13-digit SA ID number, used for verification only</Text>
             <Text style={styles.bullet}>🤳  A selfie (we'll use your camera)</Text>
           </View>
 
@@ -304,7 +337,7 @@ export default function KYCScreen({ navigation }) {
           </TouchableOpacity>
 
           <Text style={styles.privacyNote}>
-            🔐 Your ID number is encrypted and only used for verification. We do not store it in plain text.
+            🔐 Your raw ID number is used for verification only and is not stored.
           </Text>
         </ScrollView>
       </SafeAreaView>
@@ -321,6 +354,7 @@ export default function KYCScreen({ navigation }) {
 
           <Text style={styles.title}>Take a Selfie</Text>
           <Text style={styles.subtitle}>Look straight at the camera in good lighting</Text>
+          <VerificationSummary verification={verification} />
 
           {/* Oval face guide */}
           <View style={styles.ovalWrap}>
@@ -364,6 +398,7 @@ export default function KYCScreen({ navigation }) {
         <View style={styles.successWrap}>
           <Text style={styles.successIcon}>✅</Text>
           <Text style={styles.successTitle}>Identity Verified!</Text>
+          <VerificationSummary verification={verification} />
           {verifiedName ? (
             <Text style={styles.successName}>{verifiedName}</Text>
           ) : null}
@@ -429,6 +464,13 @@ const styles = StyleSheet.create({
   },
   cardTitle: { fontSize: 16, fontWeight: '700', color: '#111827', marginBottom: 10 },
   bullet: { fontSize: 14, color: '#374151', marginBottom: 6, lineHeight: 20 },
+  statusCard: {
+    backgroundColor: '#E8F5EC',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+  },
+  statusText: { fontSize: 13, color: GREEN, fontWeight: '700', marginBottom: 2 },
 
   idInput: {
     backgroundColor: '#fff',

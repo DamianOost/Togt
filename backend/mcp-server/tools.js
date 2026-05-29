@@ -17,6 +17,54 @@ const db = require('../src/config/db');
 const matcher = require('../src/services/matcher');
 const { encryptSecret } = require('../src/lib/webhookSecretCrypto');
 const { EVENT_TYPES } = require('../src/services/events');
+const {
+  serializeLabourerPublic,
+  serializeBookingForUser,
+  serializeMatchForCustomer,
+  serializeMatchForLabourerCandidate,
+} = require('../src/lib/privacy');
+
+const BOOKING_READ_SELECT = `
+  SELECT b.*,
+         cu.name AS customer_name, cu.phone AS customer_phone, cu.avatar_url AS customer_avatar,
+         lu.name AS labourer_name, lu.phone AS labourer_phone, lu.avatar_url AS labourer_avatar,
+         lp.hourly_rate, lp.skills, lp.current_lat, lp.current_lng, lp.location_updated_at
+    FROM bookings b
+    LEFT JOIN users cu ON cu.id = b.customer_id
+    LEFT JOIN users lu ON lu.id = b.labourer_id
+    LEFT JOIN labourer_profiles lp ON lp.user_id = b.labourer_id`;
+
+function serializeMcpLabourerCandidate(candidate) {
+  const safe = serializeLabourerPublic(candidate);
+  return {
+    user_id: safe.user_id,
+    name: safe.name,
+    rating: Number(candidate.rating_avg) || 0,
+    review_count: Number(candidate.rating_count) || 0,
+    acceptance_rate_pct: safe.acceptance_rate_pct ?? null,
+    completion_rate_pct: safe.completion_rate_pct ?? null,
+    pinged_last_30d: safe.pinged_30d,
+    bookings_last_30d: safe.bookings_30d,
+    days_since_last_booking: safe.days_since_last_booking,
+    hourly_rate: Number(candidate.hourly_rate),
+    currency: 'ZAR',
+    estimated_minimum_total: Number(candidate.hourly_rate),
+    distance_km: candidate.distance_km == null ? undefined : Number(candidate.distance_km).toFixed(2),
+    approx_lat: safe.approx_lat,
+    approx_lng: safe.approx_lng,
+    location_precision: safe.location_precision,
+  };
+}
+
+function serializeMcpBooking(row, ctx) {
+  return serializeBookingForUser(row, { userId: ctx.userId });
+}
+
+function serializeMcpMatch(row, ctx) {
+  return row.customer_id === ctx.userId
+    ? serializeMatchForCustomer(row)
+    : serializeMatchForLabourerCandidate(row);
+}
 
 // ─── Tool implementations ────────────────────────────────────────────────────
 
@@ -25,28 +73,7 @@ async function findLabourers(ctx, { skill, lat, lng, radius_km = 50, limit = 5 }
     throw new Error('skill, lat, lng are required');
   }
   const candidates = await matcher.selectCandidates({ skill, lat, lng, radiusKm: radius_km, limit });
-  return candidates.map((c) => {
-    const hourlyRate = Number(c.hourly_rate);
-    return {
-      user_id: c.user_id,
-      name: c.name,
-      // ─── Trust signals (memo 1: "review_count alongside rating") ─────────
-      rating: Number(c.rating_avg) || 0,
-      review_count: Number(c.rating_count) || 0,
-      // ─── Risk signals (memo 1: "acceptance_rate per labourer") ──────────
-      acceptance_rate_pct: c.acceptance_rate_pct === null ? null : Number(c.acceptance_rate_pct),
-      completion_rate_pct: c.completion_rate_pct === null ? null : Number(c.completion_rate_pct),
-      pinged_last_30d: c.pinged_30d,
-      bookings_last_30d: c.bookings_30d,
-      days_since_last_booking: c.days_since_last_booking,
-      // ─── Cost signals (memo 1: "all-in cost upfront") ──────────────────
-      hourly_rate: hourlyRate,
-      currency: 'ZAR',
-      estimated_minimum_total: hourlyRate, // 1-hour minimum; future: per-labourer minimums
-      // ─── Geographic ─────────────────────────────────────────────────────
-      distance_km: Number(c.distance_km).toFixed(2),
-    };
-  });
+  return candidates.map(serializeMcpLabourerCandidate);
 }
 
 async function estimateBookingCost(ctx, { labourer_id, hours }) {
@@ -126,14 +153,24 @@ async function getMatchRequest(ctx, { match_id }) {
   if (!match_id) throw new Error('match_id is required');
   const m = await matcher.loadMatch(match_id);
   if (!m) throw new Error(`Match ${match_id} not found`);
-  if (m.customer_id !== ctx.userId) throw new Error('Forbidden: not your match');
+  const isCustomer = m.customer_id === ctx.userId;
+  if (!isCustomer) {
+    const allowed = await db.query(
+      `SELECT 1 FROM match_attempts WHERE match_request_id = $1 AND labourer_id = $2 LIMIT 1`,
+      [match_id, ctx.userId]
+    );
+    if (allowed.rows.length === 0) throw new Error('Forbidden: not your match');
+  }
   const attempts = await db.query(
     `SELECT id, labourer_id, status, pinged_at, responded_at
        FROM match_attempts WHERE match_request_id = $1
        ORDER BY pinged_at ASC`,
     [match_id]
   );
-  return { match: m, attempts: attempts.rows };
+  return {
+    match: serializeMcpMatch(m, ctx),
+    attempts: isCustomer ? attempts.rows : attempts.rows.filter((a) => a.labourer_id === ctx.userId),
+  };
 }
 
 async function cancelMatchRequest(ctx, { match_id }) {
@@ -151,25 +188,25 @@ async function cancelMatchRequest(ctx, { match_id }) {
 
 async function listMyBookings(ctx, { status_filter, limit = 20 }) {
   const params = [ctx.userId];
-  let where = 'WHERE (customer_id = $1 OR labourer_id = $1)';
-  if (status_filter) { params.push(status_filter); where += ` AND status = $${params.length}`; }
+  let where = 'WHERE (b.customer_id = $1 OR b.labourer_id = $1)';
+  if (status_filter) { params.push(status_filter); where += ` AND b.status = $${params.length}`; }
   params.push(limit);
   const r = await db.query(
-    `SELECT id, customer_id, labourer_id, status, skill_needed, address,
-            scheduled_at, hours_est, total_amount, created_at
-       FROM bookings ${where}
-       ORDER BY created_at DESC LIMIT $${params.length}`, params);
-  return { bookings: r.rows };
+    `${BOOKING_READ_SELECT}
+       ${where}
+       ORDER BY b.created_at DESC LIMIT $${params.length}`, params);
+  return { bookings: r.rows.map((row) => serializeMcpBooking(row, ctx)) };
 }
 
 async function getBooking(ctx, { booking_id }) {
   if (!booking_id) throw new Error('booking_id is required');
   const r = await db.query(
-    'SELECT * FROM bookings WHERE id = $1 AND (customer_id = $2 OR labourer_id = $2)',
+    `${BOOKING_READ_SELECT}
+      WHERE b.id = $1 AND (b.customer_id = $2 OR b.labourer_id = $2)`,
     [booking_id, ctx.userId]
   );
   if (r.rows.length === 0) throw new Error('Booking not found or not yours');
-  return { booking: r.rows[0] };
+  return { booking: serializeMcpBooking(r.rows[0], ctx) };
 }
 
 // ─── Admin tools (require admin:full scope) ─────────────────────────────────
@@ -502,7 +539,7 @@ async function auditLogQuery(ctx, {
 
 const TOOLS = [
   { name: 'find_labourers', scope: 'mcp:read_only',
-    description: 'Find verified, available labourers near a location matching a skill. Returns up to 5 ranked by rating then distance.',
+    description: 'Find verified, available labourers near a location matching a skill. Returns up to 5 ranked by rating then distance. Exact live current_lat/current_lng are never returned; approximate coordinates may be present.',
     inputSchema: {
       type: 'object', required: ['skill', 'lat', 'lng'],
       properties: {
@@ -532,7 +569,7 @@ const TOOLS = [
     handler: createMatchRequest,
   },
   { name: 'get_match_request', scope: 'mcp:read_only',
-    description: 'Read a match request and its dispatch attempts. Use for polling after create_match_request.',
+    description: 'Read a match request and its dispatch attempts. Customers see their own entered address; pinged labourers see approximate location only and should use get_booking after acceptance for exact reveal state.',
     inputSchema: { type: 'object', required: ['match_id'],
       properties: { match_id: { type: 'string', format: 'uuid' } } },
     handler: getMatchRequest,
@@ -544,7 +581,7 @@ const TOOLS = [
     handler: cancelMatchRequest,
   },
   { name: 'list_my_bookings', scope: 'mcp:read_only',
-    description: 'List bookings for the current user. Optional status_filter.',
+    description: 'List bookings for the current user. Optional status_filter. Labourer views omit exact customer address/location/phone until status is accepted or in_progress.',
     inputSchema: { type: 'object',
       properties: {
         status_filter: { type: 'string', enum: ['pending', 'accepted', 'in_progress', 'completed', 'cancelled'] },
@@ -554,7 +591,7 @@ const TOOLS = [
     handler: listMyBookings,
   },
   { name: 'get_booking', scope: 'mcp:read_only',
-    description: 'Read a booking by ID.',
+    description: 'Read a booking by ID. Viewer-dependent privacy: customers keep their entered address; labourers see exact customer address/location/phone only once accepted or in_progress.',
     inputSchema: { type: 'object', required: ['booking_id'],
       properties: { booking_id: { type: 'string', format: 'uuid' } } },
     handler: getBooking,
@@ -672,4 +709,11 @@ async function callTool(ctx, name, args) {
   return tool.handler(ctx, args || {});
 }
 
-module.exports = { TOOLS, listTools, callTool };
+module.exports = {
+  TOOLS,
+  listTools,
+  callTool,
+  serializeMcpLabourerCandidate,
+  serializeMcpBooking,
+  serializeMcpMatch,
+};

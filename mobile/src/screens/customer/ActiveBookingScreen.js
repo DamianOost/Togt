@@ -20,6 +20,14 @@ const STATUS_STEPS = [
   { key: 'completed', label: 'Done', icon: '🎉' },
 ];
 
+function formatApproxArea(item) {
+  const lat = Number(item?.approx_lat);
+  const lng = Number(item?.approx_lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const label = item.location_precision === 'approximate' ? 'Approx. area' : 'Area';
+  return `${label}: ${lat.toFixed(2)}, ${lng.toFixed(2)}`;
+}
+
 function StatusTimeline({ currentStatus }) {
   const currentIdx = STATUS_STEPS.findIndex((s) => s.key === currentStatus);
   return (
@@ -263,6 +271,7 @@ export default function ActiveBookingScreen({ route, navigation }) {
   const isCancellable = ['pending', 'accepted'].includes(booking.status);
   const isPaid = booking.payment_status === 'paid';
   const isEnRoute = booking.status === 'accepted' && !!labourerLocation;
+  const locationText = booking.address || formatApproxArea(booking);
 
   return (
     <View style={styles.container}>
@@ -279,7 +288,7 @@ export default function ActiveBookingScreen({ route, navigation }) {
             longitudeDelta: 0.05,
           }}
         >
-          {booking.location_lat && (
+          {booking.location_lat && booking.location_lng && (
             <Marker
               coordinate={{ latitude: parseFloat(booking.location_lat), longitude: parseFloat(booking.location_lng) }}
               title="Job Location"
@@ -370,10 +379,10 @@ export default function ActiveBookingScreen({ route, navigation }) {
             )}
           </View>
 
-          {booking.address && (
+          {locationText && (
             <View style={styles.addressRow}>
               <Text style={styles.addressIcon}>📍</Text>
-              <Text style={styles.addressText}>{booking.address}</Text>
+              <Text style={styles.addressText}>{locationText}</Text>
             </View>
           )}
 

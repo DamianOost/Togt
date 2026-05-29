@@ -43,19 +43,19 @@ function initLocationSockets(io) {
       if (role !== 'labourer') return;
 
       try {
-        // Update DB
-        await db.query(
-          'UPDATE labourer_profiles SET current_lat = $1, current_lng = $2 WHERE user_id = $3',
-          [lat, lng, userId]
-        );
-
-        // Fetch booking to get destination
+        // Fetch booking to get destination and verify this labourer owns it.
         const bookingRes = await db.query(
           'SELECT * FROM bookings WHERE id = $1 AND status IN ($2, $3)',
           [bookingId, 'accepted', 'in_progress']
         );
         if (bookingRes.rows.length === 0) return;
         const booking = bookingRes.rows[0];
+        if (booking.labourer_id !== userId) return;
+
+        await db.query(
+          'UPDATE labourer_profiles SET current_lat = $1, current_lng = $2, location_updated_at = NOW() WHERE user_id = $3',
+          [lat, lng, userId]
+        );
 
         // Straight-line distance (Haversine)
         const R = 6371000; // metres

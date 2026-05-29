@@ -19,7 +19,6 @@ export default function ProfileSetupScreen({ navigation }) {
   const [hourlyRate, setHourlyRate] = useState('');
   const [bio, setBio] = useState('');
   const [emergencyContact, setEmergencyContact] = useState('');
-  const [idNumber, setIdNumber] = useState('');
   const [avatarUri, setAvatarUri] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -36,7 +35,6 @@ export default function ProfileSetupScreen({ navigation }) {
         setHourlyRate(String(p.hourly_rate || ''));
         setBio(p.bio || '');
         setEmergencyContact(p.emergency_contact || '');
-        setIdNumber(p.id_number || '');
       } finally {
         setLoading(false);
       }
@@ -79,7 +77,6 @@ export default function ProfileSetupScreen({ navigation }) {
         hourly_rate: parseFloat(hourlyRate),
         bio: bio.trim() || undefined,
         emergency_contact: emergencyContact.trim() || undefined,
-        id_number: idNumber.trim() || undefined,
       });
 
       if (avatarUri) {
@@ -170,17 +167,6 @@ export default function ProfileSetupScreen({ navigation }) {
           placeholder="Tell customers about your experience, specialties, and how long you've been working..."
           multiline
           numberOfLines={4}
-        />
-
-        {/* SA ID */}
-        <Text style={styles.label}>SA ID Number</Text>
-        <TextInput
-          style={styles.input}
-          value={idNumber}
-          onChangeText={setIdNumber}
-          placeholder="For identity verification"
-          keyboardType="number-pad"
-          maxLength={13}
         />
 
         <Text style={styles.label}>Emergency Contact (optional)</Text>

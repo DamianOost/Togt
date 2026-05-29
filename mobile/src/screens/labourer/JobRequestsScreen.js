@@ -12,6 +12,14 @@ import { colors, typography, spacing, borderRadius, shadows } from '../../theme'
 
 const EXPIRE_SECONDS = 30;
 
+function formatApproxArea(item) {
+  const lat = Number(item?.approx_lat);
+  const lng = Number(item?.approx_lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const label = item.location_precision === 'approximate' ? 'Approx. area' : 'Area';
+  return `${label}: ${lat.toFixed(2)}, ${lng.toFixed(2)}`;
+}
+
 function CountdownTimer({ createdAt, onExpire }) {
   const [remaining, setRemaining] = useState(EXPIRE_SECONDS);
 
@@ -69,6 +77,7 @@ const timerStyles = StyleSheet.create({
 
 function JobRequestCard({ item, onAccept, onDecline, onExpire }) {
   const scaleAnim = useRef(new Animated.Value(0)).current;
+  const locationText = item.address || formatApproxArea(item);
 
   useEffect(() => {
     Animated.spring(scaleAnim, {
@@ -97,10 +106,10 @@ function JobRequestCard({ item, onAccept, onDecline, onExpire }) {
       </View>
 
       <View style={styles.detailsGrid}>
-        {item.address && (
+        {locationText && (
           <View style={styles.detailItem}>
             <Text style={styles.detailIcon}>📍</Text>
-            <Text style={styles.detailText} numberOfLines={2}>{item.address}</Text>
+            <Text style={styles.detailText} numberOfLines={2}>{locationText}</Text>
           </View>
         )}
         {item.scheduled_at && (

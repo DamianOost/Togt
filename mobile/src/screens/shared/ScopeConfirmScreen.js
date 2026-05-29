@@ -17,6 +17,14 @@ const DEFAULT_SCOPE_ITEMS = [
   'Customer inspection and sign-off',
 ];
 
+function formatApproxArea(item) {
+  const lat = Number(item?.approx_lat);
+  const lng = Number(item?.approx_lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const label = item.location_precision === 'approximate' ? 'Approx. area' : 'Area';
+  return `${label}: ${lat.toFixed(2)}, ${lng.toFixed(2)}`;
+}
+
 function CheckItem({ item, checked, onToggle, disabled }) {
   return (
     <TouchableOpacity
@@ -78,6 +86,7 @@ export default function ScopeConfirmScreen({ route, navigation }) {
   const scopeItems = booking?.scope_items?.length
     ? booking.scope_items
     : DEFAULT_SCOPE_ITEMS;
+  const locationText = booking?.address || formatApproxArea(booking) || 'Location hidden until accepted';
 
   const allChecked = scopeItems.every((_, i) => checkedItems[i]);
 
@@ -188,7 +197,7 @@ export default function ScopeConfirmScreen({ route, navigation }) {
             </View>
             <View style={styles.jobMeta}>
               <Text style={styles.metaLabel}>📍 </Text>
-              <Text style={styles.metaValue}>{booking.address}</Text>
+              <Text style={styles.metaValue}>{locationText}</Text>
             </View>
             {booking.notes ? (
               <View style={styles.noteBox}>

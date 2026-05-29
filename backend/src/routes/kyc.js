@@ -18,7 +18,10 @@
 const express = require('express');
 const saId = require('south-african-id-parser');
 const db = require('../config/db');
+const { piiBlindIndexKey } = require('../config/env');
 const { authMiddleware } = require('../middleware/auth');
+const { blindIndex, idLast4, normalizeSouthAfricanId, serializeKycStatus } = require('../lib/privacy');
+const { recordPrivacyAudit } = require('../lib/privacyAudit');
 const verifynow = require('../services/verifynow');
 
 const router = express.Router();
@@ -51,34 +54,42 @@ function verifyStructural(idNumber) {
   };
 }
 
-async function upsertKyc({ userId, idNumber, status, fullName, parsed, provider }) {
+async function upsertKyc({ userId, idNumber, status, fullName, provider, providerRequestId }) {
   const existing = await db.query(
     'SELECT id FROM kyc_verifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1',
     [userId]
   );
   const verifiedAt = status === 'verified' ? new Date() : null;
   const verifiedName = status === 'verified' ? fullName : null;
-  const parsedDob = parsed ? parsed.dob : null;
-  const parsedSex = parsed ? (parsed.isMale ? 'male' : 'female') : null;
-  const parsedIsCitizen = parsed ? parsed.isCitizen : null;
+  const last4 = idLast4(idNumber);
+  const index = blindIndex(idNumber, piiBlindIndexKey);
 
   if (existing.rows.length > 0) {
     await db.query(
       `UPDATE kyc_verifications
-         SET id_number = $2, status = $3, verified_name = $4, verified_at = $5,
-             provider = $6, parsed_dob = $7, parsed_sex = $8, parsed_is_citizen = $9
+         SET id_number = NULL,
+             status = $2,
+             verified_name = $3,
+             verified_at = $4,
+             provider = $5,
+             parsed_dob = NULL,
+             parsed_sex = NULL,
+             parsed_is_citizen = NULL,
+             id_last4 = $6,
+             id_blind_index = $7,
+             provider_request_id = $8,
+             raw_input_discarded_at = NOW()
          WHERE id = $1`,
-      [existing.rows[0].id, idNumber, status, verifiedName, verifiedAt,
-       provider, parsedDob, parsedSex, parsedIsCitizen]
+      [existing.rows[0].id, status, verifiedName, verifiedAt, provider, last4, index, providerRequestId || null]
     );
   } else {
     await db.query(
       `INSERT INTO kyc_verifications
          (user_id, id_number, status, verified_name, verified_at,
-          provider, parsed_dob, parsed_sex, parsed_is_citizen)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [userId, idNumber, status, verifiedName, verifiedAt,
-       provider, parsedDob, parsedSex, parsedIsCitizen]
+          provider, parsed_dob, parsed_sex, parsed_is_citizen,
+          id_last4, id_blind_index, provider_request_id, raw_input_discarded_at)
+       VALUES ($1, NULL, $2, $3, $4, $5, NULL, NULL, NULL, $6, $7, $8, NOW())`,
+      [userId, status, verifiedName, verifiedAt, provider, last4, index, providerRequestId || null]
     );
   }
 }
@@ -102,21 +113,28 @@ router.post('/verify-id', authMiddleware, async (req, res, next) => {
     if (!idNumber || !firstName || !lastName) {
       return res.status(400).json({ error: 'idNumber, firstName, and lastName are required' });
     }
+    const normalizedId = normalizeSouthAfricanId(idNumber);
 
     // 1. Free structural pre-check
-    const v = verifyStructural(idNumber);
+    const v = verifyStructural(normalizedId);
     const submittedFullName = `${firstName} ${lastName}`;
 
     if (!v.ok) {
       await upsertKyc({
         userId: req.user.id,
-        idNumber,
+        idNumber: normalizedId,
         status: 'failed',
         fullName: submittedFullName,
-        parsed: null,
         provider: 'poc_structural',
       });
       await setUserKycStatus(req.user.id, 'failed');
+      recordPrivacyAudit(req, {
+        action: 'privacy.kyc.verify_attempt',
+        resource: { type: 'user', id: req.user.id },
+        statusCode: 400,
+        metadata: { status: 'failed', provider: 'poc_structural', reason: v.error, id_last4: idLast4(normalizedId) },
+        errorCode: v.error,
+      });
       return res.status(400).json({ error: v.error });
     }
 
@@ -128,7 +146,7 @@ router.post('/verify-id', authMiddleware, async (req, res, next) => {
 
     if (verifynow.isConfigured()) {
       try {
-        const vn = await verifynow.verifyId({ idNumber, firstName, lastName });
+        const vn = await verifynow.verifyId({ idNumber: normalizedId, firstName, lastName });
         vendorPayload = vn;
         if (vn.verified) {
           provider = 'verifynow';
@@ -140,13 +158,20 @@ router.post('/verify-id', authMiddleware, async (req, res, next) => {
           // VerifyNow says: ID does not exist in NPR, or is flagged dead/blocked.
           await upsertKyc({
             userId: req.user.id,
-            idNumber,
+            idNumber: normalizedId,
             status: 'failed',
             fullName: submittedFullName,
-            parsed: v.parsed,
             provider: 'verifynow',
+            providerRequestId: vn.vendor_request_id,
           });
           await setUserKycStatus(req.user.id, 'failed');
+          recordPrivacyAudit(req, {
+            action: 'privacy.kyc.verify_attempt',
+            resource: { type: 'user', id: req.user.id },
+            statusCode: 400,
+            metadata: { status: 'failed', provider: 'verifynow', id_last4: idLast4(normalizedId) },
+            errorCode: 'id_not_in_npr',
+          });
           return res.status(400).json({
             error: 'id_not_in_npr',
             details: 'ID not found in National Population Register',
@@ -160,28 +185,28 @@ router.post('/verify-id', authMiddleware, async (req, res, next) => {
 
     await upsertKyc({
       userId: req.user.id,
-      idNumber,
+      idNumber: normalizedId,
       status: 'verified',
       fullName: verifiedName,
-      parsed: v.parsed,
       provider,
+      providerRequestId: vendorPayload?.vendor_request_id,
     });
     await setUserKycStatus(req.user.id, 'verified');
+    recordPrivacyAudit(req, {
+      action: 'privacy.kyc.verify_attempt',
+      resource: { type: 'user', id: req.user.id },
+      statusCode: 200,
+      metadata: { status: 'verified', provider, id_last4: idLast4(normalizedId) },
+    });
 
     return res.json({
       verified: true,
       provider,
       poc_mode: provider === 'poc_structural',
       name: verifiedName,
-      dob: v.parsed.dob.toISOString().slice(0, 10),
-      parsed_is_male: v.parsed.isMale,
-      parsed_is_citizen: v.parsed.isCitizen,
+      id_last4: idLast4(normalizedId),
       vendor: vendorPayload ? {
         request_id: vendorPayload.vendor_request_id,
-        smart_card: vendorPayload.smart_card,
-        on_hanis: vendorPayload.on_hanis,
-        on_npr: vendorPayload.on_npr,
-        marital_status: vendorPayload.marital_status,
       } : null,
     });
   } catch (err) {
@@ -208,16 +233,22 @@ router.get('/status', authMiddleware, async (req, res, next) => {
       [req.user.id]
     );
     const kycRes = await db.query(
-      `SELECT id_number, status, provider, verified_name, verified_at, created_at
+      `SELECT id_last4, status, provider, verified_name, verified_at, created_at
          FROM kyc_verifications
          WHERE user_id = $1
          ORDER BY created_at DESC
          LIMIT 1`,
       [req.user.id]
     );
+    recordPrivacyAudit(req, {
+      action: 'privacy.kyc.status_read',
+      resource: { type: 'user', id: req.user.id },
+      statusCode: 200,
+      metadata: { has_verification: kycRes.rows.length > 0 },
+    });
     return res.json({
       kyc_status: userRes.rows[0]?.kyc_status || 'unverified',
-      verification: kycRes.rows[0] || null,
+      verification: serializeKycStatus(kycRes.rows[0]) || null,
     });
   } catch (err) {
     next(err);

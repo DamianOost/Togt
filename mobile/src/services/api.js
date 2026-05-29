@@ -1,7 +1,20 @@
 import axios from 'axios';
 import Constants from 'expo-constants';
 
-const BASE_URL = Constants.expoConfig?.extra?.apiUrl || 'http://localhost:3000';
+const env = typeof process !== 'undefined' ? process.env || {} : {};
+const BASE_URL = env.EXPO_PUBLIC_API_BASE_URL ||
+  env.API_BASE_URL ||
+  Constants.expoConfig?.extra?.apiUrl ||
+  'http://localhost:3000';
+
+const isHttpApi = /^http:\/\//i.test(BASE_URL);
+const isDev = typeof __DEV__ !== 'undefined' && __DEV__;
+const isExpoGo = Constants.appOwnership === 'expo' ||
+  Constants.executionEnvironment === 'storeClient';
+
+if (isHttpApi && !isDev && !isExpoGo) {
+  throw new Error('Refusing insecure API_BASE_URL in production builds. Use HTTPS.');
+}
 
 const api = axios.create({
   baseURL: BASE_URL,

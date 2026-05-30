@@ -41,6 +41,9 @@ const ERROR_MSG_MAX_CHARS = 1024;
  * @param opts.state Optional state after the transition.
  * @param opts.data Snapshot of the resource at event time (jsonb payload).
  * @param opts.occurredAt Defaults to new Date().
+ * @param opts._chunkSize Internal/test-only override of INSERT_CHUNK_ROWS.
+ *   Production paths must NOT pass this — it exists so the chunking loop
+ *   can be exercised in tests without seeding 5000+ subscriptions.
  */
 async function emitEvent(client, {
   eventType,
@@ -51,6 +54,7 @@ async function emitEvent(client, {
   state = null,
   data,
   occurredAt = new Date(),
+  _chunkSize = INSERT_CHUNK_ROWS,
 }) {
   if (!client || typeof client.query !== 'function') {
     throw new Error('emitEvent: client is required (pass a pg Client or the pool — use withTx() to share a transaction with your mutation)');
@@ -87,8 +91,8 @@ async function emitEvent(client, {
   if (subs.length === 0) return { eventId, deliveryCount: 0 };
 
   // Chunk the INSERT to stay under Postgres' 65535-parameter cap.
-  for (let i = 0; i < subs.length; i += INSERT_CHUNK_ROWS) {
-    const chunk = subs.slice(i, i + INSERT_CHUNK_ROWS);
+  for (let i = 0; i < subs.length; i += _chunkSize) {
+    const chunk = subs.slice(i, i + _chunkSize);
     const placeholders = chunk.map((_, j) =>
       `($${j * 4 + 1}, $${j * 4 + 2}, $${j * 4 + 3}, $${j * 4 + 4})`
     ).join(', ');

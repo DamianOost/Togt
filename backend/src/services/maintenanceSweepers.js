@@ -18,6 +18,17 @@
  *
  * Cadence: hourly (3600000ms) by default. Override via env. Skipped under
  * NODE_ENV=test so tests don't get surprise DELETEs.
+ *
+ * Observability:
+ *   - stats.last_tick_at updates at the START of every tick (semantic:
+ *     "we attempted a tick"). Useful for diagnosing whether setInterval
+ *     is firing at all.
+ *   - stats.last_success_at updates only AFTER both sweeps succeed
+ *     (semantic: "the work actually ran cleanly"). isFresh() reads
+ *     last_success_at so a sweeper whose DELETE throws every tick will
+ *     correctly look stale to /health/deep even though last_tick_at
+ *     keeps advancing. This is the fix for the bug flagged in the
+ *     2026-05-09 audit.
  */
 
 const db = require('../config/db');
@@ -35,6 +46,9 @@ const stats = {
   idempotency_deleted_total: 0,
   refresh_tokens_deleted_total: 0,
   last_tick_at: null,
+  last_success_at: null,
+  started_at: null,
+  interval_ms: null,
 };
 
 async function sweepIdempotencyKeys() {
@@ -75,6 +89,10 @@ async function tick() {
     stats.idempotency_deleted_total += idem;
     const rt = await sweepRefreshTokens();
     stats.refresh_tokens_deleted_total += rt;
+    // Only mark success AFTER both sweeps completed without throwing.
+    // last_success_at is the freshness signal for /health/deep so a tick
+    // that fails partway does NOT mask the failure.
+    stats.last_success_at = new Date().toISOString();
     if (idem > 0 || rt > 0) {
       console.log(
         `[maintenanceSweepers] tick: idempotency_keys_deleted=${idem} refresh_tokens_deleted=${rt}`
@@ -87,6 +105,8 @@ async function tick() {
 
 function start({ intervalMs = DEFAULT_INTERVAL_MS } = {}) {
   stopped = false;
+  stats.started_at = new Date().toISOString();
+  stats.interval_ms = intervalMs;
   if (timer) clearInterval(timer);
   console.log(`[maintenanceSweepers] started: tick=${intervalMs}ms idempotency_ttl=${IDEMPOTENCY_TTL_HOURS}h refresh_token_grace=${REFRESH_TOKEN_GRACE_DAYS}d`);
   timer = setInterval(() => {
@@ -103,11 +123,28 @@ function stop() {
   }
 }
 
+function isFresh(intervalMs = stats.interval_ms || DEFAULT_INTERVAL_MS, freshnessFactor = 3) {
+  // Used by /health/deep: was the last SUCCESSFUL tick recent enough to
+  // consider the sweeper healthy? Returns false if start() has never
+  // run, if the sweeper has never had a successful tick, or if the last
+  // success is older than freshnessFactor × the configured interval.
+  //
+  // Critically: we read last_success_at, NOT last_tick_at. A sweeper
+  // whose DELETE throws every tick keeps incrementing last_tick_at but
+  // never updates last_success_at — that's exactly the case this
+  // function exists to catch.
+  if (!stats.last_success_at) return false;
+  const age = Date.now() - new Date(stats.last_success_at).getTime();
+  return age < intervalMs * freshnessFactor;
+}
+
 module.exports = {
   start,
   stop,
   tick,
   sweepIdempotencyKeys,
   sweepRefreshTokens,
+  isFresh,
   stats,
+  DEFAULT_INTERVAL_MS,
 };

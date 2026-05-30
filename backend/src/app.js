@@ -66,15 +66,18 @@ app.use(express.json({
 // Health endpoints.
 // /health is a liveness probe — process is up. Always 200 once Express is
 // ready. Use this for launchd/load-balancer keepalive.
-// /health/deep is a readiness probe — also pings Postgres (1s budget) and
-// checks the dispatcher is fresh (last tick within 3× its interval). Use
-// this for HC.io / on-call alerts that should fire when the system is
-// degraded but the process is technically running.
+// /health/deep is a readiness probe — pings Postgres (1s budget), checks
+// the webhook dispatcher is fresh (last tick within 3× its interval) AND
+// checks the maintenance sweepers are fresh (last SUCCESSFUL sweep within
+// 3× its interval — last_tick_at alone would mask a sweeper whose DELETE
+// throws every tick). Use this for HC.io / on-call alerts that should
+// fire when the system is degraded but the process is technically running.
 const dbModule = require('./config/db');
 const dispatcherModule = require('./services/webhookDispatcher');
+const sweepersModule = require('./services/maintenanceSweepers');
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 app.get('/health/deep', async (req, res) => {
-  const checks = { process: 'ok', db: 'unknown', dispatcher: 'unknown' };
+  const checks = { process: 'ok', db: 'unknown', dispatcher: 'unknown', sweepers: 'unknown' };
   let ok = true;
   try {
     await dbModule.ping(1000);
@@ -85,11 +88,14 @@ app.get('/health/deep', async (req, res) => {
   }
   if (process.env.NODE_ENV === 'test') {
     // Tests drive tick() directly, no setInterval running. Don't fail
-    // /health/deep just because the dispatcher's idle.
+    // /health/deep just because the background workers are idle.
     checks.dispatcher = 'skipped-in-test';
+    checks.sweepers = 'skipped-in-test';
   } else {
     checks.dispatcher = dispatcherModule.isFresh() ? 'fresh' : 'stale';
     if (checks.dispatcher === 'stale') ok = false;
+    checks.sweepers = sweepersModule.isFresh() ? 'fresh' : 'stale';
+    if (checks.sweepers === 'stale') ok = false;
   }
   res.status(ok ? 200 : 503).json({ status: ok ? 'ok' : 'degraded', checks });
 });
@@ -100,6 +106,15 @@ const agentsManifest = require('./agentsJson');
 app.get('/.well-known/openapi.json', (req, res) => res.json(openapiSpec));
 app.get('/openapi.json', (req, res) => res.json(openapiSpec));
 app.get('/.well-known/agents.json', (req, res) => res.json(agentsManifest));
+
+// Audit log: capture every authenticated request at response-finish.
+// Mounted globally; the middleware skips healthchecks, well-known, and
+// any request without an authenticated actor (req.user or req.apiKey).
+// res.on('finish') runs AFTER route auth middleware sets req.user / req.apiKey,
+// so the actor is resolvable even though this middleware sits before the
+// route mounts in the chain.
+const { auditLogMiddleware } = require('./middleware/auditLog');
+app.use(auditLogMiddleware());
 
 // Routes
 app.use('/auth', authRoutes);

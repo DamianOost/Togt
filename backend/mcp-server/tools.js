@@ -383,6 +383,121 @@ async function replayWebhookDelivery(ctx, { subscription_id, delivery_id }) {
   return r.rows[0];
 }
 
+// ─── audit_log_query ─────────────────────────────────────────────────────────
+//
+// Memo 2's #1 want: "the marketplace won't trust me if it can't audit me."
+// Non-admin callers see only their OWN activity (rows where actor_user_id
+// matches their ctx.userId OR api_key_id is one of their keys). admin:full
+// callers can filter to any actor_user_id / api_key_id. All callers can
+// filter by action, resource, time window, error-only, with cursor
+// pagination over (occurred_at DESC, id DESC).
+//
+// Cursor format: base64("ISO8601|uuid"). Server-generated only — callers
+// echo it back as opaque.
+async function auditLogQuery(ctx, {
+  action,
+  resource_type,
+  resource_id,
+  actor_user_id,
+  api_key_id,
+  since,
+  until,
+  error_only,
+  limit = 50,
+  cursor,
+} = {}) {
+  const isAdmin = (ctx.scopes || []).includes('admin:full');
+
+  const filters = ['TRUE'];
+  const params = [];
+  let i = 1;
+
+  if (!isAdmin) {
+    // Scope to the caller's own audit trail: either they were the user-actor
+    // OR the request used one of their API keys.
+    filters.push(`(actor_user_id = $${i} OR api_key_id IN (SELECT id FROM api_keys WHERE user_id = $${i}))`);
+    params.push(ctx.userId);
+    i += 1;
+  } else {
+    if (actor_user_id) {
+      filters.push(`actor_user_id = $${i++}`);
+      params.push(actor_user_id);
+    }
+    if (api_key_id) {
+      filters.push(`api_key_id = $${i++}`);
+      params.push(api_key_id);
+    }
+  }
+  if (action) {
+    filters.push(`action = $${i++}`);
+    params.push(action);
+  }
+  if (resource_type) {
+    filters.push(`resource_type = $${i++}`);
+    params.push(resource_type);
+  }
+  if (resource_id) {
+    filters.push(`resource_id = $${i++}`);
+    params.push(resource_id);
+  }
+  if (since) {
+    filters.push(`occurred_at >= $${i++}`);
+    params.push(since);
+  }
+  if (until) {
+    filters.push(`occurred_at <= $${i++}`);
+    params.push(until);
+  }
+  if (error_only) {
+    filters.push(`error_code IS NOT NULL`);
+  }
+  if (cursor) {
+    try {
+      const decoded = Buffer.from(String(cursor), 'base64').toString('utf-8');
+      const [ts, id] = decoded.split('|');
+      if (ts && id) {
+        // Explicit casts so Postgres knows we're comparing timestamptz/uuid,
+        // not text. With us-precision text from a previous SELECT, the cast
+        // back to timestamptz preserves the full resolution.
+        filters.push(`(occurred_at, id) < ($${i++}::timestamptz, $${i++}::uuid)`);
+        params.push(ts);
+        params.push(id);
+      }
+    } catch (_) { /* bad cursor → ignore, return from start */ }
+  }
+
+  const safeLimit = Math.min(Math.max(1, parseInt(limit, 10) || 50), 200);
+  params.push(safeLimit);
+
+  // We return occurred_at as Postgres's native text representation
+  // (microsecond precision) rather than letting pg-node convert it to
+  // a JS Date (millisecond precision). Otherwise the cursor round-trip
+  // truncates sub-ms and rows inserted within the same ms get filtered
+  // out incorrectly on the next page. Round-trip is lossless when the
+  // text comes from Postgres and goes back into a $N::timestamptz
+  // cursor parameter.
+  const sql = `
+    SELECT id, occurred_at::text AS occurred_at, actor_type,
+           actor_user_id, api_key_id,
+           action, resource_type, resource_id, request_id, host(ip) AS ip,
+           status_code, latency_ms, metadata, error_code
+      FROM audit_log
+     WHERE ${filters.join(' AND ')}
+     ORDER BY occurred_at DESC, id DESC
+     LIMIT $${i}`;
+
+  const { rows } = await db.query(sql, params);
+
+  let next_cursor = null;
+  if (rows.length === safeLimit) {
+    const last = rows[rows.length - 1];
+    // last.occurred_at is now a string from Postgres with us precision.
+    next_cursor = Buffer.from(`${last.occurred_at}|${last.id}`).toString('base64');
+  }
+
+  return { rows, next_cursor };
+}
+
 // ─── Tool catalog ────────────────────────────────────────────────────────────
 
 const TOOLS = [
@@ -504,6 +619,25 @@ const TOOLS = [
       },
     },
     handler: replayWebhookDelivery,
+  },
+  { name: 'audit_log_query', scope: 'mcp:read_only',
+    description: 'Query the audit log. Non-admin callers see only their own activity (rows where actor_user_id is them OR api_key_id belongs to them). admin:full callers can pass actor_user_id / api_key_id to scope to any actor. Filter by action, resource, time window, or error_only. Returns rows in occurred_at DESC order with cursor pagination. Use this to retrace agent activity, surface recent failures, or build observability dashboards.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', description: 'Exact action key, e.g. "route.post./api/bookings" or "mcp.create_match_request".' },
+        resource_type: { type: 'string' },
+        resource_id: { type: 'string', format: 'uuid' },
+        actor_user_id: { type: 'string', format: 'uuid', description: 'Admin-only filter.' },
+        api_key_id: { type: 'string', format: 'uuid', description: 'Admin-only filter.' },
+        since: { type: 'string', format: 'date-time' },
+        until: { type: 'string', format: 'date-time' },
+        error_only: { type: 'boolean', description: 'Only return rows where error_code IS NOT NULL.' },
+        limit: { type: 'integer', minimum: 1, maximum: 200, default: 50 },
+        cursor: { type: 'string', description: 'Opaque cursor from a previous response’s next_cursor. Pass to page further back in time.' },
+      },
+    },
+    handler: auditLogQuery,
   },
 ];
 

@@ -247,7 +247,7 @@ function serializeMatchForLabourerCandidate(row = {}) {
   });
 }
 
-function serializeKycStatus(row = {}) {
+function serializeKycStatus(row) {
   if (!row) return null;
   return stripUndefined({
     status: row.status,
@@ -269,6 +269,8 @@ function sanitizeEventPayload(eventType, payload = {}, opts = {}) {
       scheduled_at: payload.scheduled_at,
       hours_est: payload.hours_est,
       total_amount: payload.total_amount,
+      total_cents: payload.total_cents,
+      currency: payload.currency,
       created_at: payload.created_at,
       completed_at: payload.completed_at,
       cancelled_by: payload.cancelled_by,

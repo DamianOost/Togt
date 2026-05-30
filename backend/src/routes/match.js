@@ -81,11 +81,14 @@ router.get('/:id', authMiddleware, async (req, res, next) => {
     }
     if (!allowed) return res.status(403).json({ error: 'Forbidden' });
 
+    const isCustomer = m.customer_id === req.user.id;
     const attempts = await db.query(
       `SELECT id, labourer_id, status, pinged_at, responded_at
-         FROM match_attempts WHERE match_request_id = $1
-         ORDER BY pinged_at ASC`,
-      [m.id]
+         FROM match_attempts
+        WHERE match_request_id = $1
+          AND ($2::boolean = true OR labourer_id = $3)
+        ORDER BY pinged_at ASC`,
+      [m.id, isCustomer, req.user.id]
     );
     const match = m.customer_id === req.user.id
       ? serializeMatchForCustomer(m)

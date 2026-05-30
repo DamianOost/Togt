@@ -49,6 +49,30 @@ describe('privacy serializers', () => {
     expect(safe.location_precision).toBe('approximate');
   });
 
+  test('public labourer search suppresses unknown or stale locations', () => {
+    const unknown = serializeLabourerPublic({
+      id: LABOURER_ID,
+      user_id: LABOURER_ID,
+      name: 'Labourer',
+      current_lat: -33.92487,
+      current_lng: 18.42406,
+      location_updated_at: null,
+    });
+    const stale = serializeLabourerPublic({
+      id: LABOURER_ID,
+      user_id: LABOURER_ID,
+      name: 'Labourer',
+      current_lat: -33.92487,
+      current_lng: 18.42406,
+      location_updated_at: new Date(Date.now() - 16 * 60 * 1000).toISOString(),
+    });
+
+    expect(unknown.approx_lat).toBeUndefined();
+    expect(unknown.approx_lng).toBeUndefined();
+    expect(stale.approx_lat).toBeUndefined();
+    expect(stale.approx_lng).toBeUndefined();
+  });
+
   test('pending labourer booking view hides exact customer address, coordinates, notes, and phone', () => {
     const safe = serializeBookingForUser(booking(), { userId: LABOURER_ID });
 

@@ -65,7 +65,7 @@ function isLocationFresh(row, now = Date.now()) {
 
 function approxLocation(lat, lng, row = {}) {
   if (lat == null || lng == null) return {};
-  if (row.location_updated_at && !isLocationFresh(row)) return {};
+  if (!isLocationFresh(row)) return {};
   return stripUndefined({
     approx_lat: approxCoordinate(lat),
     approx_lng: approxCoordinate(lng),

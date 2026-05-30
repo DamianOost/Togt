@@ -30,4 +30,18 @@ describe('OpenAPI customer data safety docs', () => {
     expect(accepted.address).toBeDefined();
     expect(accepted.customer_phone).toBeDefined();
   });
+
+  test('KYC response schema documents minimized fields only', () => {
+    const schema = spec.paths['/api/kyc/verify-id'].post.responses['200']
+      .content['application/json'].schema;
+    const props = schema.properties;
+
+    expect(props.id_last4).toBeDefined();
+    expect(props.dob).toBeUndefined();
+    expect(props.parsed_is_male).toBeUndefined();
+    expect(props.parsed_is_citizen).toBeUndefined();
+    expect(props.vendor.properties.request_id).toBeDefined();
+    expect(props.vendor.properties.smart_card).toBeUndefined();
+    expect(props.vendor.properties.on_npr).toBeUndefined();
+  });
 });

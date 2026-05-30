@@ -10,7 +10,8 @@ async function makeVerifiedLabourer(opts = {}) {
     `UPDATE labourer_profiles
        SET skills = $2::text[], hourly_rate = $3,
            is_available = $4, current_lat = $5, current_lng = $6,
-           rating_avg = $7, rating_count = $8
+           rating_avg = $7, rating_count = $8,
+           location_updated_at = COALESCE($9, NOW())
        WHERE user_id = $1`,
     [
       u.user.id,
@@ -21,6 +22,7 @@ async function makeVerifiedLabourer(opts = {}) {
       opts.lng ?? 31.0,
       opts.rating_avg || 4.5,
       opts.rating_count || 5,
+      opts.location_updated_at ?? null,
     ]
   );
   await db.query(`UPDATE users SET kyc_status = 'verified' WHERE id = $1`, [u.user.id]);
@@ -274,6 +276,39 @@ describe('POST /api/match', () => {
     expect(get.body.attempts[0].status).toBe('pinged');
 
     // Cancel to clean up the dispatcher
+    await request(app).post(`/api/match/${matchId}/cancel`).set(authHeader(customer.accessToken));
+    matcher.__resetPingTimeoutForTesting();
+  });
+
+  test('GET /api/match/:id filters attempt rows for a pinged labourer', async () => {
+    matcher.__setPingTimeoutForTesting(5000);
+
+    const pinged = await makeVerifiedLabourer();
+    const other = await makeVerifiedLabourer({ lat: -29.805, lng: 31.0 });
+    const customer = await registerUser({ role: 'customer' });
+
+    const create = await request(app).post('/api/match').set(authHeader(customer.accessToken)).send({
+      skill_needed: 'Plumbing',
+      address: '1 Test Rd',
+      location_lat: -29.8, location_lng: 31.0,
+      scheduled_at: FUTURE_ISO(),
+      hours_est: 2,
+    });
+    const matchId = create.body.match.id;
+    const [attempt] = await waitForAttempt(matchId);
+    await db.query(
+      `INSERT INTO match_attempts (match_request_id, labourer_id, status)
+       VALUES ($1, $2, 'pinged')`,
+      [matchId, other.user.id]
+    );
+
+    const get = await request(app).get(`/api/match/${matchId}`).set(authHeader(pinged.accessToken));
+    expect(get.status).toBe(200);
+    expect(get.body.match.address).toBeUndefined();
+    expect(get.body.attempts).toHaveLength(1);
+    expect(get.body.attempts[0].id).toBe(attempt.id);
+    expect(get.body.attempts[0].labourer_id).toBe(pinged.user.id);
+
     await request(app).post(`/api/match/${matchId}/cancel`).set(authHeader(customer.accessToken));
     matcher.__resetPingTimeoutForTesting();
   });

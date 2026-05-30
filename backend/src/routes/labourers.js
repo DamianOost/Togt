@@ -1,7 +1,7 @@
 const express = require('express');
 const db = require('../config/db');
 const { authMiddleware, requireRole } = require('../middleware/auth');
-const { serializeLabourerPublic, serializeLabourerOwnProfile } = require('../lib/privacy');
+const { isLocationFresh, serializeLabourerPublic, serializeLabourerOwnProfile } = require('../lib/privacy');
 
 const router = express.Router();
 
@@ -51,7 +51,7 @@ router.get('/', async (req, res, next) => {
       const maxRadius = parseFloat(radius);
 
       labourers = labourers
-        .filter((l) => l.current_lat && l.current_lng)
+        .filter((l) => l.current_lat && l.current_lng && isLocationFresh(l))
         .map((l) => ({
           ...l,
           distance_km: haversineKm(userLat, userLng, l.current_lat, l.current_lng),

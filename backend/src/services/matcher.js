@@ -95,6 +95,8 @@ async function selectCandidates({ skill, lat, lng, radiusKm = RADIUS_KM, limit =
        AND u.kyc_status = 'verified'
        AND lp.current_lat IS NOT NULL
        AND lp.current_lng IS NOT NULL
+       AND lp.location_updated_at IS NOT NULL
+       AND lp.location_updated_at > NOW() - INTERVAL '15 minutes'
        AND (6371 * acos(
              LEAST(1.0,
                cos(radians($1)) * cos(radians(lp.current_lat)) *

@@ -34,7 +34,7 @@ The Path B agent-native bet (RFC 9457 errors + Idempotency-Key + OpenAPI 3.1 + s
 
 - **No real customer or labourer data touched.** First deploy populates only Damian's user account + his API key, manually, post-deploy. Test labourers (Sipho, Thandi, etc.) are NOT migrated.
 - **Old encrypted webhook secrets do NOT migrate.** Mac's `WEBHOOK_SECRET_ENCRYPTION_KEY` is dev-only. Production gets a fresh key. Any `webhook_subscriptions.secret_encrypted` rows from Mac would be unreadable garbage on prod and are excluded by design.
-- **Mac mini stays alive as dev / staging.** Cutover is additive, not destructive. `launchctl kickstart -k gui/$(id -u)/com.togt.backend` continues to work after deploy. The dev API key `togt_live_pENbbPJ5TPVXMEtAvij8Gz9QcjWzehNc` remains live in the Mac's `togt` DB and is unchanged.
+- **Mac mini stays alive as dev / staging.** Cutover is additive, not destructive. `launchctl kickstart -k gui/$(id -u)/com.togt.backend` continues to work after deploy. The dev API key `togt_live_REVOKED_20260530` remains live in the Mac's `togt` DB and is unchanged.
 - **`requiredInProd()` is honoured.** The backend hard-fails on boot if `JWT_SECRET`, `JWT_REFRESH_SECRET`, `WEBHOOK_SECRET_ENCRYPTION_KEY`, or `PEACH_WEBHOOK_SECRET` are missing under `NODE_ENV=production`. This is intentional and tests every secret is set before the app accepts traffic.
 - **No POPIA-regulated data flows through this phase.** No real customer PII, no real ID numbers, no real bookings. The first real booking happens in a later, explicitly-approved phase.
 

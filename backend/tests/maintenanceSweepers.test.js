@@ -100,4 +100,76 @@ describe('tick', () => {
     expect(sweepers.stats.refresh_tokens_deleted_total).toBeGreaterThanOrEqual(before.refresh_tokens_deleted_total + 1);
     expect(sweepers.stats.last_tick_at).not.toBeNull();
   });
+
+  test('updates last_success_at only after BOTH sweeps complete', async () => {
+    // Reset success marker for this test
+    sweepers.stats.last_success_at = null;
+    sweepers.stats.last_tick_at = null;
+
+    await sweepers.tick();
+
+    // Clean tick → both timestamps populated
+    expect(sweepers.stats.last_tick_at).not.toBeNull();
+    expect(sweepers.stats.last_success_at).not.toBeNull();
+    // last_success_at should be >= last_tick_at (set later in the function)
+    expect(new Date(sweepers.stats.last_success_at).getTime())
+      .toBeGreaterThanOrEqual(new Date(sweepers.stats.last_tick_at).getTime());
+  });
+
+  test('does NOT update last_success_at when a sweep throws (regression)', async () => {
+    // Snapshot before
+    const beforeSuccess = sweepers.stats.last_success_at;
+    const beforeTick = sweepers.stats.last_tick_at;
+
+    // Stub db.query to throw when refresh_tokens DELETE is attempted.
+    // Both the test file and the sweeper module require the same db
+    // singleton, so patching here affects the sweeper's calls too.
+    const realQuery = db.query.bind(db);
+    db.query = (sql, params) => {
+      if (typeof sql === 'string' && /FROM refresh_tokens/i.test(sql)) {
+        return Promise.reject(new Error('simulated DB failure'));
+      }
+      return realQuery(sql, params);
+    };
+
+    // Suppress the expected error log
+    const origErr = console.error;
+    console.error = () => {};
+
+    try {
+      await sweepers.tick();
+
+      // last_tick_at SHOULD advance (we attempted the tick)
+      expect(sweepers.stats.last_tick_at).not.toBe(beforeTick);
+      // last_success_at should NOT advance (the work threw before completing)
+      expect(sweepers.stats.last_success_at).toBe(beforeSuccess);
+    } finally {
+      db.query = realQuery;
+      console.error = origErr;
+    }
+  });
+});
+
+describe('isFresh', () => {
+  test('returns false before any successful tick', () => {
+    sweepers.stats.last_success_at = null;
+    expect(sweepers.isFresh(1000, 3)).toBe(false);
+  });
+
+  test('returns true when last success is within freshness window', () => {
+    sweepers.stats.last_success_at = new Date(Date.now() - 500).toISOString();
+    expect(sweepers.isFresh(1000, 3)).toBe(true); // 500ms ago, window = 3000ms
+  });
+
+  test('returns false when last success is older than freshness window', () => {
+    sweepers.stats.last_success_at = new Date(Date.now() - 5000).toISOString();
+    expect(sweepers.isFresh(1000, 3)).toBe(false); // 5s ago, window = 3s
+  });
+
+  test('reads last_success_at NOT last_tick_at — stuck-sweeper bug regression', () => {
+    // Sweeper has been ticking for a long time but never succeeding.
+    sweepers.stats.last_tick_at = new Date(Date.now() - 100).toISOString(); // fresh tick
+    sweepers.stats.last_success_at = new Date(Date.now() - 999_999).toISOString(); // ancient success
+    expect(sweepers.isFresh(1000, 3)).toBe(false); // must be stale despite fresh tick
+  });
 });

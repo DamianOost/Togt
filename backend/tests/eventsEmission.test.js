@@ -163,3 +163,97 @@ describe('withTx', () => {
     await expect(withTx(async () => { throw new Error('boom'); })).rejects.toThrow('boom');
   });
 });
+
+describe('emitEvent chunking loop', () => {
+  // The bulk-emit chunking loop exists to keep INSERTs under Postgres'
+  // 65535-parameter cap (5000 rows × 4 placeholders = 20000 params per
+  // chunk). In real-world test seed sizes we never exceed one chunk, so
+  // the loop's correctness was previously unverified. These tests use
+  // the internal _chunkSize override to force multi-chunk behaviour with
+  // a small N. Production paths must NOT pass _chunkSize.
+
+  test('inserts one delivery per subscription when subs > chunkSize (multi-chunk)', async () => {
+    const u = await registerUser({ role: 'customer' });
+    // 5 subscriptions, chunkSize 2 → expect 3 INSERTs (2 + 2 + 1)
+    for (let i = 0; i < 5; i++) {
+      await db.query(
+        `INSERT INTO webhook_subscriptions (owner_user_id, url, secret_encrypted, event_types)
+         VALUES ($1, $2, $3, $4)`,
+        [u.user.id, `https://chunk${i}.test/h`, encryptSecret(`whsec_chunk_${i}`), ['booking.created']]
+      );
+    }
+
+    const result = await withTx(async client => emitEvent(client, {
+      eventType: 'booking.created',
+      resourceType: 'booking',
+      resourceId: '00000000-0000-0000-0000-000000000aaa',
+      actorUserIds: [u.user.id],
+      data: { trial: 'chunking' },
+      _chunkSize: 2,
+    }));
+
+    expect(result.deliveryCount).toBe(5);
+    const { rows } = await db.query(
+      `SELECT subscription_id, event_id, payload->>'event_type' AS et
+       FROM webhook_deliveries WHERE event_id = $1`,
+      [result.eventId]
+    );
+    expect(rows).toHaveLength(5);
+    // All rows share the same event_id and event_type
+    expect(new Set(rows.map(r => r.event_id))).toEqual(new Set([result.eventId]));
+    expect(new Set(rows.map(r => r.et))).toEqual(new Set(['booking.created']));
+    // 5 distinct subscription_ids — one delivery per sub
+    expect(new Set(rows.map(r => r.subscription_id)).size).toBe(5);
+  });
+
+  test('exact-chunk boundary: subs === chunkSize produces one chunk, no remainder', async () => {
+    const u = await registerUser({ role: 'customer' });
+    for (let i = 0; i < 3; i++) {
+      await db.query(
+        `INSERT INTO webhook_subscriptions (owner_user_id, url, secret_encrypted, event_types)
+         VALUES ($1, $2, $3, $4)`,
+        [u.user.id, `https://exact${i}.test/h`, encryptSecret(`whsec_exact_${i}`), ['booking.accepted']]
+      );
+    }
+
+    const result = await withTx(async client => emitEvent(client, {
+      eventType: 'booking.accepted',
+      resourceType: 'booking',
+      resourceId: '00000000-0000-0000-0000-000000000bbb',
+      actorUserIds: [u.user.id],
+      data: {},
+      _chunkSize: 3,
+    }));
+
+    expect(result.deliveryCount).toBe(3);
+    const { rows } = await db.query(
+      `SELECT COUNT(*)::int AS n FROM webhook_deliveries WHERE event_id = $1`,
+      [result.eventId]
+    );
+    expect(rows[0].n).toBe(3);
+  });
+
+  test('placeholder math is correct across chunks (smoke for the $N renumbering)', async () => {
+    // If the placeholder loop indexed against subs.length instead of chunk
+    // length, the second chunk would emit out-of-range parameter numbers
+    // and Postgres would throw. This test would catch that regression.
+    const u = await registerUser({ role: 'customer' });
+    for (let i = 0; i < 7; i++) {
+      await db.query(
+        `INSERT INTO webhook_subscriptions (owner_user_id, url, secret_encrypted, event_types)
+         VALUES ($1, $2, $3, $4)`,
+        [u.user.id, `https://ph${i}.test/h`, encryptSecret(`whsec_ph_${i}`), ['payment.succeeded']]
+      );
+    }
+    // 7 subs, chunkSize 3 → 3+3+1
+    const result = await withTx(async client => emitEvent(client, {
+      eventType: 'payment.succeeded',
+      resourceType: 'payment',
+      resourceId: '00000000-0000-0000-0000-000000000ccc',
+      actorUserIds: [u.user.id],
+      data: {},
+      _chunkSize: 3,
+    }));
+    expect(result.deliveryCount).toBe(7);
+  });
+});

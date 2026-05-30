@@ -44,7 +44,7 @@ test('booking event → signed delivery → sink receives + signature verifies',
     resourceType: 'booking',
     resourceId: '00000000-0000-0000-0000-000000000aaa',
     actorUserIds: [u.user.id],
-    data: { trial: 'smoke' },
+    data: { total_cents: 48000, currency: 'ZAR' },
   }));
   expect(deliveryCount).toBe(1);
 
@@ -84,7 +84,7 @@ test('booking event → signed delivery → sink receives + signature verifies',
   expect(hit.body).toMatchObject({
     event_type: 'booking.created',
     resource_type: 'booking',
-    data: { trial: 'smoke' },
+    data: { total_cents: 48000, currency: 'ZAR' },
   });
 
   // DB row flipped to succeeded

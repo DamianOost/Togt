@@ -24,6 +24,7 @@ const db = require('../config/db');
 const { withTx } = require('../config/db');
 const { emitEvent } = require('./events');
 const { notifyUser } = require('./notifications');
+const { serializeMatchForLabourerCandidate } = require('../lib/privacy');
 
 let PING_TIMEOUT_MS = 30 * 1000;
 const RADIUS_KM = 50;
@@ -63,7 +64,7 @@ async function selectCandidates({ skill, lat, lng, radiusKm = RADIUS_KM, limit =
        GROUP BY labourer_id
     )
     SELECT lp.user_id, u.name, lp.hourly_rate, lp.rating_avg, lp.rating_count,
-           lp.current_lat, lp.current_lng,
+           lp.current_lat, lp.current_lng, lp.location_updated_at,
            (6371 * acos(
              LEAST(1.0,
                cos(radians($1)) * cos(radians(lp.current_lat)) *
@@ -94,6 +95,8 @@ async function selectCandidates({ skill, lat, lng, radiusKm = RADIUS_KM, limit =
        AND u.kyc_status = 'verified'
        AND lp.current_lat IS NOT NULL
        AND lp.current_lng IS NOT NULL
+       AND lp.location_updated_at IS NOT NULL
+       AND lp.location_updated_at > NOW() - INTERVAL '15 minutes'
        AND (6371 * acos(
              LEAST(1.0,
                cos(radians($1)) * cos(radians(lp.current_lat)) *
@@ -281,34 +284,28 @@ async function pingAndWait(matchRequest, labourer) {
     [matchRequest.id, labourer.user_id]
   );
   const attemptId = ins.rows[0].id;
+  const candidatePayload = serializeMatchForLabourerCandidate({
+    ...matchRequest,
+    matchId: matchRequest.id,
+    attemptId,
+    hourly_rate: labourer.hourly_rate,
+    timeout_ms: PING_TIMEOUT_MS,
+  });
 
   // Push notification (best-effort) + Socket.io event
   notifyUser(
     labourer.user_id,
     'New job request',
-    `${matchRequest.skill_needed} • R${matchRequest.hours_est ? Number(labourer.hourly_rate) * Number(matchRequest.hours_est) : '?'} • ${matchRequest.address}`,
+    `${matchRequest.skill_needed} - R${matchRequest.hours_est ? Number(labourer.hourly_rate) * Number(matchRequest.hours_est) : '?'} - nearby job`,
     {
       type: 'match_incoming',
-      matchId: matchRequest.id,
-      attemptId,
+      ...candidatePayload,
       skill: matchRequest.skill_needed,
-      address: matchRequest.address,
-      scheduled_at: matchRequest.scheduled_at,
-      hours_est: matchRequest.hours_est,
     }
   ).catch(() => {});
   if (global.__togt_io) {
     try {
-      global.__togt_io.to(`user:${labourer.user_id}`).emit('match:incoming', {
-        matchId: matchRequest.id,
-        attemptId,
-        skill_needed: matchRequest.skill_needed,
-        address: matchRequest.address,
-        scheduled_at: matchRequest.scheduled_at,
-        hours_est: matchRequest.hours_est,
-        hourly_rate: labourer.hourly_rate,
-        timeout_ms: PING_TIMEOUT_MS,
-      });
+      global.__togt_io.to(`user:${labourer.user_id}`).emit('match:incoming', candidatePayload);
     } catch {}
   }
 

@@ -32,6 +32,13 @@ const SKILL_ICONS = {
 
 const SKILLS = Object.keys(SKILL_ICONS);
 
+function getPublicMarkerCoordinate(labourer) {
+  const lat = Number(labourer?.approx_lat);
+  const lng = Number(labourer?.approx_lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { latitude: lat, longitude: lng };
+}
+
 function StarRow({ rating, size = 14 }) {
   const filled = Math.round(rating || 0);
   return (
@@ -130,6 +137,21 @@ export default function HomeMapScreen({ navigation }) {
     Animated.spring(sheetHeight, { toValue: BOTTOM_SHEET_MAX, useNativeDriver: false }).start();
   }
 
+  function confirmLogout() {
+    Alert.alert(
+      user?.name || 'Account',
+      user?.email || 'You are signed in.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Log out',
+          style: 'destructive',
+          onPress: () => dispatch(logoutThunk()),
+        },
+      ]
+    );
+  }
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor={colors.primary} />
@@ -149,14 +171,12 @@ export default function HomeMapScreen({ navigation }) {
           showsUserLocation
           showsMyLocationButton={false}
         >
-          {labourers.map((l) =>
-            l.current_lat && l.current_lng ? (
+          {labourers.map((l) => {
+            const coordinate = getPublicMarkerCoordinate(l);
+            return coordinate ? (
               <Marker
                 key={l.id}
-                coordinate={{
-                  latitude: parseFloat(l.current_lat),
-                  longitude: parseFloat(l.current_lng),
-                }}
+                coordinate={coordinate}
                 onPress={() => onMarkerPress(l)}
               >
                 <View style={styles.markerContainer}>
@@ -168,8 +188,8 @@ export default function HomeMapScreen({ navigation }) {
                   <View style={styles.markerTail} />
                 </View>
               </Marker>
-            ) : null
-          )}
+            ) : null;
+          })}
         </MapView>
       ) : (
         <View style={styles.loadingMap}>
@@ -185,7 +205,12 @@ export default function HomeMapScreen({ navigation }) {
           <Text style={styles.searchText}>
             {user?.name?.split(' ')[0]}'s location
           </Text>
-          <TouchableOpacity style={styles.avatarBtn} onPress={() => dispatch(logoutThunk())}>
+          <TouchableOpacity
+            style={styles.avatarBtn}
+            onPress={confirmLogout}
+            accessibilityRole="button"
+            accessibilityLabel="Account"
+          >
             <Text style={styles.avatarText}>{user?.name?.[0] || 'U'}</Text>
           </TouchableOpacity>
         </View>

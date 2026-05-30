@@ -25,6 +25,14 @@ const BACKEND_STATUS_MAP = {
   accepted: 0, in_progress: 3, completed: 4,
 };
 
+function formatApproxArea(item) {
+  const lat = Number(item?.approx_lat);
+  const lng = Number(item?.approx_lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const label = item.location_precision === 'approximate' ? 'Approx. area' : 'Area';
+  return `${label}: ${lat.toFixed(2)}, ${lng.toFixed(2)}`;
+}
+
 function StatusTimeline({ currentStatus }) {
   const currentIdx = BACKEND_STATUS_MAP[currentStatus] ?? 0;
   return (
@@ -284,6 +292,7 @@ export default function ActiveJobScreen({ route, navigation }) {
 
   const mapLat = myLocation?.lat || booking.location_lat;
   const mapLng = myLocation?.lng || booking.location_lng;
+  const locationText = booking.address || formatApproxArea(booking) || 'Location hidden until accepted';
 
   return (
     <View style={styles.container}>
@@ -300,7 +309,7 @@ export default function ActiveJobScreen({ route, navigation }) {
             longitudeDelta: 0.04,
           }}
         >
-          {booking.location_lat && (
+          {booking.location_lat && booking.location_lng && (
             <Marker
               coordinate={{ latitude: parseFloat(booking.location_lat), longitude: parseFloat(booking.location_lng) }}
               title="Job Location"
@@ -329,7 +338,7 @@ export default function ActiveJobScreen({ route, navigation }) {
             <View style={{ flex: 1 }}>
               <Text style={styles.customerName}>{booking.customer_name}</Text>
               <Text style={styles.jobSkill}>{booking.skill_needed}</Text>
-              <Text style={styles.jobAddress}>{booking.address}</Text>
+              <Text style={styles.jobAddress}>{locationText}</Text>
             </View>
             <TouchableOpacity
               style={styles.chatBtn}

@@ -6,6 +6,12 @@ const { matchCreateLimiter } = require('../middleware/rateLimit');
 const { idempotencyMiddleware } = require('../middleware/idempotency');
 const matcher = require('../services/matcher');
 const { emitEvent } = require('../services/events');
+const {
+  serializeMatchForCustomer,
+  serializeMatchForLabourerCandidate,
+  serializeBookingForUser,
+} = require('../lib/privacy');
+const { recordPrivacyAudit } = require('../lib/privacyAudit');
 
 const router = express.Router();
 
@@ -52,7 +58,7 @@ router.post('/', matchCreateLimiter, authMiddleware, idempotencyMiddleware(), re
     });
 
     matcher.dispatchMatch(match.id);
-    res.status(201).json({ match });
+    res.status(201).json({ match: serializeMatchForCustomer(match) });
   } catch (err) {
     next(err);
   }
@@ -75,13 +81,19 @@ router.get('/:id', authMiddleware, async (req, res, next) => {
     }
     if (!allowed) return res.status(403).json({ error: 'Forbidden' });
 
+    const isCustomer = m.customer_id === req.user.id;
     const attempts = await db.query(
       `SELECT id, labourer_id, status, pinged_at, responded_at
-         FROM match_attempts WHERE match_request_id = $1
-         ORDER BY pinged_at ASC`,
-      [m.id]
+         FROM match_attempts
+        WHERE match_request_id = $1
+          AND ($2::boolean = true OR labourer_id = $3)
+        ORDER BY pinged_at ASC`,
+      [m.id, isCustomer, req.user.id]
     );
-    res.json({ match: m, attempts: attempts.rows });
+    const match = m.customer_id === req.user.id
+      ? serializeMatchForCustomer(m)
+      : serializeMatchForLabourerCandidate(m);
+    res.json({ match, attempts: attempts.rows });
   } catch (err) {
     next(err);
   }
@@ -100,7 +112,13 @@ router.post('/:id/accept', authMiddleware, requireRole('labourer'), async (req, 
       return res.status(409).json({ error: result.error });
     }
     matcher.recordResponse(attempt.id, 'accepted');
-    res.json({ booking: result.booking });
+    recordPrivacyAudit(req, {
+      action: 'privacy.booking.exact_address_revealed',
+      resource: { type: 'booking', id: result.booking.id },
+      statusCode: 200,
+      metadata: { reason: 'match_accept', booking_status: result.booking.status },
+    });
+    res.json({ booking: serializeBookingForUser(result.booking, req.user) });
   } catch (err) {
     next(err);
   }

@@ -10,6 +10,14 @@ import { colors, typography, spacing, borderRadius, shadows } from '../theme';
 
 const DEFAULT_TIMEOUT_MS = 30000;
 
+function formatApproxArea(item) {
+  const lat = Number(item?.approx_lat);
+  const lng = Number(item?.approx_lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const label = item.location_precision === 'approximate' ? 'Approx. area' : 'Area';
+  return `${label}: ${lat.toFixed(2)}, ${lng.toFixed(2)}`;
+}
+
 export default function IncomingMatchModal() {
   const { user, accessToken } = useSelector((s) => s.auth);
   const navigation = useNavigation();
@@ -85,6 +93,8 @@ export default function IncomingMatchModal() {
   const pay = request.hours_est && request.hourly_rate
     ? `R${(Number(request.hourly_rate) * Number(request.hours_est)).toFixed(0)}`
     : null;
+  const locationText = request.address || formatApproxArea(request) || 'Location hidden until accepted';
+  const locationLabel = request.address ? 'Address' : 'Area';
 
   return (
     <Modal visible={true} animationType="slide" transparent={false}>
@@ -96,8 +106,8 @@ export default function IncomingMatchModal() {
         <Text style={styles.headline}>New job</Text>
         <Text style={styles.skill}>{request.skill_needed}</Text>
         <View style={styles.detailRow}>
-          <Text style={styles.detailLabel}>Address</Text>
-          <Text style={styles.detailValue}>{request.address}</Text>
+          <Text style={styles.detailLabel}>{locationLabel}</Text>
+          <Text style={styles.detailValue}>{locationText}</Text>
         </View>
         <View style={styles.detailRow}>
           <Text style={styles.detailLabel}>Hours</Text>

@@ -11,17 +11,18 @@ import IncomingMatchModal from '../components/IncomingMatchModal';
 const RootStack = createNativeStackNavigator();
 
 export default function AppNavigator() {
-  const { user } = useSelector((state) => state.auth);
+  const { user, accessToken } = useSelector((state) => state.auth);
+  const isAuthed = Boolean(user && accessToken);
 
   return (
     <NavigationContainer>
       <RootStack.Navigator screenOptions={{ headerShown: false }}>
-        {!user ? (
-          <RootStack.Screen name="Auth" component={AuthStack} />
+        {!isAuthed ? (
+          <RootStack.Screen name="Auth" component={AuthStack} navigationKey="auth" />
         ) : user.role === 'customer' ? (
-          <RootStack.Screen name="Customer" component={CustomerStack} />
+          <RootStack.Screen name="Customer" component={CustomerStack} navigationKey="customer" />
         ) : (
-          <RootStack.Screen name="Labourer" component={LabourerStack} />
+          <RootStack.Screen name="Labourer" component={LabourerStack} navigationKey="labourer" />
         )}
       </RootStack.Navigator>
       <IncomingMatchModal />

@@ -26,6 +26,18 @@ function requiredInProd(name) {
   return undefined;
 }
 
+function requiredHex(name, devDefault) {
+  const val = required(name, devDefault);
+  if (!/^[a-f0-9]{64}$/.test(val)) {
+    if (isProd) {
+      console.error(`FATAL: ${name} must be 64 lowercase hex chars`);
+      process.exit(1);
+    }
+    console.warn(`WARNING: ${name} is not 64 lowercase hex chars. DO NOT ship to prod.`);
+  }
+  return val;
+}
+
 module.exports = {
   port: process.env.PORT || 3000,
   nodeEnv: process.env.NODE_ENV || 'development',
@@ -34,7 +46,8 @@ module.exports = {
   jwtRefreshSecret: required('JWT_REFRESH_SECRET', 'dev_jwt_refresh_secret_do_not_use_in_prod'),
   jwtExpiresIn: '15m',
   jwtRefreshExpiresIn: '7d',
-  webhookSecretEncryptionKey: required('WEBHOOK_SECRET_ENCRYPTION_KEY', 'a'.repeat(64)),
+  webhookSecretEncryptionKey: requiredHex('WEBHOOK_SECRET_ENCRYPTION_KEY', 'a'.repeat(64)),
+  piiBlindIndexKey: requiredHex('PII_BLIND_INDEX_KEY', 'b'.repeat(64)),
   corsOrigins: (process.env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean),
   verifynow: {
     apiKey: process.env.VERIFYNOW_API_KEY,

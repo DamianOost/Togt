@@ -4,6 +4,8 @@ const { withTx } = require('../config/db');
 const { authMiddleware } = require('../middleware/auth');
 const { notifyUser } = require('../services/notifications');
 const { emitEvent } = require('../services/events');
+const { serializeBookingForUser } = require('../lib/privacy');
+const { recordPrivacyAudit } = require('../lib/privacyAudit');
 
 const router = express.Router();
 
@@ -84,7 +86,7 @@ router.patch('/:id/confirm-scope', authMiddleware, async (req, res, next) => {
       notifyUser(notifyTarget, notifyTitle, notifyBody, { bookingId: booking.id, screen: 'ScopeConfirm' });
     }
 
-    res.json({ booking: finalBooking });
+    res.json({ booking: serializeBookingForUser(finalBooking, req.user) });
   } catch (err) {
     next(err);
   }
@@ -149,7 +151,10 @@ router.post('/:id/make-recurring', authMiddleware, async (req, res, next) => {
       return created;
     });
 
-    res.json({ bookings: createdBookings, pattern });
+    res.json({
+      bookings: createdBookings.map((row) => serializeBookingForUser(row, req.user)),
+      pattern,
+    });
   } catch (err) {
     next(err);
   }
@@ -173,11 +178,21 @@ router.post('/:id/share-trip', authMiddleware, async (req, res, next) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
+    const safeBooking = serializeBookingForUser(b, req.user);
+    if (safeBooking.address && req.user.role === 'labourer') {
+      recordPrivacyAudit(req, {
+        action: 'privacy.booking.exact_address_revealed',
+        resource: { type: 'booking', id: safeBooking.id },
+        statusCode: 200,
+        metadata: { viewer_role: req.user.role, booking_status: safeBooking.status, surface: 'share_trip' },
+      });
+    }
+
     const shareText =
       `🔧 Togt Job in Progress\n` +
       `Worker: ${b.labourer_name}\n` +
       `Job: ${b.skill_needed}\n` +
-      `Location: ${b.address}\n` +
+      `Location: ${safeBooking.address || 'Approximate area only'}\n` +
       `Track: togt://booking/${b.id}`;
 
     res.json({ shareText, bookingId: b.id });
@@ -253,7 +268,7 @@ router.patch('/:id/change-order/:orderId/accept', authMiddleware, async (req, re
       accept ? 'Customer approved the additional work.' : 'Customer declined the change request.',
       { bookingId: booking.id, screen: 'ActiveJob' });
 
-    res.json({ changeOrder: co.rows[0], booking: updatedBooking.rows[0] });
+    res.json({ changeOrder: co.rows[0], booking: serializeBookingForUser(updatedBooking.rows[0], req.user) });
   } catch (err) {
     next(err);
   }

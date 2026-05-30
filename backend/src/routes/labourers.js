@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../config/db');
 const { authMiddleware, requireRole } = require('../middleware/auth');
+const { isLocationFresh, serializeLabourerPublic, serializeLabourerOwnProfile } = require('../lib/privacy');
 
 const router = express.Router();
 
@@ -23,9 +24,9 @@ router.get('/', async (req, res, next) => {
     const { lat, lng, skill, radius = 25 } = req.query;
 
     let query = `
-      SELECT u.id, u.name, u.phone, u.avatar_url,
+      SELECT u.id, u.name, u.avatar_url,
              lp.skills, lp.hourly_rate, lp.bio,
-             lp.is_available, lp.current_lat, lp.current_lng,
+             lp.is_available, lp.current_lat, lp.current_lng, lp.location_updated_at,
              lp.rating_avg, lp.rating_count
       FROM users u
       JOIN labourer_profiles lp ON u.id = lp.user_id
@@ -50,7 +51,7 @@ router.get('/', async (req, res, next) => {
       const maxRadius = parseFloat(radius);
 
       labourers = labourers
-        .filter((l) => l.current_lat && l.current_lng)
+        .filter((l) => l.current_lat && l.current_lng && isLocationFresh(l))
         .map((l) => ({
           ...l,
           distance_km: haversineKm(userLat, userLng, l.current_lat, l.current_lng),
@@ -59,7 +60,7 @@ router.get('/', async (req, res, next) => {
         .sort((a, b) => a.distance_km - b.distance_km);
     }
 
-    res.json({ labourers });
+    res.json({ labourers: labourers.map(serializeLabourerPublic) });
   } catch (err) {
     next(err);
   }
@@ -69,7 +70,7 @@ router.get('/', async (req, res, next) => {
 router.get('/profile', authMiddleware, requireRole('labourer'), async (req, res, next) => {
   try {
     const result = await db.query(
-      `SELECT lp.*, u.name, u.email, u.phone, u.avatar_url
+      `SELECT lp.*, u.name, u.email, u.phone, u.avatar_url, u.emergency_contact
        FROM labourer_profiles lp
        JOIN users u ON lp.user_id = u.id
        WHERE lp.user_id = $1`,
@@ -78,7 +79,7 @@ router.get('/profile', authMiddleware, requireRole('labourer'), async (req, res,
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Profile not found' });
     }
-    res.json({ profile: result.rows[0] });
+    res.json({ profile: serializeLabourerOwnProfile(result.rows[0]) });
   } catch (err) {
     next(err);
   }
@@ -88,9 +89,9 @@ router.get('/profile', authMiddleware, requireRole('labourer'), async (req, res,
 router.get('/:id', async (req, res, next) => {
   try {
     const result = await db.query(
-      `SELECT u.id, u.name, u.phone, u.avatar_url, u.created_at,
+      `SELECT u.id, u.name, u.avatar_url, u.created_at,
               lp.skills, lp.hourly_rate, lp.bio,
-              lp.is_available, lp.current_lat, lp.current_lng,
+              lp.is_available, lp.current_lat, lp.current_lng, lp.location_updated_at,
               lp.rating_avg, lp.rating_count
        FROM users u
        JOIN labourer_profiles lp ON u.id = lp.user_id
@@ -113,7 +114,7 @@ router.get('/:id', async (req, res, next) => {
       [req.params.id]
     );
 
-    res.json({ labourer: result.rows[0], reviews: ratingsResult.rows });
+    res.json({ labourer: serializeLabourerPublic(result.rows[0]), reviews: ratingsResult.rows });
   } catch (err) {
     next(err);
   }
@@ -122,21 +123,32 @@ router.get('/:id', async (req, res, next) => {
 // PUT /labourers/profile
 router.put('/profile', authMiddleware, requireRole('labourer'), async (req, res, next) => {
   try {
-    const { skills, hourly_rate, bio, id_number } = req.body;
+    const { skills, hourly_rate, bio, emergency_contact } = req.body;
     const userId = req.user.id;
 
-    const result = await db.query(
+    await db.query(
       `UPDATE labourer_profiles
        SET skills = COALESCE($1, skills),
            hourly_rate = COALESCE($2, hourly_rate),
-           bio = COALESCE($3, bio),
-           id_number = COALESCE($4, id_number)
-       WHERE user_id = $5
-       RETURNING *`,
-      [skills, hourly_rate, bio, id_number, userId]
+           bio = COALESCE($3, bio)
+       WHERE user_id = $4`,
+      [skills, hourly_rate, bio, userId]
+    );
+    if (emergency_contact !== undefined) {
+      await db.query(
+        'UPDATE users SET emergency_contact = $1 WHERE id = $2',
+        [emergency_contact || null, userId]
+      );
+    }
+    const result = await db.query(
+      `SELECT lp.*, u.name, u.email, u.phone, u.avatar_url, u.emergency_contact
+       FROM labourer_profiles lp
+       JOIN users u ON lp.user_id = u.id
+       WHERE lp.user_id = $1`,
+      [userId]
     );
 
-    res.json({ profile: result.rows[0] });
+    res.json({ profile: serializeLabourerOwnProfile(result.rows[0]) });
   } catch (err) {
     next(err);
   }
@@ -169,7 +181,7 @@ router.patch('/availability', authMiddleware, requireRole('labourer'), async (re
       'UPDATE labourer_profiles SET is_available = $1 WHERE user_id = $2 RETURNING *',
       [is_available, req.user.id]
     );
-    res.json({ profile: result.rows[0] });
+    res.json({ profile: serializeLabourerOwnProfile(result.rows[0]) });
   } catch (err) {
     next(err);
   }
@@ -185,7 +197,7 @@ router.put('/availability', authMiddleware, requireRole('labourer'), async (req,
       'UPDATE labourer_profiles SET is_available = $1 WHERE user_id = $2 RETURNING *',
       [is_available, req.user.id]
     );
-    res.json({ profile: result.rows[0] });
+    res.json({ profile: serializeLabourerOwnProfile(result.rows[0]) });
   } catch (err) {
     next(err);
   }
@@ -199,7 +211,7 @@ router.patch('/location', authMiddleware, requireRole('labourer'), async (req, r
       return res.status(400).json({ error: 'lat and lng are required' });
     }
     await db.query(
-      'UPDATE labourer_profiles SET current_lat = $1, current_lng = $2 WHERE user_id = $3',
+      'UPDATE labourer_profiles SET current_lat = $1, current_lng = $2, location_updated_at = NOW() WHERE user_id = $3',
       [lat, lng, req.user.id]
     );
     res.json({ updated: true });
@@ -215,7 +227,7 @@ router.put('/location', authMiddleware, requireRole('labourer'), async (req, res
     }
 
     await db.query(
-      'UPDATE labourer_profiles SET current_lat = $1, current_lng = $2 WHERE user_id = $3',
+      'UPDATE labourer_profiles SET current_lat = $1, current_lng = $2, location_updated_at = NOW() WHERE user_id = $3',
       [lat, lng, req.user.id]
     );
     res.json({ updated: true });

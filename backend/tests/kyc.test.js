@@ -24,21 +24,30 @@ describe('POST /api/kyc/verify-id (POC structural validation)', () => {
     expect(res.body.verified).toBe(true);
     expect(res.body.poc_mode).toBe(true);
     expect(res.body.name).toBe('Test Labourer');
-    expect(res.body.dob).toMatch(/^1990-01-0[34]$/); // TZ tolerance
-    expect(res.body.parsed_is_citizen).toBe(true);
+    expect(res.body.id_last4).toBe('8080');
+    expect(res.body.dob).toBeUndefined();
+    expect(res.body.parsed_is_citizen).toBeUndefined();
 
     const userRow = await db.query('SELECT kyc_status FROM users WHERE id = $1', [u.user.id]);
     expect(userRow.rows[0].kyc_status).toBe('verified');
 
     const kycRow = await db.query(
-      'SELECT id_number, status, provider, verified_name, parsed_is_citizen FROM kyc_verifications WHERE user_id = $1',
+      `SELECT id_number, status, provider, verified_name, parsed_dob, parsed_sex,
+              parsed_is_citizen, id_last4, id_blind_index, raw_input_discarded_at
+         FROM kyc_verifications WHERE user_id = $1`,
       [u.user.id]
     );
     expect(kycRow.rows).toHaveLength(1);
     expect(kycRow.rows[0].status).toBe('verified');
     expect(kycRow.rows[0].provider).toBe('poc_structural');
     expect(kycRow.rows[0].verified_name).toBe('Test Labourer');
-    expect(kycRow.rows[0].parsed_is_citizen).toBe(true);
+    expect(kycRow.rows[0].id_number).toBeNull();
+    expect(kycRow.rows[0].parsed_dob).toBeNull();
+    expect(kycRow.rows[0].parsed_sex).toBeNull();
+    expect(kycRow.rows[0].parsed_is_citizen).toBeNull();
+    expect(kycRow.rows[0].id_last4).toBe('8080');
+    expect(kycRow.rows[0].id_blind_index).toMatch(/^[a-f0-9]{64}$/);
+    expect(kycRow.rows[0].raw_input_discarded_at).toBeTruthy();
   });
 
   test('invalid checksum -> 400 id_invalid_checksum, kyc_status set to failed', async () => {
@@ -129,6 +138,8 @@ describe('GET /api/kyc/status', () => {
     expect(res.body.kyc_status).toBe('verified');
     expect(res.body.verification).toBeDefined();
     expect(res.body.verification.status).toBe('verified');
+    expect(res.body.verification.id_last4).toBe('8080');
+    expect(res.body.verification.id_number).toBeUndefined();
   });
 });
 

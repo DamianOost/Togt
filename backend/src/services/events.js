@@ -1,4 +1,5 @@
 const { v4: uuidv4 } = require('uuid');
+const { sanitizeEventPayload } = require('../lib/privacy');
 
 const EVENT_TYPES = Object.freeze([
   'booking.created',
@@ -75,7 +76,7 @@ async function emitEvent(client, {
     previous_state: previousState,
     state,
     occurred_at: occurredAt.toISOString(),
-    data,
+    data: sanitizeEventPayload(eventType, data, { resourceType }),
   };
 
   // Per-tenant scoping: only subscriptions OWNED BY one of the actor users

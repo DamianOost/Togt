@@ -137,6 +137,21 @@ export default function HomeMapScreen({ navigation }) {
     Animated.spring(sheetHeight, { toValue: BOTTOM_SHEET_MAX, useNativeDriver: false }).start();
   }
 
+  function confirmLogout() {
+    Alert.alert(
+      user?.name || 'Account',
+      user?.email || 'You are signed in.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Log out',
+          style: 'destructive',
+          onPress: () => dispatch(logoutThunk()),
+        },
+      ]
+    );
+  }
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor={colors.primary} />
@@ -190,7 +205,12 @@ export default function HomeMapScreen({ navigation }) {
           <Text style={styles.searchText}>
             {user?.name?.split(' ')[0]}'s location
           </Text>
-          <TouchableOpacity style={styles.avatarBtn} onPress={() => dispatch(logoutThunk())}>
+          <TouchableOpacity
+            style={styles.avatarBtn}
+            onPress={confirmLogout}
+            accessibilityRole="button"
+            accessibilityLabel="Account"
+          >
             <Text style={styles.avatarText}>{user?.name?.[0] || 'U'}</Text>
           </TouchableOpacity>
         </View>

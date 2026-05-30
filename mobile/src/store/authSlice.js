@@ -41,6 +41,10 @@ export const restoreSessionThunk = createAsyncThunk('auth/restore', async (_, { 
   try {
     const stored = await readAuth();
     if (!stored) return rejectWithValue('No session');
+    if (!stored.user || !stored.accessToken || !stored.refreshToken) {
+      await clearAuth();
+      return rejectWithValue('Invalid session');
+    }
     return stored;
   } catch {
     return rejectWithValue('Failed to restore');
@@ -109,6 +113,8 @@ const authSlice = createSlice({
       state.user = action.payload.user;
       state.accessToken = action.payload.accessToken;
       state.refreshToken = action.payload.refreshToken;
+      state.error = null;
+      state.restored = true;
     };
     const handleRejected = (state, action) => {
       state.loading = false;
@@ -126,6 +132,7 @@ const authSlice = createSlice({
         state.user = action.payload.user;
         state.accessToken = action.payload.accessToken;
         state.refreshToken = action.payload.refreshToken;
+        state.error = null;
         state.restored = true;
       })
       .addCase(restoreSessionThunk.rejected, (state) => {
@@ -135,11 +142,14 @@ const authSlice = createSlice({
         state.user = null;
         state.accessToken = null;
         state.refreshToken = null;
+        state.error = null;
       })
       .addCase(refreshTokensThunk.fulfilled, (state, action) => {
         state.user = action.payload.user;
         state.accessToken = action.payload.accessToken;
         state.refreshToken = action.payload.refreshToken;
+        state.error = null;
+        state.restored = true;
       });
   },
 });

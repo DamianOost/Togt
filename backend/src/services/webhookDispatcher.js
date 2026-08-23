@@ -247,10 +247,16 @@ function start({ intervalMs = 5000 } = {}) {
     `dead_after=${DEAD_AT_SECONDS}s ` +
     `visibility_timeout=${CLAIM_VISIBILITY_TIMEOUT_SECONDS}s`
   );
+  // Establish readiness immediately. Waiting for the first interval leaves
+  // /health/deep stale during process startup and weakens deployment checks.
+  const firstTick = tick().catch(e => {
+    console.error('[webhookDispatcher] initial tick error:', e);
+  });
   timer = setInterval(() => {
     tick().catch(e => console.error('[webhookDispatcher] tick error:', e));
   }, intervalMs);
   if (timer.unref) timer.unref();
+  return firstTick;
 }
 
 function stop() {

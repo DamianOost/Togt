@@ -151,6 +151,21 @@ describe('tick', () => {
 });
 
 describe('isFresh', () => {
+  test('start performs an immediate successful sweep for deployment readiness', async () => {
+    const original = { ...sweepers.stats };
+    sweepers.stats.last_tick_at = null;
+    sweepers.stats.last_success_at = null;
+    await sweepers.start({ intervalMs: 60_000 });
+    try {
+      expect(sweepers.stats.last_tick_at).not.toBeNull();
+      expect(sweepers.stats.last_success_at).not.toBeNull();
+      expect(sweepers.isFresh(60_000, 3)).toBe(true);
+    } finally {
+      sweepers.stop();
+      Object.assign(sweepers.stats, original);
+    }
+  });
+
   test('returns false before any successful tick', () => {
     sweepers.stats.last_success_at = null;
     expect(sweepers.isFresh(1000, 3)).toBe(false);

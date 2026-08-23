@@ -109,10 +109,16 @@ function start({ intervalMs = DEFAULT_INTERVAL_MS } = {}) {
   stats.interval_ms = intervalMs;
   if (timer) clearInterval(timer);
   console.log(`[maintenanceSweepers] started: tick=${intervalMs}ms idempotency_ttl=${IDEMPOTENCY_TTL_HOURS}h refresh_token_grace=${REFRESH_TOKEN_GRACE_DAYS}d`);
+  // Run once at startup so readiness proves the cleanup queries actually
+  // work. Otherwise /health/deep remains stale for the first hour.
+  const firstTick = tick().catch(e => {
+    console.error('[maintenanceSweepers] initial tick error:', e);
+  });
   timer = setInterval(() => {
     tick().catch(e => console.error('[maintenanceSweepers] tick error:', e));
   }, intervalMs);
   if (timer.unref) timer.unref();
+  return firstTick;
 }
 
 function stop() {

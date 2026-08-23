@@ -1,12 +1,14 @@
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
+import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import api from './api';
 
 // Configure how notifications appear when app is foregrounded
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
     shouldPlaySound: true,
     shouldSetBadge: true,
   }),
@@ -44,13 +46,20 @@ export async function registerForPushNotifications() {
     });
   }
 
+  const projectId = Constants.easConfig?.projectId ||
+    Constants.expoConfig?.extra?.eas?.projectId;
+  if (!projectId) {
+    console.warn('[notifications] Push registration skipped: EAS project ID is not configured');
+    return null;
+  }
+
   try {
-    const tokenData = await Notifications.getExpoPushTokenAsync();
+    const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
     const token = tokenData.data;
-    console.log('[notifications] Expo push token:', token);
 
     // Save to server
     await api.post('/auth/push-token', { token });
+    console.log('[notifications] Push token registered');
     return token;
   } catch (err) {
     console.error('[notifications] Failed to get/register token:', err.message);

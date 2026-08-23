@@ -174,28 +174,32 @@ export default function ActiveBookingScreen({ route, navigation }) {
     socketService.connect(accessToken);
     socketService.joinBooking(bookingId);
 
-    // New worker_location event (with ETA)
-    socketService.socket?.on('worker_location', (data) => {
+    const handleWorkerLocation = (data) => {
       dispatch(updateLabourerLocation({ lat: data.lat, lng: data.lng }));
       setWorkerEta(data.etaMinutes);
-    });
-
-    // Legacy event
-    socketService.onLocationUpdate((data) => {
+    };
+    const handleLegacyLocation = (data) => {
       dispatch(updateLabourerLocation({ lat: data.lat, lng: data.lng }));
-    });
-
-    // Worker arrived
-    socketService.socket?.on('worker_arrived', () => {
+    };
+    const handleWorkerArrived = () => {
       setWorkerArrived(true);
       setWorkerEta(0);
-    });
+    };
+
+    // New worker_location event (with ETA)
+    socketService.on('worker_location', handleWorkerLocation);
+
+    // Legacy event
+    socketService.onLocationUpdate(handleLegacyLocation);
+
+    // Worker arrived
+    socketService.on('worker_arrived', handleWorkerArrived);
 
     const interval = setInterval(loadBooking, 15000);
     return () => {
-      socketService.offLocationUpdate();
-      socketService.socket?.off('worker_location');
-      socketService.socket?.off('worker_arrived');
+      socketService.offLocationUpdate(handleLegacyLocation);
+      socketService.off('worker_location', handleWorkerLocation);
+      socketService.off('worker_arrived', handleWorkerArrived);
       clearInterval(interval);
     };
   }, [bookingId]);

@@ -1,7 +1,5 @@
 import { io } from 'socket.io-client';
-import Constants from 'expo-constants';
-
-const BASE_URL = Constants.expoConfig?.extra?.apiUrl || 'http://localhost:3000';
+import { socketUrl } from '../config/apiConfig';
 
 let socket = null;
 
@@ -9,7 +7,7 @@ export const matchSocket = {
   connect(token) {
     if (socket && socket.connected) return socket;
     if (socket) socket.disconnect();
-    socket = io(`${BASE_URL}/match`, {
+    socket = io(socketUrl('/match'), {
       auth: { token },
       transports: ['websocket'],
     });

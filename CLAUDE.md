@@ -138,4 +138,4 @@ Use a dedicated test database for automated tests. Do not run destructive tests 
 
 ## Current primary next move
 
-Converge the latest privacy-hardened `origin/main` with the recoverable deployment work on a fresh branch, repair the production/KYC/mobile/API-contract gaps, prove the full test and smoke baseline, and only then seek approval for a public preview deployment. Do not resume the old deployment plan at its secret-generation step.
+Review and validate the fresh current-main deployment-convergence candidate, land the documentation foundation first, then close the separate KYC, mobile endpoint, agent-contract, payment, and preview-access gates. Only after those branches and a complete approval package are reviewed should TOGT seek authority for a synthetic public preview. Do not resume the old deployment plan at its secret-generation step.

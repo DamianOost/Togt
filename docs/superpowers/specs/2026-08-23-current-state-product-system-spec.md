@@ -28,6 +28,7 @@ When this document conflicts with current code, migrations, tests, Git state, or
 | GitHub default branch | `origin/main` at `389c81d`; PRs 1, 2, 5, and 6 merged |
 | Open deployment documentation | PR 3 (deployment design) open; PR 4 (stacked implementation plan) open |
 | Deployment implementation branch | `origin/feat/fly-production-deploy` is 21 commits behind and 5 commits ahead of `origin/main` |
+| Current deployment convergence | Fresh task branch created from `389c81d`; May matrix, replacement config, and synthetic-preview runbook prepared locally; validation and Draft PR pending |
 | Mac runtime | Healthy on port 3002 at branch HEAD `0564153`; `/health` and `/health/deep` respond |
 | Public endpoint | `https://togt-api.fly.dev/health` did not resolve |
 | Database schema | Migrations `001` through `016`, including audit log and customer-data safety |
@@ -359,7 +360,7 @@ The first public preview should use one application instance. Multi-instance ope
 | KYC | POC only | Cannot support real users until fail-open and selfie policy are fixed |
 | Customer payment | Integrated, not production-proven | Vendor contract and reconciliation evidence pending |
 | Labourer payout | Missing | Live marketplace economic loop is incomplete |
-| Public deployment | Not live | Old branch/config exists; hostname does not resolve |
+| Public deployment | Not live | Hostname still does not resolve; a replacement candidate exists only on the isolated convergence branch and is not deployment approval |
 | Mobile release | Not ready | API configuration, builds, store, and device evidence pending |
 | Legal/POPIA operations | Draft | Publication, operator, retention, and incident contacts pending |
 | Support/disputes | Unspecified | Closed pilot needs an operator playbook |
@@ -370,10 +371,12 @@ The first public preview should use one application instance. Multi-instance ope
 
 - fresh branch based on current `origin/main` contains reviewed deployment configuration;
 - all migrations apply to a disposable target database;
+- exactly one always-running application instance is enforced until process-local coordination is redesigned;
 - current unit and smoke suites pass with timings recorded;
 - production configuration includes every current required secret name, including `PII_BLIND_INDEX_KEY`;
 - mobile and agent clients point to the same HTTPS base URL;
 - `/health`, `/health/deep`, OpenAPI, agents manifest, MCP, auth, webhooks, and audit query pass;
+- deployed evidence maps the approved `origin/main` commit to the provider release and exact image reference;
 - rollback is rehearsed;
 - no real identities, money, customer records, or third-party API keys are used without separate approval.
 
@@ -401,3 +404,17 @@ Requires evidence from the closed pilot, public support/terms/privacy surfaces, 
 5. Confirm whether cash is a pilot payment method or should be removed from the live path.
 6. Decide whether PRs 3 and 4 should be closed as superseded once a current deployment plan is approved.
 7. Approve current vendor choices only after cost, region, data-processing, backup, and operational assumptions are revalidated.
+
+## 13. Deployment convergence update
+
+The 2026-08-23 convergence audit keeps the May Docker/Fly intent but replaces its executable configuration and operating assumptions. The current evidence is recorded in:
+
+- `docs/deployment/2026-08-23-may-convergence-matrix.md`;
+- `docs/runbooks/synthetic-preview-deployment.md`;
+- `backend/Dockerfile`, `backend/.dockerignore`, and `backend/fly.toml` on the convergence branch.
+
+Key corrections are Node 24 LTS instead of EOL Node 20, a non-root narrowly copied image, Johannesburg as the proposed compute region, removal of unverified free-tier claims, no scale-to-zero while workers are process-local, release-command migrations through 016, the current six-name production startup contract, deep-health routing readiness, and explicit deployed-commit/image evidence.
+
+The candidate remains blocked from deployment pending review, container build/runtime proof, remediation of the current production dependency audit (27 advisories: 1 critical, 16 high, 10 moderate), PR #7 landing before the dependent deployment PR, Damian’s milestone/provider/first-deploy approvals, mobile endpoint unification, and any access control needed to keep a public preview synthetic-only. PRs #3 and #4 and the old feature branch remain historical inputs and have not been merged, closed, or deployed.
+
+Local PostgreSQL 17.11 evidence on Windows is green: migrations 001–016 applied twice to an empty `togt_test` database, 20 tables and all five migration-016 fields were verified, focused readiness tests passed 17/17, the full backend suite passed 218/218 after fixing a pre-existing `/tmp` portability defect, and smoke passed 7/7. This is one current run, not the later three-cold-run release-candidate gate. The suite emits a `pg` query-overlap deprecation warning that must be tracked before a future pg 9 upgrade.

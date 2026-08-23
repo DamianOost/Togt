@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-23
 
-**Status:** Proposed
+**Status:** Proposed; Phase 1 convergence candidate in progress on an isolated branch
 
 **Owner:** Damian Oosthuyzen
 
@@ -88,6 +88,12 @@ Acceptance:
 - a short convergence note lists each reusable commit/file and each obsolete assumption;
 - the 21-behind/5-ahead divergence is resolved deliberately, not by force-push or history rewrite.
 
+Progress on 2026-08-23:
+
+- complete: current refs and PR states reverified;
+- complete: keep/replace/discard decisions recorded in `docs/deployment/2026-08-23-may-convergence-matrix.md`;
+- unchanged by design: PRs #3/#4 and the old feature branch remain open/history-only pending Damian’s later decision.
+
 ### Task 1.2 — recreate deployment work on current `main`
 
 - Create a fresh deployment task branch from current `origin/main`.
@@ -104,6 +110,15 @@ Acceptance:
 - no secret value or private data exists in the image or diff;
 - rollback target and commands are documented.
 
+Progress on 2026-08-23:
+
+- candidate branch/worktree created directly from current `origin/main` and linked to the planning baseline as an explicit dependency;
+- replacement Dockerfile, Docker ignore, Fly configuration, startup readiness fix, and synthetic-preview runbook prepared;
+- migrations 001–016 passed twice on an empty local PostgreSQL 17.11 `togt_test` database; 20 tables and five migration-016 fields verified;
+- focused readiness tests passed 17/17, full backend passed 218/218, and smoke passed 7/7;
+- container build/runtime proof is unavailable on this Windows host because no Docker-compatible runtime is installed;
+- the production dependency audit reports 27 advisories (1 critical, 16 high, 10 moderate), which blocks preview promotion pending a separate reviewed remediation.
+
 ### Task 1.3 — reconcile deployment documentation
 
 - Rewrite the May design/plan against current code.
@@ -117,6 +132,11 @@ Acceptance:
 - one current deployment plan exists on a branch based on `main`;
 - no step instructs the operator to deploy an older branch;
 - L3 actions are clearly separated from preparatory L1 work.
+
+Progress on 2026-08-23:
+
+- current secret names, migration 016, 20-table schema expectation, mobile URL prerequisite, health/deep-health, rollback, and deployed-commit evidence are documented;
+- provider, price, region, backup, data-processing, KYC, payment, and access-control decisions remain explicit approval gates.
 
 ## 5. Phase 2 — close public-preview blockers
 
@@ -391,11 +411,13 @@ Each item gets its own branch/worktree and PR unless two items are inseparable a
 
 ## 11. Immediate next task
 
-After Damian reviews this baseline, start a new TOGT task for **Phase 1: deployment convergence**. The task should:
+Finish the current **Phase 1: deployment convergence** candidate:
 
-1. fetch current `origin/main` and the three deployment branches;
-2. write a short commit/file keep-or-replace matrix;
-3. create a fresh deployment branch from `origin/main`;
-4. port only the reviewed Docker/Fly/runtime decisions;
-5. update the deployment plan for migration 016, `PII_BLIND_INDEX_KEY`, the mobile base URL, and current verification gates;
-6. build and test locally without performing vendor or production writes.
+1. complete diff, staged-diff, sensitive-data, and generated-artifact review;
+2. push the bounded branch and open a Draft PR dependent on PR #7;
+3. create a separate bounded dependency-remediation task for the critical/high production advisories;
+4. build and inspect the container on a Docker-compatible local/test runner after dependency remediation;
+5. run the later three-cold-run release-candidate gate rather than treating this single green run as final proof;
+6. stop before every vendor, secret, database, DNS, deployment, real-data, money, API-key, or old-PR closure action.
+
+After that Draft PR is reviewed, land PR #7 first, catch the deployment branch up with the resulting current `origin/main`, rerun every affected gate, and seek Damian’s exact-PR merge approval. Phase 2 mobile/KYC/access-control work and the L3 preview approval package remain separate tasks.

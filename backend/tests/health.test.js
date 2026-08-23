@@ -36,6 +36,19 @@ describe('/health/deep (readiness)', () => {
 });
 
 describe('webhookDispatcher.isFresh', () => {
+  test('start performs an immediate first tick for deployment readiness', async () => {
+    const original = { ...dispatcher.stats };
+    dispatcher.stats.last_tick_at = null;
+    await dispatcher.start({ intervalMs: 60_000 });
+    try {
+      expect(dispatcher.stats.last_tick_at).not.toBeNull();
+      expect(dispatcher.isFresh(60_000, 3)).toBe(true);
+    } finally {
+      dispatcher.stop();
+      Object.assign(dispatcher.stats, original);
+    }
+  });
+
   test('returns false before start() runs', () => {
     // Snapshot the started_at to restore after test
     const original = { ...dispatcher.stats };

@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "description": "Togt Labourer App - API Server",
   "main": "src/app.js",
+  "engines": {
+    "node": "24.x",
+    "npm": "11.x"
+  },
   "scripts": {
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",

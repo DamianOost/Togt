@@ -3,10 +3,14 @@ node_modules/
 .pnp
 .pnp.js
 
-# Environment
+# Environment and local secrets
 .env
+.env.*
 .env.local
 .env.*.local
+!.env.example
+!.env.*.example
+!backend/.env.test
 
 # Expo
 .expo/
@@ -22,6 +26,24 @@ android/
 *.log
 npm-debug.log*
 yarn-error.log
+
+# Test and coverage output
+coverage/
+.nyc_output/
+*.lcov
+
+# Local databases, exports, and backups
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.backup
+
+# Private key and certificate bundles
+*.pem
+*.key
+*.p12
+*.pfx
 
 # Editor
 .vscode/

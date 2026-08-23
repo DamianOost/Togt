@@ -11,11 +11,12 @@ Damian is the sole product owner and release authority. The separate `george-bra
 Before changing this repository, read in this order:
 
 1. This file.
-2. `CLAUDE.md` for the concise project brief.
-3. The newest applicable file in `docs/superpowers/specs/`.
-4. The newest applicable file in `docs/superpowers/plans/`.
-5. The newest dated handoff in `docs/superpowers/plans/`.
-6. The actual routes, migrations, tests, mobile configuration, and Git state touched by the task.
+2. `docs/runbooks/git-worktree-promotion.md` before any editing, branch, PR, merge, cleanup, or deployment work.
+3. `CLAUDE.md` for the concise project brief.
+4. The newest applicable file in `docs/superpowers/specs/`.
+5. The newest applicable file in `docs/superpowers/plans/`.
+6. The newest dated handoff in `docs/superpowers/plans/`.
+7. The actual routes, migrations, tests, mobile configuration, and Git state touched by the task.
 
 Historical reports describe their date, not current truth. Code, migrations, current tests, `origin/main`, and the newest handoff win when older documents disagree.
 
@@ -37,14 +38,26 @@ If production or real-user work is not explicitly approved, prepare the branch, 
 
 ## Git workflow
 
+- The full mandatory procedure is `docs/runbooks/git-worktree-promotion.md`. This section is only the short contract and may not be used to bypass the runbook.
+- Build in parallel; merge into the default branch in sequence through a single landing queue.
 - `origin/main` is canonical.
 - Never commit task work directly to `main`.
 - One editing task uses one external worktree, one unique `codex/...` branch, and one owner.
-- Start task branches from freshly fetched `origin/main`.
+- Fetch and prune before task creation; start the branch and worktree directly from current `origin/main`, not from a possibly stale local `main`.
+- Record the repository, worktree path, branch, owner, base commit, and bounded scope in the task or handoff.
 - Preserve unrelated or uncertain work. Do not reset, clean, restore, drop a stash, or delete a worktree to make a checkout look clean.
-- Stage explicit paths only; do not use broad staging.
+- Do not use anonymous stashes as task storage. Prefer a scoped WIP commit and pushed task branch with a recorded handoff.
+- Before staging, inspect `git status --short`, `git diff --check`, `git diff --stat`, and the complete diff.
+- Stage explicit paths only; never use `git add .` or `git add -A` for agent work.
+- Keep commits coherent and reviewable. Record exact tests, pass counts, limitations, security/privacy review, migration impact, deployment requirements, and rollback notes in the PR.
+- Respect `.gitignore` and `.gitattributes`, but never treat ignore rules as a substitute for staged-diff and sensitive-data inspection.
+- Use `.github/pull_request_template.md`; keep the PR in Draft while work or evidence is incomplete.
 - Never force-push or rewrite published history.
-- Merge through GitHub only after review and green gates. Deployment is a separate action.
+- At the front of the landing queue, merge current `origin/main` into the task branch without rewriting history, rerun affected gates, inspect the final diff, and push the catch-up commit.
+- Merge through GitHub only after Damian approves the exact PR and every required gate is green. A textually conflict-free PR is not proof of behavioral compatibility.
+- After merge, verify the remote result before removing the worktree and branches through Git-aware commands. Never delete a registered worktree directory directly.
+- Deployment is a separate approval and evidence gate. A merged PR is not proof that any runtime is current or healthy.
+- Do not call work complete while unique changes exist only in a working tree, only locally, on an unreviewed PR, or on an undocumented runtime feature branch.
 
 ## Repository map
 

@@ -9,6 +9,7 @@
 | Visual direction | Grounded Momentum |
 | Owner | TOGT |
 | Executable plan | `docs/superpowers/plans/2026-08-23-togt-grounded-momentum-full-build-plan.md` |
+| Implementation handoff | `docs/superpowers/plans/2026-08-23-togt-grounded-momentum-full-build-handoff.md` |
 
 ![TOGT Grounded Momentum concept](../../design/togt-grounded-momentum-concept.png)
 
@@ -36,6 +37,7 @@ Implementation rules:
 - Preserve the artifact as the regression and rollback baseline.
 - Converge its source changes onto a fresh task branch according to the repository worktree and promotion runbook before broader implementation.
 - Every successor APK keeps `za.togt.app`, uses a monotonically higher `versionCode` and records its signer, ABI set, checksum and source commit.
+- The first P0 successor targets `versionCode 2`. If another approved artifact consumes that code first, use the next higher unused code.
 - An in-place upgrade requires the same signing certificate. A deliberate signer change requires a documented clean-uninstall test and cannot be presented as an upgrade.
 - The development API may remain private-LAN HTTP only for clearly labelled internal builds. Preview and production remain HTTPS/WSS-only.
 

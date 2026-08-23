@@ -6,6 +6,7 @@
 | Status | Approved execution plan; implementation and release evidence pending |
 | Owner/release authority | Damian Oosthuyzen |
 | Governing specification | `docs/superpowers/specs/2026-08-23-togt-grounded-momentum-master-spec.md` |
+| Implementation handoff | `docs/superpowers/plans/2026-08-23-togt-grounded-momentum-full-build-handoff.md` |
 | Execution profile | Sol-class agentic implementation with parallel lanes and one integration owner |
 
 ## 1. Outcome
@@ -120,7 +121,7 @@ Create one reviewable implementation base without losing the installed-test arti
 - Preserve the canonical checkout's untracked source assets until their hashes and committed copies are proven.
 - Review the exact readiness diff at `66cd458` against current `origin/main`.
 - For the P0 implementation task, create a fresh branch from then-current `origin/main` and port the readiness commit deliberately if PR 9 has not landed. Mark PR 9 as a dependency or superseded only through an explicit review decision.
-- Freeze `za.togt.app`, the current signer fingerprint and successor `versionCode` plan.
+- Freeze `za.togt.app`, the current signer fingerprint and the first successor target at `versionCode 2`; use the next higher unused code if an intervening approved artifact consumes it.
 - Freeze the P0 capability defaults: private-LAN development only; Peach/push/KYC/SOS/public-share/background-tracking off unless their stated gate passes.
 - Record synthetic fixtures, backend commit/runtime, target physical device and artifact destination.
 
@@ -151,7 +152,7 @@ P0T-00 → P0T-01
 
 - Execute Wave 0 convergence for the code task.
 - Record base/readiness commits, dependency lockfiles, local toolchain versions and backend runtime/fixture boundary.
-- Preserve v1 and assign the successor `versionCode`.
+- Preserve v1 and assign the first successor target `versionCode 2`, or the next higher unused code if required.
 - Verify access to the same internal signing key before implementation depends on upgrade installation.
 
 **Acceptance**

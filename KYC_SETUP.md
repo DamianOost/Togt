@@ -1,182 +1,67 @@
-# KYC Setup Guide — Smile ID Integration
+# TOGT KYC setup and launch gates
 
-## What Was Built
+**Status:** POC implementation with VerifyNow integration. Not approved for real-user production KYC.
 
-The Togt app now has a full end-to-end KYC (Know Your Customer) verification flow:
+## Current flow
 
-- **Backend:** REST API routes at `/api/kyc/*` that call Smile ID's server-side API
-- **Database:** `kyc_verifications` table + `kyc_status` column on `users`
-- **Mobile:** A beautiful 4-step `KYCScreen.js` with SA ID validation, selfie capture, and success state
-- **Auth:** `GET /api/auth/me` endpoint to refresh user profile (incl. `kyc_status`) on app start
-- **Integration:** RegisterScreen → KYC prompt on new account; Unverified badges in customer home and labourer dashboard
+1. Mobile validates that the submitted South African ID has a valid 13-digit structure.
+2. The backend repeats structural validation, including checksum and minimum-age checks.
+3. If `VERIFYNOW_API_KEY` is configured, the backend calls VerifyNow's `said_verification` endpoint.
+4. The database stores only the last four digits, a keyed blind index, provider/status metadata, and approved verification fields. The raw ID is discarded.
+5. The user completes the selfie screen. The current backend endpoint records a POC/manual-review result; it does not perform biometric matching.
 
----
+Relevant code:
 
-## Running in Sandbox / Demo Mode (No Credentials Needed)
+- `backend/src/routes/kyc.js`
+- `backend/src/services/verifynow.js`
+- `backend/src/lib/privacy.js`
+- `backend/src/db/migrations/016_customer_data_safety.sql`
+- `mobile/src/screens/shared/KYCScreen.js`
+- `docs/privacy/popia-data-map.md`
 
-By default, the system runs in demo mode when `SMILE_PARTNER_ID=DEMO` (the default).
+## Environment variables
 
-### To test the full flow:
+Use environment variables or the approved secret manager. Never commit values.
 
-1. Start the backend: `cd backend && npm start`
-2. Start the mobile app: `cd mobile && npx expo start`
-3. Register a new account
-4. You'll be redirected to the KYC screen automatically
-5. Enter any valid 13-digit SA ID number (e.g. `9001015009087` — try real format)
-6. Tap **"Verify ID"** — in demo mode this returns a mock successful response
-7. On the selfie screen, tap **"🧪 Simulate Selfie (Demo Mode)"** to skip the camera
-8. You'll see the ✅ Identity Verified success screen
-
-The `⚠️ Unverified` badge in the home/dashboard will change to `✅ Verified` after refresh.
-
-### Valid SA ID test numbers:
-
-Use the Luhn-compliant format. The app validates format locally before calling the API.
-- `9001015009087` — 1990-01-01 born male
-- `8001015009084` — 1980-01-01 born male
-
----
-
-## Going Live — What Damian Needs to Do
-
-### Step 1: Sign up for Smile ID
-
-1. Go to **https://portal.usesmileid.com**
-2. Sign up for a free account
-3. Free tier: **300 verifications/month** — enough for MVP launch
-4. Complete the partner onboarding form
-
-### Step 2: Get Your Credentials
-
-From the Smile ID portal, grab:
-- **Partner ID** (looks like a number, e.g. `001`)
-- **API Key** (long alphanumeric string)
-
-### Step 3: Update Backend Environment Variables
-
-Edit `/Users/georgeoosthuyzen/.openclaw/workspace/Togt/backend/.env`:
-
-```
-SMILE_PARTNER_ID=your_actual_partner_id
-SMILE_API_KEY=your_actual_api_key
+```text
+VERIFYNOW_API_KEY=
+VERIFYNOW_MODE=sandbox
+VERIFYNOW_BASE_URL=
+PII_BLIND_INDEX_KEY=
 ```
 
-> **Note:** Keep `NODE_ENV` unset or `development` to use the Smile ID sandbox environment for testing.  
-> Set `NODE_ENV=production` to use the live Smile ID API.
+`PII_BLIND_INDEX_KEY` must be 64 lowercase hexadecimal characters. Production startup fails if it is missing or malformed.
 
-### Step 4: Test in Smile ID Sandbox
+## Local or sandbox verification
 
-Smile ID provides a sandbox environment at `https://testapi.smileidentity.com/v1`.  
-When `NODE_ENV` is not `production`, the backend automatically uses the sandbox URL.
+1. Configure a dedicated development/test database.
+2. Set `VERIFYNOW_MODE=sandbox` and provide an approved sandbox key if vendor-path testing is required.
+3. Run all migrations through `016_customer_data_safety.sql`.
+4. Start the backend and mobile app.
+5. Exercise `POST /api/kyc/verify-id`, `POST /api/kyc/selfie-enroll`, and `GET /api/kyc/status` with synthetic test identities only.
+6. Confirm that no raw ID number appears in API responses, logs, audit metadata, webhook payloads, or persisted KYC rows.
 
-Use Smile ID's test credentials from their portal to run real (but sandboxed) verifications.
+## Current limitations
 
-### Step 5: Go Live
+- If VerifyNow is unavailable or throws, the current route falls back to structural-only verification and can mark the user verified.
+- The selfie endpoint returns a POC/manual-review result and performs no face match or liveness check.
+- The mobile screen exposes a demo-selfie path.
+- Retention periods, operator review, Information Officer details, privacy-notice approval, and real-user support procedures are not complete.
+- Vendor production mode, credentials, cost, terms, and data-processing posture require current verification and Damian approval.
 
-When you're ready for production:
+## Production launch gates
 
-```
-NODE_ENV=production
-SMILE_PARTNER_ID=your_partner_id
-SMILE_API_KEY=your_api_key
-```
+Before processing a real person's ID:
 
-The backend will switch to the live Smile ID API: `https://3eydmgh10d.execute-api.us-west-2.amazonaws.com/prod`
+- change vendor failure from fail-open verification to `pending_review` or a fail-closed retry state;
+- implement and approve the selfie/manual-review policy, or remove the selfie claim from the launch flow;
+- remove or compile out demo controls from production builds;
+- prove migration 016 on the target production database;
+- confirm no raw IDs exist in production data or backups;
+- configure a fresh production `PII_BLIND_INDEX_KEY` through the approved secret channel;
+- verify VerifyNow production behavior with synthetic/vendor-approved fixtures;
+- complete privacy notice, operator, retention, access, incident, and data-subject procedures;
+- run privacy, KYC, unit, and smoke tests and record evidence;
+- obtain Damian's explicit approval for the production KYC mode change and any real-user test.
 
----
-
-## API Reference
-
-### `POST /api/kyc/verify-id`
-Verifies a South African ID number against Home Affairs via Smile ID.
-
-**Request:**
-```json
-{
-  "idNumber": "9001015009087",
-  "firstName": "John",
-  "lastName": "Doe",
-  "country": "ZA",
-  "idType": "NATIONAL_ID"
-}
-```
-
-**Response:**
-```json
-{
-  "verified": true,
-  "name": "JOHN DOE",
-  "dob": "1990-01-01",
-  "photo": null,
-  "smile_job_id": "job_abc123"
-}
-```
-
-### `POST /api/kyc/selfie-enroll`
-Enrolls a selfie for biometric matching.
-
-**Request:**
-```json
-{
-  "selfieBase64": "...",
-  "idNumber": "9001015009087"
-}
-```
-
-**Response:**
-```json
-{
-  "enrolled": true,
-  "confidence": 0.97,
-  "smile_job_id": "job_xyz456"
-}
-```
-
-### `GET /api/kyc/status`
-Returns the current user's KYC verification status.
-
-**Response:**
-```json
-{
-  "kyc_status": "verified",
-  "verification": {
-    "id_number": "900101XXXXX",
-    "status": "verified",
-    "verified_name": "JOHN DOE",
-    "verified_at": "2026-03-02T11:00:00Z"
-  }
-}
-```
-
-### `GET /api/auth/me`
-Returns full user profile including `kyc_status`. Call this on app start to refresh user state.
-
----
-
-## Database Changes
-
-Migration `003_kyc.sql` was already applied. It added:
-- `kyc_verifications` table — full audit trail of all KYC attempts
-- `kyc_status` column on `users` — `unverified | pending | verified | failed`
-
----
-
-## Mobile UX
-
-- **RegisterScreen** — navigates to KYC automatically after registration
-- **KYCScreen** (`mobile/src/screens/shared/KYCScreen.js`) — 4-step flow with SA ID validation, selfie, success
-- **DashboardScreen (Labourer)** — shows ⚠️/✅ badge with tap-to-verify
-- **HomeMapScreen (Customer)** — shows ⚠️ banner with tap-to-verify
-- Both customer and labourer stacks have the `KYC` route registered
-
----
-
-## Pricing Reference (Smile ID)
-
-| Tier | Volume | Cost |
-|------|--------|------|
-| Free | 300/month | $0 |
-| Starter | up to 1,000/month | ~$0.20/verification |
-| Growth | up to 10,000/month | ~$0.15/verification |
-
-See https://usesmileid.com/pricing for current rates.
+Structural validation is a useful typo/fraud screen. It is not sufficient evidence of identity for a live marketplace.

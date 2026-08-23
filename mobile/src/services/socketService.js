@@ -1,14 +1,12 @@
 import { io } from 'socket.io-client';
-import Constants from 'expo-constants';
-
-const BASE_URL = Constants.expoConfig?.extra?.apiUrl || 'http://localhost:3000';
+import { socketUrl } from '../config/apiConfig';
 
 let socket = null;
 
 export const socketService = {
   connect(token) {
     if (socket) return;
-    socket = io(`${BASE_URL}/location`, {
+    socket = io(socketUrl('/location'), {
       auth: { token },
       transports: ['websocket'],
     });
@@ -35,7 +33,15 @@ export const socketService = {
     socket?.on('location:update', callback);
   },
 
-  offLocationUpdate() {
-    socket?.off('location:update');
+  offLocationUpdate(callback) {
+    socket?.off('location:update', callback);
+  },
+
+  on(event, callback) {
+    socket?.on(event, callback);
+  },
+
+  off(event, callback) {
+    socket?.off(event, callback);
   },
 };

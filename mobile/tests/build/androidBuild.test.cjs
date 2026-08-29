@@ -13,9 +13,12 @@ const {
 
 test('P0 release identity keeps the recorded package, version code, and ABI', () => {
   const app = require('../../app.json').expo;
+  const packageJson = require('../../package.json');
   assert.equal(app.android.package, 'za.togt.app');
   assert.equal(app.version, '1.0.1');
   assert.equal(app.android.versionCode, 2);
+  assert.equal(packageJson.scripts.android, 'expo run:android');
+  assert.equal(packageJson.scripts.ios, 'expo run:ios');
   assert.deepEqual(parseAbiList(), ['arm64-v8a']);
   assert.equal(
     BASELINE_SIGNER_SHA256,

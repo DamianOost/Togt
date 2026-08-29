@@ -520,6 +520,10 @@ function main() {
   if (command === 'build') {
     const sourceCommit = assertCleanSource();
     const context = runPrebuild(preflight(environment));
+    const postPrebuildCommit = assertCleanSource();
+    if (postPrebuildCommit !== sourceCommit) {
+      throw new Error('Expo prebuild changed the source commit unexpectedly.');
+    }
     buildApk(context, sourceCommit);
     return;
   }

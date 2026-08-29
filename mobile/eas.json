@@ -3,6 +3,14 @@
     "preview": {
       "distribution": "internal",
       "environment": "preview",
+      "env": {
+        "ANDROID_BUILD_PROVIDER": "eas",
+        "EXPO_PUBLIC_APP_ENV": "preview",
+        "EXPO_PUBLIC_ENABLE_PEACH": "false",
+        "EXPO_PUBLIC_MAPS_PROVIDER": "disabled",
+        "EXPO_PUBLIC_PUSH_PROVIDER": "disabled",
+        "TOGT_STANDALONE_BUILD": "true"
+      },
       "android": {
         "buildType": "apk"
       }

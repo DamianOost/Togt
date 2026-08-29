@@ -2,15 +2,12 @@ import Constants from 'expo-constants';
 
 const { joinApiUrl, resolveApiBaseUrl } = require('./apiBaseUrl.cjs');
 
-const isDevelopment = typeof __DEV__ !== 'undefined' && __DEV__;
-const isExpoGo = Constants.appOwnership === 'expo' ||
-  Constants.executionEnvironment === 'storeClient';
+const extra = Constants.expoConfig?.extra || {};
+const appEnvironment = process.env.EXPO_PUBLIC_APP_ENV || extra.appEnvironment || 'development';
 
 export const API_BASE_URL = resolveApiBaseUrl({
-  configuredUrl: process.env.EXPO_PUBLIC_API_BASE_URL ||
-    Constants.expoConfig?.extra?.apiUrl,
-  isDevelopment,
-  isExpoGo,
+  configuredUrl: process.env.EXPO_PUBLIC_API_BASE_URL || extra.apiUrl,
+  appEnvironment,
 });
 
 export function apiUrl(path) {

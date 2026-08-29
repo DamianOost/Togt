@@ -1,6 +1,16 @@
 'use strict';
 
-const LOCAL_DEVELOPMENT_URL = 'http://localhost:3000';
+const APP_ENVIRONMENTS = new Set(['development', 'preview', 'production']);
+
+function normalizeAppEnvironment(value) {
+  const appEnvironment = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (!APP_ENVIRONMENTS.has(appEnvironment)) {
+    throw new Error(
+      'EXPO_PUBLIC_APP_ENV must be one of development, preview, or production.'
+    );
+  }
+  return appEnvironment;
+}
 
 function normalizeApiBaseUrl(value) {
   if (typeof value !== 'string' || !value.trim()) return null;
@@ -25,17 +35,75 @@ function normalizeApiBaseUrl(value) {
   return parsed.origin;
 }
 
-function resolveApiBaseUrl({ configuredUrl, isDevelopment = false, isExpoGo = false } = {}) {
-  const allowDevelopmentHttp = isDevelopment || isExpoGo;
+function isPrivateOrLocalHostname(hostname) {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (
+    normalized === 'localhost' ||
+    normalized.endsWith('.localhost') ||
+    normalized.endsWith('.local') ||
+    normalized === '::1' ||
+    normalized.startsWith('fc') ||
+    normalized.startsWith('fd') ||
+    normalized.startsWith('fe80:')
+  ) {
+    return true;
+  }
+
+  const octets = normalized.split('.').map((part) => Number(part));
+  if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return false;
+  }
+
+  return (
+    octets[0] === 10 ||
+    octets[0] === 127 ||
+    (octets[0] === 169 && octets[1] === 254) ||
+    (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+    (octets[0] === 192 && octets[1] === 168)
+  );
+}
+
+function classifyApiBaseUrl(baseUrl, appEnvironment) {
+  const environment = normalizeAppEnvironment(appEnvironment);
+  if (environment !== 'development') return environment;
+
+  const parsed = new URL(baseUrl);
+  if (parsed.protocol === 'https:') return 'development-secure';
+  if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '[::1]') {
+    return 'development-local';
+  }
+  return 'development-lan';
+}
+
+function resolveApiBaseUrl({ configuredUrl, appEnvironment } = {}) {
+  const environment = normalizeAppEnvironment(appEnvironment);
   const normalized = normalizeApiBaseUrl(configuredUrl);
 
   if (!normalized) {
-    if (allowDevelopmentHttp) return LOCAL_DEVELOPMENT_URL;
-    throw new Error('EXPO_PUBLIC_API_BASE_URL is required for standalone builds.');
+    throw new Error(
+      'EXPO_PUBLIC_API_BASE_URL is required. Development URLs must be supplied explicitly.'
+    );
   }
 
-  if (normalized.startsWith('http://') && !allowDevelopmentHttp) {
-    throw new Error('Standalone builds require an HTTPS EXPO_PUBLIC_API_BASE_URL.');
+  const parsed = new URL(normalized);
+  const privateOrLocal = isPrivateOrLocalHostname(parsed.hostname);
+
+  if (environment === 'development') {
+    if (parsed.protocol === 'http:' && !privateOrLocal) {
+      throw new Error(
+        'Development HTTP is limited to localhost or a private-LAN EXPO_PUBLIC_API_BASE_URL.'
+      );
+    }
+    return normalized;
+  }
+
+  if (parsed.protocol !== 'https:') {
+    throw new Error(`${environment} requires an HTTPS EXPO_PUBLIC_API_BASE_URL.`);
+  }
+  if (privateOrLocal) {
+    throw new Error(
+      `${environment} must not use a localhost or private-LAN EXPO_PUBLIC_API_BASE_URL.`
+    );
   }
 
   return normalized;
@@ -49,8 +117,11 @@ function joinApiUrl(baseUrl, path) {
 }
 
 module.exports = {
-  LOCAL_DEVELOPMENT_URL,
+  APP_ENVIRONMENTS,
+  classifyApiBaseUrl,
+  isPrivateOrLocalHostname,
   joinApiUrl,
+  normalizeAppEnvironment,
   normalizeApiBaseUrl,
   resolveApiBaseUrl,
 };

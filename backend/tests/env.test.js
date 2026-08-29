@@ -1,4 +1,5 @@
 const { execFileSync } = require('child_process');
+const os = require('os');
 const path = require('path');
 
 describe('env.js production fail-fast', () => {
@@ -11,7 +12,7 @@ describe('env.js production fail-fast', () => {
         ['-e', `require(${JSON.stringify(script)})`],
         {
           env: { NODE_ENV: 'production', PATH: process.env.PATH },
-          cwd: '/tmp',
+          cwd: os.tmpdir(),
           stdio: 'pipe',
         }
       );
@@ -28,7 +29,7 @@ describe('env.js production fail-fast', () => {
       ['-e', `const e = require(${JSON.stringify(script)}); console.log(e.jwtSecret.length > 0 ? 'ok' : 'empty')`],
       {
         env: { NODE_ENV: 'development', PATH: process.env.PATH },
-        cwd: '/tmp',
+        cwd: os.tmpdir(),
         stdio: 'pipe',
       }
     );

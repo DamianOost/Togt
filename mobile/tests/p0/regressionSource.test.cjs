@@ -52,6 +52,40 @@ test('unsupported production claims and demo KYC success paths are absent', () =
   );
 });
 
+test('native map views are gated by the packaged maps provider', () => {
+  const providerConfig = read('src/config/providerConfig.js');
+  const packagedMap = read('src/components/PackagedMapView.js');
+  const unavailableState = read('src/components/MapUnavailableState.js');
+  const mapScreens = [
+    'src/screens/customer/HomeMapScreen.js',
+    'src/screens/customer/ActiveBookingScreen.js',
+    'src/screens/labourer/ActiveJobScreen.js',
+  ];
+
+  assert.match(providerConfig, /Constants\.expoConfig\?\.extra/);
+  assert.match(providerConfig, /export const MAPS_AVAILABLE = MAPS_POLICY\.available/);
+  assert.match(packagedMap, /if \(!MAPS_AVAILABLE\)/);
+  assert.match(packagedMap, /return <MapUnavailableState/);
+  assert.ok(
+    packagedMap.indexOf('if (!MAPS_AVAILABLE)') < packagedMap.indexOf('<NativeMapView'),
+    'the packaged provider guard must run before native map mounting'
+  );
+  assert.match(unavailableState, /Map unavailable in this internal build/);
+  for (const file of mapScreens) {
+    const source = read(file);
+    assert.match(source, /import PackagedMapView, \{ Marker \} from ['"]\.\.\/\.\.\/components\/PackagedMapView['"]/);
+    assert.match(source, /<PackagedMapView/);
+    assert.match(source, /unavailableDetail=/);
+    assert.doesNotMatch(source, /from ['"]react-native-maps['"]/);
+  }
+
+  const directNativeImports = [
+    'src/components/PackagedMapView.js',
+    ...mapScreens,
+  ].filter((file) => /from ['"]react-native-maps['"]/.test(read(file)));
+  assert.deepEqual(directNativeImports, ['src/components/PackagedMapView.js']);
+});
+
 test('legacy discovery and identity copy does not overstate internal capabilities', () => {
   const requestMatch = read('src/screens/customer/RequestMatchScreen.js');
   const dashboard = read('src/screens/labourer/DashboardScreen.js');

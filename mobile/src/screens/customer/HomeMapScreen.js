@@ -4,7 +4,7 @@ import {
   FlatList, ActivityIndicator, Alert, StatusBar,
   Animated, Dimensions, ScrollView, PanResponder,
 } from 'react-native';
-import MapView, { Marker } from 'react-native-maps';
+import PackagedMapView, { Marker } from '../../components/PackagedMapView';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSelector, useDispatch } from 'react-redux';
 import { logoutThunk } from '../../store/authSlice';
@@ -158,9 +158,10 @@ export default function HomeMapScreen({ navigation }) {
 
       {/* Map */}
       {location ? (
-        <MapView
+        <PackagedMapView
           ref={mapRef}
           style={StyleSheet.absoluteFill}
+          unavailableDetail="Worker profiles and approximate service areas remain available below."
           customMapStyle={darkMapStyle}
           initialRegion={{
             latitude: location.lat,
@@ -190,7 +191,7 @@ export default function HomeMapScreen({ navigation }) {
               </Marker>
             ) : null;
           })}
-        </MapView>
+        </PackagedMapView>
       ) : (
         <View style={styles.loadingMap}>
           <ActivityIndicator color={colors.accent} size="large" />

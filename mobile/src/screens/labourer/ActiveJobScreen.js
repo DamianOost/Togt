@@ -3,7 +3,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet, ActivityIndicator,
   Alert, ScrollView, StatusBar, Linking, Share, TextInput, Modal,
 } from 'react-native';
-import MapView, { Marker } from 'react-native-maps';
+import PackagedMapView, { Marker } from '../../components/PackagedMapView';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSelector } from 'react-redux';
 import { bookingService } from '../../services/bookingService';
@@ -299,8 +299,9 @@ export default function ActiveJobScreen({ route, navigation }) {
       <StatusBar barStyle="light-content" />
 
       {mapLat && mapLng ? (
-        <MapView
+        <PackagedMapView
           style={styles.map}
+          unavailableDetail="Use the job address and booking details below."
           customMapStyle={darkMapStyle}
           region={{
             latitude: parseFloat(mapLat),
@@ -324,7 +325,7 @@ export default function ActiveJobScreen({ route, navigation }) {
               </View>
             </Marker>
           )}
-        </MapView>
+        </PackagedMapView>
       ) : (
         <View style={styles.mapPlaceholder}>
           <Text style={styles.mapPlaceholderText}>🗺️ Map loading...</Text>

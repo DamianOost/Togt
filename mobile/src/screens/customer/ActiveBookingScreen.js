@@ -3,7 +3,7 @@ import {
   View, Text, StyleSheet, ActivityIndicator, TouchableOpacity,
   Alert, ScrollView, StatusBar, Linking, Share, Animated,
 } from 'react-native';
-import MapView, { Marker } from 'react-native-maps';
+import PackagedMapView, { Marker } from '../../components/PackagedMapView';
 import { useSelector, useDispatch } from 'react-redux';
 import { updateLabourerLocation } from '../../store/bookingSlice';
 import { socketService } from '../../services/socketService';
@@ -275,8 +275,9 @@ export default function ActiveBookingScreen({ route, navigation }) {
       <StatusBar barStyle="light-content" />
 
       {mapCenter?.lat && mapCenter?.lng ? (
-        <MapView
+        <PackagedMapView
           style={styles.map}
+          unavailableDetail="Use the booking address and in-app status updates below."
           customMapStyle={darkMapStyle}
           region={{
             latitude: parseFloat(mapCenter.lat),
@@ -311,7 +312,7 @@ export default function ActiveBookingScreen({ route, navigation }) {
               )}
             </Marker>
           )}
-        </MapView>
+        </PackagedMapView>
       ) : (
         <View style={styles.mapPlaceholder}>
           <Text style={styles.mapPlaceholderText}>🗺️ Map loading...</Text>

@@ -60,17 +60,21 @@ export default function EarningsScreen() {
     setGoalInput('');
   }
 
-  const completedBookings = bookings.filter((b) => b.status === 'completed');
-  const totalEarned = completedBookings.reduce(
+  // A completed job is not proof of settlement. Earnings in this screen are
+  // limited to the server's confirmed paid state.
+  const paidBookings = bookings.filter(
+    (b) => b.status === 'completed' && b.payment_status === 'paid'
+  );
+  const totalPaid = paidBookings.reduce(
     (sum, b) => sum + (parseFloat(b.total_amount) || 0), 0
   );
 
   // Weekly earnings (last 7 days)
   const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const weeklyBookings = completedBookings.filter(
+  const weeklyBookings = paidBookings.filter(
     (b) => new Date(b.completed_at || b.scheduled_at).getTime() >= oneWeekAgo
   );
-  const weeklyEarned = weeklyBookings.reduce(
+  const weeklyPaid = weeklyBookings.reduce(
     (sum, b) => sum + (parseFloat(b.total_amount) || 0), 0
   );
   const weeklyHours = weeklyBookings.reduce(
@@ -78,20 +82,20 @@ export default function EarningsScreen() {
   );
 
   // Average rating (from bookings that have a rating)
-  const rated = completedBookings.filter((b) => b.rating);
+  const rated = paidBookings.filter((b) => b.rating);
   const avgRating = rated.length
     ? (rated.reduce((s, b) => s + b.rating, 0) / rated.length).toFixed(1)
     : null;
 
-  const goalProgress = weeklyGoal ? weeklyEarned / weeklyGoal : 0;
-  const goalReached = weeklyGoal && weeklyEarned >= weeklyGoal;
+  const goalProgress = weeklyGoal ? weeklyPaid / weeklyGoal : 0;
+  const goalReached = weeklyGoal && weeklyPaid >= weeklyGoal;
 
   if (loading) return <ActivityIndicator style={{ flex: 1 }} color={colors.accent} />;
 
   return (
     <SafeAreaView style={styles.container}>
       <FlatList
-        data={completedBookings}
+        data={paidBookings}
         keyExtractor={(b) => b.id}
         contentContainerStyle={styles.list}
         ListHeaderComponent={
@@ -101,7 +105,7 @@ export default function EarningsScreen() {
               <View style={styles.goalHeader}>
                 <View>
                   <Text style={styles.goalLabel}>This week</Text>
-                  <Text style={styles.goalAmount}>{formatZAR(weeklyEarned)}</Text>
+                  <Text style={styles.goalAmount}>{formatZAR(weeklyPaid)}</Text>
                   {weeklyGoal && (
                     <Text style={styles.goalTarget}>of {formatZAR(weeklyGoal)} goal</Text>
                   )}
@@ -134,7 +138,7 @@ export default function EarningsScreen() {
             <View style={styles.statsRow}>
               <View style={styles.statCard}>
                 <Text style={styles.statValue}>{weeklyBookings.length}</Text>
-                <Text style={styles.statLabel}>Jobs this week</Text>
+                <Text style={styles.statLabel}>Paid jobs this week</Text>
               </View>
               <View style={styles.statCard}>
                 <Text style={styles.statValue}>{weeklyHours}h</Text>
@@ -148,17 +152,17 @@ export default function EarningsScreen() {
 
             {/* All-time banner */}
             <View style={styles.allTimeBanner}>
-              <Text style={styles.allTimeLabel}>Total Earned (all time)</Text>
-              <Text style={styles.allTimeAmount}>{formatZAR(totalEarned)}</Text>
-              <Text style={styles.allTimeSub}>{completedBookings.length} completed jobs</Text>
+              <Text style={styles.allTimeLabel}>Server-confirmed paid total</Text>
+              <Text style={styles.allTimeAmount}>{formatZAR(totalPaid)}</Text>
+              <Text style={styles.allTimeSub}>{paidBookings.length} paid jobs recorded</Text>
             </View>
 
-            <Text style={styles.sectionTitle}>Recent Jobs</Text>
+            <Text style={styles.sectionTitle}>Recent paid jobs</Text>
           </View>
         }
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Text style={styles.emptyText}>No completed jobs yet.</Text>
+            <Text style={styles.emptyText}>No server-confirmed paid jobs yet.</Text>
           </View>
         }
         renderItem={({ item }) => (

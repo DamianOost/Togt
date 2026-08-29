@@ -10,11 +10,11 @@ import { bookingService } from '../../services/bookingService';
 import { colors, typography, spacing, borderRadius, shadows } from '../../theme';
 
 const DEFAULT_SCOPE_ITEMS = [
-  'Assess the site and confirm requirements',
-  'Obtain all necessary materials/tools',
-  'Complete the agreed work to specification',
-  'Clean up work area on completion',
-  'Customer inspection and sign-off',
+  'The work location and access requirements are understood',
+  'Who supplies materials and tools has been agreed',
+  'Included work and exclusions have been agreed',
+  'Cleanup expectations have been agreed',
+  'Completion and sign-off expectations have been agreed',
 ];
 
 function formatApproxArea(item) {
@@ -62,12 +62,13 @@ export default function ScopeConfirmScreen({ route, navigation }) {
       const res = await bookingService.getBooking(bookingId);
       setBooking(res.booking);
       setLoadError('');
-      // Initialise all items checked
+      // A green check must reflect an explicit user choice. Never infer
+      // agreement from loading the screen or from fallback prompts.
       const scopeItems = res.booking.scope_items?.length
         ? res.booking.scope_items
         : DEFAULT_SCOPE_ITEMS;
       const init = {};
-      scopeItems.forEach((_, i) => { init[i] = true; });
+      scopeItems.forEach((_, i) => { init[i] = false; });
       setCheckedItems(init);
     } catch (err) {
       setLoadError(err.message || 'Could not load booking details.');
@@ -88,6 +89,7 @@ export default function ScopeConfirmScreen({ route, navigation }) {
   const scopeItems = booking?.scope_items?.length
     ? booking.scope_items
     : DEFAULT_SCOPE_ITEMS;
+  const hasServerScopeItems = !!booking?.scope_items?.length;
   const locationText = booking?.address || formatApproxArea(booking) || 'Location hidden until accepted';
   const bothConfirmed = booking?.scope_confirmed_by_customer
     && booking?.scope_confirmed_by_labourer;
@@ -226,7 +228,7 @@ export default function ScopeConfirmScreen({ route, navigation }) {
 
           {/* Job details card */}
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>📋 Agreed Work</Text>
+            <Text style={styles.cardTitle}>Booking details</Text>
             <View style={styles.jobMeta}>
               <Text style={styles.metaLabel}>With: </Text>
               <Text style={styles.metaValue}>
@@ -246,9 +248,13 @@ export default function ScopeConfirmScreen({ route, navigation }) {
 
           {/* Scope checklist */}
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>✅ Scope Checklist</Text>
+            <Text style={styles.cardTitle}>
+              {hasServerScopeItems ? 'Scope items to confirm' : 'Scope prompts to review together'}
+            </Text>
             <Text style={styles.cardSubtitle}>
-              Tick each item to confirm what was agreed
+              {hasServerScopeItems
+                ? 'Tick each item only after you have actually agreed it.'
+                : 'These are prompts, not an agreed scope. Discuss them, then tick only what you both agree.'}
             </Text>
             {scopeItems.map((item, i) => (
               <CheckItem

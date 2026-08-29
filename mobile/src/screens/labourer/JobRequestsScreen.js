@@ -35,7 +35,7 @@ function JobRequestCard({ item, onAccept, onDecline }) {
     <Animated.View style={[styles.card, { transform: [{ scale: scaleAnim }] }]}>
       <View style={styles.requestTypeRow}>
         <Text style={styles.requestType}>Scheduled request</Text>
-        <Text style={styles.requestTypeHint}>Open until someone chooses</Text>
+        <Text style={styles.requestTypeHint}>Open until you respond or the customer cancels</Text>
       </View>
 
       <View style={styles.cardHeader}>
@@ -47,7 +47,7 @@ function JobRequestCard({ item, onAccept, onDecline }) {
           <Text style={styles.cardSkill}>{item.skill_needed}</Text>
         </View>
         {item.total_amount && (
-          <Text style={styles.earningsAmount}>{formatZAR(item.total_amount)}</Text>
+          <Text style={styles.earningsAmount}>{formatZAR(item.total_amount)} est.</Text>
         )}
       </View>
 

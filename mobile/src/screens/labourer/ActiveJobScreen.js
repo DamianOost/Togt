@@ -20,15 +20,9 @@ import {
 
 const STATUS_STEPS = [
   { key: 'accepted', label: 'Accepted', icon: '✅' },
-  { key: 'en_route', label: 'En Route', icon: '🚶' },
-  { key: 'arrived', label: 'Arrived', icon: '📍' },
   { key: 'in_progress', label: 'Working', icon: '🔧' },
   { key: 'completed', label: 'Complete', icon: '🎉' },
 ];
-
-const BACKEND_STATUS_MAP = {
-  accepted: 0, in_progress: 3, completed: 4,
-};
 
 function formatApproxArea(item) {
   const lat = Number(item?.approx_lat);
@@ -39,7 +33,7 @@ function formatApproxArea(item) {
 }
 
 function StatusTimeline({ currentStatus }) {
-  const currentIdx = BACKEND_STATUS_MAP[currentStatus] ?? 0;
+  const currentIdx = STATUS_STEPS.findIndex((step) => step.key === currentStatus);
   return (
     <View style={timelineStyles.container}>
       {STATUS_STEPS.map((step, i) => {
@@ -224,7 +218,7 @@ export default function ActiveJobScreen({ route, navigation }) {
       const res = await api.post(`/api/bookings/${bookingId}/share-trip`);
       await Share.share({ message: res.data.shareText });
     } catch {
-      Alert.alert('Share', 'Could not generate share link.');
+      Alert.alert('Share', 'Could not prepare the booking summary.');
     }
   }
 
@@ -450,7 +444,7 @@ export default function ActiveJobScreen({ route, navigation }) {
             {booking.status === 'completed' && (
               <View style={styles.completedBanner}>
                 <Text style={styles.completedIcon}>🎉</Text>
-                <Text style={styles.completedText}>Job complete! Awaiting payment.</Text>
+                <Text style={styles.completedText}>Job complete. Payment is not recorded until the server confirms it.</Text>
               </View>
             )}
           </View>

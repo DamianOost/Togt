@@ -119,3 +119,17 @@ test('registration, offer acceptance, and rating returns avoid stale navigator a
   assert.match(rate, /createCustomerHomeIntent\(\)/);
   assert.doesNotMatch(rate, /navigation\.navigate\(['"]HomeMap['"]\)/);
 });
+
+test('incoming offers render inside the labourer root navigation context', () => {
+  const appNavigator = read('src/navigation/AppNavigator.js');
+  assert.match(appNavigator, /function LabourerRoot\(\)/);
+  assert.match(appNavigator, /<LabourerStack \/>[\s\S]*<IncomingMatchModal \/>/);
+  assert.match(
+    appNavigator,
+    /<RootStack\.Screen name="Labourer" component=\{LabourerRoot\}/
+  );
+  assert.doesNotMatch(
+    appNavigator,
+    /<\/RootStack\.Navigator>[\s\S]*shell === 'labourer'[\s\S]*<IncomingMatchModal/
+  );
+});

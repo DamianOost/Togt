@@ -228,7 +228,7 @@ export default function ActiveBookingScreen({ route, navigation }) {
       const res = await api.post(`/api/bookings/${bookingId}/share-trip`);
       await Share.share({ message: res.data.shareText });
     } catch {
-      Alert.alert('Share', 'Could not generate share link.');
+      Alert.alert('Share', 'Could not prepare the booking summary.');
     }
   }
 
@@ -322,9 +322,9 @@ export default function ActiveBookingScreen({ route, navigation }) {
       {isEnRoute && (
         <View style={styles.etaBanner}>
           {workerArrived ? (
-            <Text style={styles.etaText}>📍 Worker has arrived!</Text>
+            <Text style={styles.etaText}>Worker is within about 100 m of the job location</Text>
           ) : workerEta !== null ? (
-            <Text style={styles.etaText}>🚶 Worker is ~{workerEta} min away</Text>
+            <Text style={styles.etaText}>Rough walking estimate: ~{workerEta} min (straight-line)</Text>
           ) : (
             <Text style={styles.etaText}>Waiting for an in-app location update…</Text>
           )}
@@ -417,7 +417,7 @@ export default function ActiveBookingScreen({ route, navigation }) {
 
             {isCompleted && !isPaid && (
               <TouchableOpacity style={styles.payBtn} onPress={() => navigation.navigate('Payment', { booking })}>
-                <Text style={styles.payBtnText}>💳  Proceed to Payment</Text>
+                <Text style={styles.payBtnText}>View payment status</Text>
               </TouchableOpacity>
             )}
             {isCompleted && isPaid && (

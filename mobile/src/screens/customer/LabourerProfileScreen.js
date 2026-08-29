@@ -171,7 +171,7 @@ export default function LabourerProfileScreen({ route, navigation }) {
 
           <View style={[styles.availBadge, { backgroundColor: labourer.is_available ? colors.successLight : '#f3f4f6' }]}>
             <Text style={[styles.availText, { color: labourer.is_available ? colors.success : colors.textMuted }]}>
-              {labourer.is_available ? '● Available now' : '● Not available'}
+              {labourer.is_available ? 'Accepting requests' : 'Requests paused'}
             </Text>
           </View>
         </View>
@@ -217,7 +217,7 @@ export default function LabourerProfileScreen({ route, navigation }) {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>About</Text>
             <Text style={styles.bio}>
-              Experienced {primarySkill.toLowerCase()} professional available for jobs in your area.
+              Offers {primarySkill.toLowerCase()} services in this area. Skills are self-described unless a separate check is shown.
             </Text>
           </View>
         )}

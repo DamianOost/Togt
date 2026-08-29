@@ -36,6 +36,17 @@ function UnsupportedAccountScreen() {
   );
 }
 
+// The incoming-offer modal needs the root navigator context so it can open
+// the single registered Labourer → ActiveJob route after an accepted offer.
+function LabourerRoot() {
+  return (
+    <>
+      <LabourerStack />
+      <IncomingMatchModal />
+    </>
+  );
+}
+
 export default function AppNavigator() {
   const { user, accessToken, restoreStatus } = useSelector((state) => state.auth);
   const shell = selectAuthorizedShell({ restoreStatus, user, accessToken });
@@ -48,7 +59,7 @@ export default function AppNavigator() {
         ) : shell === 'customer' ? (
           <RootStack.Screen name="Customer" component={CustomerStack} navigationKey="customer" />
         ) : shell === 'labourer' ? (
-          <RootStack.Screen name="Labourer" component={LabourerStack} navigationKey="labourer" />
+          <RootStack.Screen name="Labourer" component={LabourerRoot} navigationKey="labourer" />
         ) : (
           <RootStack.Screen
             name="UnsupportedAccount"
@@ -57,7 +68,6 @@ export default function AppNavigator() {
           />
         )}
       </RootStack.Navigator>
-      {shell === 'labourer' ? <IncomingMatchModal /> : null}
     </NavigationContainer>
   );
 }

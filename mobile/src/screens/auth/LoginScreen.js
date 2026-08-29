@@ -35,7 +35,7 @@ export default function LoginScreen({ navigation }) {
                 <Text style={styles.logoText}>T</Text>
               </View>
               <Text style={styles.appName}>Togt</Text>
-              <Text style={styles.tagline}>Find skilled workers, instantly.</Text>
+              <Text style={styles.tagline}>Find skilled local help with clear scope and progress.</Text>
             </View>
 
             {/* Form card */}

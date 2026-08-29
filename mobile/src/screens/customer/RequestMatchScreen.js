@@ -86,7 +86,7 @@ export default function RequestMatchScreen({ navigation }) {
             Alert.alert(
               r.match.status === 'expired' ? 'No labourer available' : 'Cancelled',
               r.match.expire_reason === 'no_candidates'
-                ? 'No verified labourers available right now. Try a different skill or try again in a bit.'
+                ? 'No eligible workers are available right now. Try a different skill or try again in a bit.'
                 : r.match.expire_reason === 'all_declined'
                 ? 'All nearby labourers declined. Try again.'
                 : r.match.expire_reason === 'all_timeout'
@@ -130,8 +130,8 @@ export default function RequestMatchScreen({ navigation }) {
           <ActivityIndicator size="large" color={colors.accent} />
           <Text style={styles.matchingTitle}>Finding {skill.toLowerCase()} near you…</Text>
           <Text style={styles.matchingSub}>
-            We're pinging the highest-rated labourers in your area. This usually
-            takes under 2 minutes.
+            We contact eligible nearby workers one at a time. You can cancel while
+            the request is pending.
           </Text>
           <TouchableOpacity style={styles.cancelBtn} onPress={onCancel}>
             <Text style={styles.cancelBtnText}>Cancel</Text>
@@ -152,7 +152,7 @@ export default function RequestMatchScreen({ navigation }) {
           <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
             <Text style={styles.title}>Request now</Text>
             <Text style={styles.sub}>
-              Tap one button — we ping the closest, highest-rated, verified labourer.
+              We contact eligible nearby workers based on skill, availability and distance.
             </Text>
 
             <Text style={styles.label}>What do you need?</Text>

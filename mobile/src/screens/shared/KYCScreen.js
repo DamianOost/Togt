@@ -20,11 +20,18 @@ const INK = '#0F1F1B';
 const EMERALD = '#12844E';
 const AMBER = '#F0A500';
 
-function formatStatus(value) {
+function formatStatus(verification, identityAvailable) {
+  const value = verification?.status;
   if (!value || value === 'unverified') return 'Not verified';
   if (value === 'pending') return 'Pending review';
   if (value === 'failed') return 'Check unsuccessful';
-  if (value === 'verified') return 'Verified';
+  if (value === 'verified') {
+    const supportedProvider = verification?.provider === 'verifynow'
+      && !!verification?.verified_at;
+    return identityAvailable && supportedProvider
+      ? 'Verified by a supported provider'
+      : 'Legacy/test identity status recorded';
+  }
   return 'Status unavailable';
 }
 
@@ -51,7 +58,7 @@ export default function KYCScreen({ navigation }) {
   }, []);
 
   const identityAvailable = capabilityEnabled(capabilities, 'identity_verification');
-  const status = formatStatus(verification?.status);
+  const status = formatStatus(verification, identityAvailable);
 
   return (
     <SafeAreaView style={styles.container}>

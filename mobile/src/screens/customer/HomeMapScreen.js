@@ -215,15 +215,18 @@ export default function HomeMapScreen({ navigation }) {
           </TouchableOpacity>
         </View>
 
-        {/* KYC badge */}
-        {user?.kyc_status !== 'verified' ? (
-          <TouchableOpacity
-            onPress={() => navigation.navigate('KYC')}
-            style={{ paddingHorizontal: 16, paddingVertical: 6, backgroundColor: 'rgba(245,158,11,0.15)', marginHorizontal: 16, borderRadius: 8, marginBottom: 4 }}
-          >
-            <Text style={{ fontSize: 12, color: '#F59E0B', fontWeight: '600', textAlign: 'center' }}>⚠️ Identity unverified — tap here to verify and unlock bookings</Text>
-          </TouchableOpacity>
-        ) : null}
+        {/* Legacy test data can contain a historical verified status, but the
+            production identity capability is still unavailable in this build. */}
+        <TouchableOpacity
+          onPress={() => navigation.navigate('KYC')}
+          style={{ paddingHorizontal: 16, paddingVertical: 6, backgroundColor: 'rgba(245,158,11,0.15)', marginHorizontal: 16, borderRadius: 8, marginBottom: 4 }}
+        >
+          <Text style={{ fontSize: 12, color: '#F59E0B', fontWeight: '600', textAlign: 'center' }}>
+            {user?.kyc_status === 'verified'
+              ? 'Legacy/test identity status recorded — production checks are unavailable'
+              : 'Identity checks are unavailable in this internal build — view status'}
+          </Text>
+        </TouchableOpacity>
 
         {/* Skill filter chips */}
         <ScrollView

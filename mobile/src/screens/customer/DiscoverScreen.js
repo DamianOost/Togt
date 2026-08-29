@@ -206,8 +206,8 @@ export default function DiscoverScreen({ navigation }) {
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Discover Labourers</Text>
-        <Text style={styles.headerSub}>Find skilled workers near you</Text>
+        <Text style={styles.headerTitle}>Discover services</Text>
+        <Text style={styles.headerSub}>Browse worker-created service listings</Text>
       </View>
 
       {/* Search bar */}
@@ -252,7 +252,7 @@ export default function DiscoverScreen({ navigation }) {
       {/* Results count */}
       {!loading && (
         <Text style={styles.resultCount}>
-          {filteredServices.length} {filteredServices.length === 1 ? 'labourer' : 'labourers'} available
+          {filteredServices.length} active {filteredServices.length === 1 ? 'service listing' : 'service listings'}
         </Text>
       )}
 
@@ -267,8 +267,8 @@ export default function DiscoverScreen({ navigation }) {
           <Text style={styles.emptyTitle}>No labourers found</Text>
           <Text style={styles.emptySubtext}>
             {selectedSkill
-              ? `No ${selectedSkill} specialists available right now`
-              : 'No services available yet'}
+              ? `No active ${selectedSkill} service listings right now`
+              : 'No active service listings yet'}
           </Text>
         </View>
       ) : (

@@ -128,7 +128,7 @@ export default function PaymentScreen({ route }) {
 
         {!loading && !isPaid && (
           <View style={styles.optionsCard}>
-            <Text style={styles.optionsTitle}>Available payment options</Text>
+            <Text style={styles.optionsTitle}>Payment methods in this build</Text>
             <View style={styles.optionRow}>
               <Text style={styles.optionName}>Peach online checkout</Text>
               <Text style={styles.optionState}>{peachEnabled ? 'Available' : 'Not enabled'}</Text>

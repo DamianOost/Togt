@@ -25,6 +25,7 @@ const db = require('../../src/config/db');
 const dispatcher = require('../../src/services/webhookDispatcher');
 const { encryptSecret } = require('../../src/lib/webhookSecretCrypto');
 const apiKeyLib = require('../../src/lib/apiKey');
+const { createRegistrationPolicy, registrationConsentFor } = require('../../src/config/registrationPolicy');
 
 // ─── DB lifecycle ──────────────────────────────────────────────────────────
 
@@ -63,6 +64,7 @@ async function registerUser({ role = 'customer', email, password = 'Smoke!1234' 
       phone: `+27${Math.floor(Math.random() * 1_000_000_000)}`,
       password,
       role,
+      policyConsent: registrationConsentFor(createRegistrationPolicy()),
     });
   if (res.status !== 201) {
     throw new Error(`register failed: ${res.status} ${JSON.stringify(res.body)}`);

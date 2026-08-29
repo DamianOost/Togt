@@ -130,6 +130,10 @@ const sosStyles = StyleSheet.create({
 
 export default function ActiveBookingScreen({ route, navigation }) {
   const { bookingId } = route.params;
+  const stackRouteNames = navigation.getState?.()?.routeNames || [];
+  const usesGroundedProjectFlow = stackRouteNames.includes('CompletionPayment')
+    && stackRouteNames.includes('ScopeStart')
+    && !stackRouteNames.includes('Rate');
   const dispatch = useDispatch();
   const { accessToken } = useSelector((s) => s.auth);
   const labourerLocation = useSelector((s) => s.booking.labourerLocation);
@@ -403,9 +407,16 @@ export default function ActiveBookingScreen({ route, navigation }) {
               !booking.scope_confirmed_by_customer && (
               <TouchableOpacity
                 style={styles.scopeBtn}
-                onPress={() => navigation.navigate('ScopeConfirm', { bookingId: booking.id })}
+                onPress={() => navigation.navigate(
+                  usesGroundedProjectFlow ? 'ScopeStart' : 'ScopeConfirm',
+                  usesGroundedProjectFlow
+                    ? { projectId: booking.id }
+                    : { bookingId: booking.id }
+                )}
               >
-                <Text style={styles.scopeBtnText}>📋  Confirm Job Scope</Text>
+                <Text style={styles.scopeBtnText}>
+                  {usesGroundedProjectFlow ? 'Review agreed scope' : '📋  Confirm Job Scope'}
+                </Text>
               </TouchableOpacity>
             )}
 
@@ -417,16 +428,31 @@ export default function ActiveBookingScreen({ route, navigation }) {
             )}
 
             {isCompleted && !isPaid && (
-              <TouchableOpacity style={styles.payBtn} onPress={() => navigation.navigate('Payment', { booking })}>
+              <TouchableOpacity
+                style={styles.payBtn}
+                onPress={() => navigation.navigate(
+                  usesGroundedProjectFlow ? 'CompletionPayment' : 'Payment',
+                  usesGroundedProjectFlow ? { projectId: booking.id } : { booking }
+                )}
+              >
                 <Text style={styles.payBtnText}>View payment status</Text>
               </TouchableOpacity>
             )}
             {isCompleted && isPaid && (
-              <TouchableOpacity style={styles.rateBtn} onPress={() => navigation.navigate('Rate', { booking })}>
+              <TouchableOpacity
+                style={styles.rateBtn}
+                onPress={() => {
+                  if (usesGroundedProjectFlow) {
+                    navigation.navigate('CompletionPayment', { projectId: booking.id });
+                    return;
+                  }
+                  navigation.navigate('Rate', { booking });
+                }}
+              >
                 <Text style={styles.rateBtnText}>⭐  Rate {booking.labourer_name?.split(' ')[0]}</Text>
               </TouchableOpacity>
             )}
-            {isCancellable && (
+            {isCancellable && !usesGroundedProjectFlow && (
               <TouchableOpacity style={styles.cancelBtn} onPress={handleCancel}>
                 <Text style={styles.cancelBtnText}>Cancel Booking</Text>
               </TouchableOpacity>

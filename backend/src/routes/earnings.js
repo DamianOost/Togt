@@ -1,55 +1,47 @@
 const express = require('express');
-const db = require('../config/db');
 const { authMiddleware, requireRole } = require('../middleware/auth');
+const { getWorkerEarnings } = require('../services/groundedWorkerPayableLedger');
 
 const router = express.Router();
 
-// GET /api/earnings — returns today/week/month totals + daily breakdown
+// GET /api/earnings — authenticated Worker-only projection. Reconciliation
+// posts append-only evidence entries only for canonically completed Projects
+// whose latest payment exactly matches the locked ZAR commercial snapshot and
+// has canonical `paid` state. Refunds or later holds append reversals. Customer
+// paid Project value never becomes Worker gross/net, a balance or payout.
 router.get('/', authMiddleware, requireRole('labourer'), async (req, res, next) => {
   try {
-    const userId = req.user.id;
+    const { ledger, legacy } = await getWorkerEarnings(req.user.id);
+    const paid = legacy.paid;
+    const pending = legacy.pending;
+    const jobValue = legacy.jobValue;
 
-    // Totals for today, week, month
-    const totalsResult = await db.query(
-      `SELECT
-         SUM(CASE WHEN b.completed_at >= CURRENT_DATE THEN b.total_amount ELSE 0 END)               AS today,
-         SUM(CASE WHEN b.completed_at >= DATE_TRUNC('week', NOW()) THEN b.total_amount ELSE 0 END)  AS this_week,
-         SUM(CASE WHEN b.completed_at >= DATE_TRUNC('month', NOW()) THEN b.total_amount ELSE 0 END) AS this_month,
-         SUM(b.total_amount)                                                                         AS all_time
-       FROM bookings b
-       WHERE b.labourer_id = $1
-         AND b.status = 'completed'
-         AND b.total_amount IS NOT NULL`,
-      [userId]
-    );
-
-    // Daily breakdown for the last 30 days (for charting)
-    const dailyResult = await db.query(
-      `SELECT
-         TO_CHAR(DATE(b.completed_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS date,
-         COUNT(*)             AS booking_count,
-         SUM(b.total_amount)  AS amount
-       FROM bookings b
-       WHERE b.labourer_id = $1
-         AND b.status = 'completed'
-         AND b.total_amount IS NOT NULL
-         AND b.completed_at >= NOW() - INTERVAL '30 days'
-       GROUP BY TO_CHAR(DATE(b.completed_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD')
-       ORDER BY date ASC`,
-      [userId]
-    );
-
-    const totals = totalsResult.rows[0];
+    res.set('Cache-Control', 'private, no-store');
     res.json({
-      today: parseFloat(totals.today || 0),
-      this_week: parseFloat(totals.this_week || 0),
-      this_month: parseFloat(totals.this_month || 0),
-      all_time: parseFloat(totals.all_time || 0),
-      daily: dailyResult.rows.map((row) => ({
-        date: row.date,
-        booking_count: parseInt(row.booking_count),
-        amount: parseFloat(row.amount),
-      })),
+      // Backward-compatible aliases remain payment-evidence values. They are
+      // not Worker net earnings and are now backed by the canonical ledger.
+      today: paid.today,
+      this_week: paid.this_week,
+      this_month: paid.this_month,
+      all_time: paid.all_time,
+      paid,
+      pending,
+      job_value: jobValue,
+      daily: legacy.daily,
+      worker_payable_ledger: ledger,
+      semantics: {
+        currency: 'ZAR',
+        legacy_totals: 'paid_job_value',
+        paid: 'completed_reconciled_paid_project_value_not_worker_net',
+        pending: 'completed_project_value_without_current_reconciled_paid_evidence',
+        job_value: 'completed_project_locked_or_booking_total',
+        ledger_definition: ledger.definition,
+        worker_gross_supported: false,
+        platform_fee_supported: false,
+        worker_net_supported: false,
+        available_balance_supported: false,
+        payout_supported: false,
+      },
     });
   } catch (err) {
     next(err);

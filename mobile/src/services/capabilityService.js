@@ -1,15 +1,22 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import api from './api';
+import { packagedFeatureEnabled } from '../app/runtimeFeatureFlags';
 
 const {
-  BUILD_ALLOW_LIST,
+  buildAllowListForPackagedFlags,
   evaluateCapabilities,
   failClosed,
 } = require('../config/capabilityPolicy.cjs');
 
 const CACHE_KEY = 'runtime_capabilities:v1';
 let inFlight = null;
+const PACKAGED_CAPABILITY_ALLOW_LIST = buildAllowListForPackagedFlags({
+  aiAssistedIntake: packagedFeatureEnabled('aiAssistedIntake'),
+  explainableRecommendations: packagedFeatureEnabled('explainableRecommendations'),
+  livePlatformStatus: packagedFeatureEnabled('livePlatformStatus'),
+  contextualSafetyEducation: packagedFeatureEnabled('contextualSafetyEducation'),
+});
 
 function appVersion() {
   return Constants.expoConfig?.version
@@ -20,7 +27,7 @@ function appVersion() {
 function evaluate(snapshot) {
   return evaluateCapabilities(snapshot, {
     appVersion: appVersion(),
-    allowList: BUILD_ALLOW_LIST,
+    allowList: PACKAGED_CAPABILITY_ALLOW_LIST,
   });
 }
 

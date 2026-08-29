@@ -1,142 +1,117 @@
-# Togt — Project Brief for Claude
+# TOGT engineering brief
 
-## What is this?
-Togt is an **Uber-for-labourers** mobile app for South Africa. It connects skilled Togt labourers (day workers) who struggle to find customers, with customers who need services. Think Uber but for plumbers, painters, builders, tilers, electricians, etc.
+TOGT is a South African services marketplace with separate Customer and Worker
+accounts. Do not describe it as an “Uber for labourers”, fabricate supply, or
+infer identity, money, availability, location, safety, rating, payout, or
+completion claims from missing evidence.
 
-## Stack
-| Layer | Tech |
-|-------|------|
-| Mobile | React Native (Expo) — iOS + Android |
-| Backend | Node.js + Express |
-| Database | PostgreSQL |
-| Real-time GPS | Socket.io |
-| Payments | Peach Payments (South African gateway) |
-| State management | Redux Toolkit |
+## Authority
 
-## Repository structure
-```
-/Togt
-├── backend/               # Node.js API server
-│   ├── src/
-│   │   ├── config/        # db.js (PostgreSQL pool), env.js
-│   │   ├── middleware/    # auth.js (JWT), errorHandler.js
-│   │   ├── routes/        # auth, labourers, bookings, payments, ratings
-│   │   ├── sockets/       # location.js — real-time GPS via Socket.io
-│   │   └── db/migrations/ # 001_initial.sql — full schema
-│   ├── package.json
-│   └── .env.example       # copy to .env and fill in values
-│
-└── mobile/                # Expo React Native app
-    ├── App.js             # Entry point — Redux Provider + AppNavigator
-    ├── src/
-    │   ├── navigation/    # AppNavigator, AuthStack, CustomerStack, LabourerStack
-    │   ├── screens/
-    │   │   ├── auth/      # OnboardingScreen, LoginScreen, RegisterScreen
-    │   │   ├── customer/  # HomeMapScreen, LabourerProfileScreen, BookingFormScreen,
-    │   │   │              # ActiveBookingScreen, PaymentScreen, RateScreen, MyBookingsScreen
-    │   │   └── labourer/  # DashboardScreen, ProfileSetupScreen, JobRequestsScreen,
-    │   │                  # ActiveJobScreen, EarningsScreen
-    │   ├── components/    # StarRating, LabourerCard, BookingStatusBadge
-    │   ├── services/      # api.js, authService, bookingService, locationService, socketService
-    │   ├── store/         # authSlice.js, bookingSlice.js, store.js
-    │   └── utils/         # formatters.js (ZAR currency, dates, status colours)
-    └── package.json
-```
+The approved implementation contract is
+`docs/superpowers/specs/2026-08-23-togt-grounded-momentum-master-spec.md`.
+The visual target is `docs/design/togt-grounded-momentum-concept.png`, interpreted
+through `docs/design/grounded-momentum-brand-usage.md`. The concept board controls
+tone, hierarchy, palette, and surface treatment; illustrative people, prices,
+badges, percentages, and lifecycle combinations are not data contracts.
 
-## Database schema (PostgreSQL)
-- `users` — id, name, email, phone, password_hash, role (customer|labourer), avatar_url
-- `labourer_profiles` — user_id, skills[], hourly_rate, bio, id_number, is_available, current_lat/lng, rating_avg, rating_count
-- `bookings` — id, customer_id, labourer_id, status, skill_needed, address, location_lat/lng, scheduled_at, hours_est, total_amount, notes
-- `payments` — id, booking_id, amount, currency (ZAR), status, peach_checkout_id, peach_result_code
-- `ratings` — id, booking_id, reviewer_id, reviewee_id, score (1-5), comment
+This repository is an internal synthetic-data build baseline, not permission to
+deploy, process real identities or money, enable providers, or migrate production
+data. Preview and production stay HTTPS/WSS-only.
 
-## Booking state machine
-```
-pending → accepted → in_progress → completed
-       → cancelled (by customer from pending or accepted)
-       → cancelled (decline by labourer from pending)
-```
+## Current architecture
 
-## API endpoints
-- `POST /auth/register` — role: 'customer' or 'labourer'
-- `POST /auth/login` → returns accessToken + refreshToken
-- `POST /auth/refresh`
-- `GET /labourers?lat=&lng=&skill=&radius=` — Haversine geo-search
-- `GET /labourers/:id` — profile + recent reviews
-- `PUT /labourers/profile` — update skills, rate, bio (labourer only)
-- `PUT /labourers/availability` — toggle is_available
-- `PUT /labourers/location` — update GPS (polling fallback)
-- `POST /bookings` — customer creates booking
-- `GET /bookings/my` — own bookings (customer or labourer)
-- `GET /bookings/:id`
-- `PUT /bookings/:id/accept|decline|start|complete|cancel`
-- `POST /payments/initiate` — creates Peach Payments checkout
-- `POST /payments/webhook` — Peach result notification
-- `GET /payments/status/:bookingId`
-- `POST /ratings` — submit rating (auto-updates labourer rating_avg)
-- `GET /ratings/labourer/:id`
+- Mobile: Expo SDK 54 / React Native 0.81, TypeScript plus compatibility
+  JavaScript, Redux Toolkit, React Navigation, semantic Grounded Momentum UI.
+- Backend: Node.js, Express 4, PostgreSQL, Socket.IO, additive SQL migrations.
+- Android identity: `za.togt.app`, version `1.1.0`, versionCode `3`.
+- APK delivery: local JDK 17 + Android Gradle is the default. Expo Go, EAS, and
+  an Expo account are not required. See `mobile/BUILDING.md`.
 
-## Real-time GPS
-- Socket.io namespace: `/location`
-- Auth: JWT token in `socket.handshake.auth.token`
-- Labourer emits `location:update` with `{ bookingId, lat, lng }`
-- Customer joins room `booking:{bookingId}` and receives updates live
+The additive Grounded role shells are selected by packaged flags. Customer has
+Home, Projects, and Account. Worker has Today, Jobs, Earnings, and Account.
+Transactional routes sit above those tabs. The legacy shells and APIs remain
+only as compatibility surfaces and may not bypass canonical privacy, readiness,
+scope, PIN, fulfilment, payment, or completion gates.
 
-## Environment variables needed
-```bash
-# backend/.env
-DATABASE_URL=postgresql://user:pass@localhost:5432/togt
-JWT_SECRET=...
-JWT_REFRESH_SECRET=...
-PEACH_ENTITY_ID=...
-PEACH_ACCESS_TOKEN=...
-PEACH_BASE_URL=https://eu-test.oppwa.com  # test env
+## Product and data rules
 
-# mobile — in app.json extra or .env
-EXPO_PUBLIC_API_URL=http://localhost:3000
-EXPO_PUBLIC_GOOGLE_MAPS_KEY=...
+- One account has one server-authoritative role: `customer` or internal
+  compatibility value `labourer` (displayed as Worker).
+- Catalogue service ID + version determine pricing, fulfilment, questions,
+  risk, and eligibility. Clients do not invent commercial facts.
+- Project transactional status, operational phase, payment, payout, safety,
+  dispute, and relationship states remain separate evidence domains.
+- Consequential mutations require authenticated ownership, strict input,
+  server validation, an idempotency key, and optimistic revision where the
+  route contract requires it.
+- Exact address/contact reveal, scope agreement, start PIN, work start,
+  completion, and payment are server-authoritative. Missing or stale evidence
+  fails closed.
+- Registration records two separate, current policy acceptances. Marketing
+  consent is neither bundled nor implied.
+- Analytics and logs use allowlisted, PII-safe fields only.
+
+## Capability truth
+
+Peach checkout, cash settlement recording, production KYC, remote push,
+background tracking, public live sharing, operated SOS, payout, AI-assisted
+intake, recommendations, and Android live updates remain disabled until their
+provider, security, privacy, legal, operational, and device gates are proven.
+Code or credentials being present is not approval. UI must show an explicit
+unavailable/recovery state and must not simulate success.
+
+Foreground in-app location, sanitised non-live booking-detail sharing, the
+device dialler, and implemented canonical Project/Worker/trust APIs remain
+bounded by their server and packaged capability contracts.
+
+## Repository map
+
+```text
+backend/
+  src/db/migrations/       additive schema evolution
+  src/routes/              legacy compatibility and canonical HTTP routes
+  src/services/grounded*/  canonical domain contracts, stores, projections
+  tests/                   Jest unit, integration, privacy and security tests
+mobile/
+  src/design/              semantic tokens, theme, layout, motion
+  src/ui/                  reusable accessible Grounded components
+  src/data/grounded/       strict versioned DTO adapters
+  src/features/            Customer, Worker, trust and intelligence slices
+  src/navigation/          additive role shells and route contracts
+  tests/                   Node source, model, adapter and build-policy tests
+docs/
+  design/                  approved concept and implementation guidance
+  legal/                   internal-test policy documents only
+  superpowers/             master specification, plans and handoffs
 ```
 
-## How to run
-```bash
-# 1. Backend
+## Local verification
+
+Backend integration tests require a disposable PostgreSQL database with all
+migrations applied. Never point tests at production.
+
+```powershell
 cd backend
-npm install
-cp .env.example .env   # fill in values
-npm run migrate        # runs SQL migrations against your PostgreSQL
-npm run dev            # starts on port 3000
+npm ci
+npm run migrate
+npm test
 
-# 2. Mobile
-cd mobile
-npm install
-npx expo start         # scan QR with Expo Go app
+cd ..\\mobile
+npm ci
+npm run typecheck
+npm test
+npx expo-doctor
 ```
 
-## What's been built (MVP complete)
-- [x] User registration + login (customer and labourer roles)
-- [x] Labourer profile: skills, hourly rate, bio, SA ID, photo
-- [x] Availability toggle (appears/disappears on customer map)
-- [x] GPS-based labourer discovery map with skill filters
-- [x] End-to-end booking flow (request → accept → start → complete)
-- [x] Live GPS tracking (Socket.io) — customer sees labourer moving on map
-- [x] Peach Payments integration (ZAR, WebView checkout)
-- [x] Star ratings + reviews after completed jobs
-- [x] Labourer earnings screen
+Before any APK, follow `mobile/BUILDING.md`. The build refuses a dirty source
+tree, verifies package/version/ABI/alignment/signature, and emits an adjacent
+manifest. Preserve the immutable v1 rollback artifact and never overwrite an
+existing Development artifact.
 
-## What still needs to be built (next steps)
-- [ ] Push notifications (Expo Notifications) for booking events
-- [ ] Date/time picker UI for booking form (currently free-text ISO string)
-- [ ] Image upload to cloud storage (currently stores URI directly)
-- [ ] Admin dashboard for managing users and disputes
-- [ ] Multi-language support (Zulu, Xhosa, Afrikaans, English)
-- [ ] Background location permission for labourers en route
-- [ ] Payment payout system for labourers
-- [ ] In-app messaging between customer and labourer
-- [ ] ID/skills verification workflow
+## Definition of done
 
-## Brand colours
-- Primary green: `#1A6B3A`
-- Success: `#10B981`
-- Warning/stars: `#F59E0B`
-- Error: `#EF4444`
-- Background: `#F9FAFB`
+A feature is complete only when strict server/client contracts, loading/empty/
+error/offline/permission states, privacy and capability boundaries,
+accessibility, analytics safety, automated tests, and relevant emulator/device
+evidence agree. Automated or emulator acceptance does not substitute for the
+specified physical-device, provider, legal, operational, or production gates.

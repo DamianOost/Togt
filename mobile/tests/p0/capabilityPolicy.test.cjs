@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   BUILD_ALLOW_LIST,
+  buildAllowListForPackagedFlags,
   evaluateCapabilities,
 } = require('../../src/config/capabilityPolicy.cjs');
 
@@ -18,6 +19,10 @@ function snapshot(overrides = {}) {
     features: {
       peach_checkout: { available: true },
       foreground_location_updates: { available: true },
+      ai_assisted_intake: { available: true },
+      explainable_recommendations: { available: true },
+      android_live_updates: { available: true },
+      contextual_safety_education: { available: true },
     },
     ...overrides,
   };
@@ -33,6 +38,55 @@ test('server cannot enable a provider disabled in this APK', () => {
   assert.equal(result.features.peach_checkout.available, false);
   assert.equal(result.features.peach_checkout.reason_code, 'disabled_in_this_build');
   assert.equal(result.features.foreground_location_updates.available, true);
+  assert.equal(result.features.ai_assisted_intake.available, false);
+  assert.equal(result.features.explainable_recommendations.available, false);
+  assert.equal(result.features.android_live_updates.available, false);
+  assert.equal(result.features.contextual_safety_education.available, false);
+});
+
+test('Phase 4 surfaces require both a packaged path and a fresh server capability', () => {
+  const names = [
+    ['ai_assisted_intake', 'aiAssistedIntake'],
+    ['explainable_recommendations', 'explainableRecommendations'],
+    ['android_live_updates', 'livePlatformStatus'],
+    ['contextual_safety_education', 'contextualSafetyEducation'],
+  ];
+
+  for (const [capabilityName, packagedFlag] of names) {
+    const serverOnPackageOff = evaluateCapabilities(snapshot(), {
+      nowMs: NOW,
+      appVersion: '1.0.0',
+      allowList: buildAllowListForPackagedFlags({ [packagedFlag]: false }),
+    });
+    assert.equal(serverOnPackageOff.features[capabilityName].available, false);
+    assert.equal(
+      serverOnPackageOff.features[capabilityName].reason_code,
+      'disabled_in_this_build'
+    );
+
+    const packageOnServerOff = evaluateCapabilities(snapshot({
+      features: {
+        ...snapshot().features,
+        [capabilityName]: { available: false, reason_code: 'provider_not_configured' },
+      },
+    }), {
+      nowMs: NOW,
+      appVersion: '1.0.0',
+      allowList: buildAllowListForPackagedFlags({ [packagedFlag]: true }),
+    });
+    assert.equal(packageOnServerOff.features[capabilityName].available, false);
+    assert.equal(
+      packageOnServerOff.features[capabilityName].reason_code,
+      'provider_not_configured'
+    );
+
+    const bothOn = evaluateCapabilities(snapshot(), {
+      nowMs: NOW,
+      appVersion: '1.0.0',
+      allowList: buildAllowListForPackagedFlags({ [packagedFlag]: true }),
+    });
+    assert.equal(bothOn.features[capabilityName].available, true);
+  }
 });
 
 test('expired, malformed and incompatible capability data fails closed', () => {

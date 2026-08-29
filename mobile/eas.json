@@ -9,6 +9,15 @@
         "EXPO_PUBLIC_ENABLE_PEACH": "false",
         "EXPO_PUBLIC_MAPS_PROVIDER": "disabled",
         "EXPO_PUBLIC_PUSH_PROVIDER": "disabled",
+        "TOGT_GROUNDED_MOMENTUM": "true",
+        "TOGT_CUSTOMER_FLAGSHIP": "true",
+        "TOGT_WORKER_EXPERIENCE": "true",
+        "TOGT_RELATIONSHIPS": "true",
+        "TOGT_AI_ASSISTED_INTAKE": "true",
+        "TOGT_EXPLAINABLE_RECOMMENDATIONS": "true",
+        "TOGT_LIVE_PLATFORM_STATUS": "true",
+        "TOGT_CONTEXTUAL_SAFETY_EDUCATION": "true",
+        "TOGT_DARK_THEME": "false",
         "TOGT_STANDALONE_BUILD": "true"
       },
       "android": {

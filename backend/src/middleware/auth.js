@@ -1,5 +1,4 @@
-const jwt = require('jsonwebtoken');
-const { jwtSecret } = require('../config/env');
+const { verifyAccessToken } = require('../lib/jwtTokens');
 const { problemResponse } = require('../lib/problemJson');
 
 // Auth boundary returns RFC 9457 problem+json so agent integrators get
@@ -20,7 +19,7 @@ function authMiddleware(req, res, next) {
 
   const token = authHeader.slice(7);
   try {
-    const decoded = jwt.verify(token, jwtSecret);
+    const decoded = verifyAccessToken(token);
     req.user = decoded;
     next();
   } catch {

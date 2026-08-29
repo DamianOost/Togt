@@ -10,21 +10,22 @@ afterAll(async () => {
 });
 
 describe('POST /payments/webhook', () => {
-  // env.js reads PEACH_WEBHOOK_SECRET once at require-time. In the test env
-  // the secret is unset, so we exercise the disabled-signature path here and
-  // unit-test the HMAC math directly.
+  // env.js reads PEACH_WEBHOOK_SECRET once at require-time. The test
+  // environment deliberately leaves the reviewed product gate off so the
+  // consequential endpoint must fail closed before transport or mutation.
 
-  test('no secret configured -> webhook accepts body, calls upstream Peach (which 401s on test creds)', async () => {
+  test('provider values cannot enable a webhook while the product gate is off', async () => {
     const res = await request(app)
       .post('/payments/webhook')
       .set('Content-Type', 'application/json')
       .send({ checkoutId: 'bogus_id' });
-    // Either upstream rejects (401) or some other axios error surfaces as 500.
-    // What matters: request passed sig-check guard, parsed the body (not 400
-    // "checkoutId required"), and reached the Peach call.
-    expect([400, 401, 500]).toContain(res.status);
-    expect(res.body.error).not.toBe('Missing signature');
-    expect(res.body.error).not.toBe('Invalid signature');
+    expect(res.status).toBe(503);
+    expect(res.body).toMatchObject({
+      error: 'capability_unavailable',
+      capability: 'peach_webhook',
+      reason_code: 'peach_webhook_not_approved',
+    });
+    expect(JSON.stringify(res.body)).toContain('No payment state was changed');
   });
 
   test('HMAC-SHA256 base64 matches python reference (lockstep with last nights verification)', () => {

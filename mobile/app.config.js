@@ -29,7 +29,8 @@ module.exports = ({ config }) => {
 
   return {
     ...config,
-    name: isDevelopmentBuild ? 'Togt Development' : config.name,
+    name: isDevelopmentBuild ? 'TOGT Development' : config.name,
+    scheme: runtime.scheme,
     android,
     plugins: [
       ...(config.plugins || []),
@@ -51,6 +52,13 @@ module.exports = ({ config }) => {
         maps: runtime.mapsProvider,
         peach: runtime.peachAllowed,
         push: runtime.pushProvider,
+      },
+      features: {
+        groundedMomentum: runtime.groundedMomentumEnabled,
+      },
+      featureFlags: {
+        schemaVersion: 1,
+        flags: runtime.featureFlags,
       },
     },
   };

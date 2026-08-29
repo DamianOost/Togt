@@ -5,9 +5,11 @@ const { authMiddleware } = require('../middleware/auth');
 const { idempotencyMiddleware } = require('../middleware/idempotency');
 const { notifyUser } = require('../services/notifications');
 const { emitEvent } = require('../services/events');
-const { serializeBookingForUser } = require('../lib/privacy');
+const { serializeBookingForUser, hasCanonicalFulfilment } = require('../lib/privacy');
 const { recordPrivacyAudit } = require('../lib/privacyAudit');
 const { verifyStartPin, withStartContext } = require('../lib/startPin');
+const { problemResponse } = require('../lib/problemJson');
+const { legacyDirectBookingCreationEnabled } = require('../config/legacyCompatibility');
 
 const STATUS_TO_EVENT = {
   accepted: 'booking.accepted',
@@ -18,8 +20,38 @@ const STATUS_TO_EVENT = {
 
 const router = express.Router();
 
+const CANONICAL_FULFILMENT_PROJECTION = `(
+  b.accepted_quote_id IS NOT NULL
+  OR EXISTS (
+    SELECT 1 FROM grounded_booking_agreement_snapshots grounded_agreement
+    WHERE grounded_agreement.booking_id = b.id
+  )
+  OR EXISTS (
+    SELECT 1 FROM grounded_fulfilment_policy_snapshots grounded_policy
+    WHERE grounded_policy.booking_id = b.id
+  )
+  OR EXISTS (
+    SELECT 1 FROM match_requests grounded_match
+    WHERE grounded_match.matched_booking_id = b.id
+  )
+) AS canonical_fulfilment_policy_present`;
+
+function requireLegacyDirectBookingCompatibility(req, res, next) {
+  if (legacyDirectBookingCreationEnabled()) return next();
+  return problemResponse(res, {
+    type: 'legacy_direct_booking_creation_unavailable',
+    title: 'Direct legacy booking creation is unavailable',
+    status: 503,
+    detail: 'No booking was created. Use the canonical quote-request or Fast Match flow.',
+    instance: req.originalUrl,
+    extensions: {
+      canonicalPaths: ['/api/quote-requests', '/api/match'],
+    },
+  });
+}
+
 // POST /bookings — customer creates a booking request
-router.post('/', authMiddleware, idempotencyMiddleware(), async (req, res, next) => {
+router.post('/', authMiddleware, requireLegacyDirectBookingCompatibility, idempotencyMiddleware(), async (req, res, next) => {
   try {
     if (req.user.role !== 'customer') {
       return res.status(403).json({ error: 'Only customers can create bookings' });
@@ -97,6 +129,7 @@ router.get('/', authMiddleware, async (req, res, next) => {
   try {
     const result = await db.query(
       `SELECT b.*,
+              ${CANONICAL_FULFILMENT_PROJECTION},
               cu.name AS customer_name, cu.phone AS customer_phone, cu.avatar_url AS customer_avatar,
               lu.name AS labourer_name, lu.phone AS labourer_phone, lu.avatar_url AS labourer_avatar,
               lp.hourly_rate, lp.skills
@@ -132,6 +165,7 @@ router.get('/my', authMiddleware, async (req, res, next) => {
 
     const result = await db.query(
       `SELECT b.*,
+              ${CANONICAL_FULFILMENT_PROJECTION},
               cu.name AS customer_name, cu.phone AS customer_phone, cu.avatar_url AS customer_avatar,
               lu.name AS labourer_name, lu.phone AS labourer_phone, lu.avatar_url AS labourer_avatar,
               lp.hourly_rate, lp.skills
@@ -166,6 +200,7 @@ router.get('/:id', authMiddleware, async (req, res, next) => {
   try {
     const result = await db.query(
       `SELECT b.*,
+              ${CANONICAL_FULFILMENT_PROJECTION},
               cu.name AS customer_name, cu.phone AS customer_phone, cu.avatar_url AS customer_avatar,
               lu.name AS labourer_name, lu.phone AS labourer_phone, lu.avatar_url AS labourer_avatar,
               lp.hourly_rate, lp.skills, lp.current_lat, lp.current_lng, lp.location_updated_at,
@@ -222,7 +257,11 @@ router.get('/:id', authMiddleware, async (req, res, next) => {
 // Status transition helper — with push notifications
 async function transition(req, res, next, allowedRoles, fromStatuses, toStatus) {
   try {
-    const result = await db.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
+    const result = await db.query(
+      `SELECT b.*, ${CANONICAL_FULFILMENT_PROJECTION}
+         FROM bookings b WHERE b.id = $1`,
+      [req.params.id]
+    );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Booking not found' });
 
     const booking = result.rows[0];
@@ -239,7 +278,28 @@ async function transition(req, res, next, allowedRoles, fromStatuses, toStatus) 
       return res.status(400).json({ error: `Cannot transition from '${booking.status}' to '${toStatus}'` });
     }
 
+    if (hasCanonicalFulfilment(booking) && toStatus !== 'in_progress') {
+      return problemResponse(res, {
+        type: 'canonical_fulfilment_required',
+        title: 'Legacy Project transition is unavailable',
+        status: 409,
+        detail: 'This Project uses canonical fulfilment. No legacy booking status was changed.',
+        instance: req.originalUrl,
+        extensions: {
+          projectId: booking.id,
+          canonicalPath: `/api/projects/${booking.id}/fulfilment`,
+        },
+      });
+    }
+
     if (toStatus === 'in_progress') {
+      if (hasCanonicalFulfilment(booking)) {
+        return res.status(409).json({
+          error: 'canonical_fulfilment_required',
+          detail: 'This booking uses the canonical fulfilment flow. Start it through the Project endpoint.',
+          start_path: `/api/projects/${booking.id}/start`,
+        });
+      }
       if (!booking.scope_confirmed_by_customer || !booking.scope_confirmed_by_labourer) {
         return res.status(409).json({
           error: 'scope_confirmation_required',
@@ -316,10 +376,14 @@ async function transition(req, res, next, allowedRoles, fromStatuses, toStatus) 
         { bookingId: booking.id, screen: 'Rate' });
     }
 
+    const responseBooking = {
+      ...updated.rows[0],
+      canonical_fulfilment_policy_present: booking.canonical_fulfilment_policy_present,
+    };
     res.json({
       booking: withStartContext(
-        serializeBookingForUser(updated.rows[0], req.user),
-        updated.rows[0],
+        serializeBookingForUser(responseBooking, req.user),
+        responseBooking,
         req.user
       ),
     });
@@ -337,8 +401,14 @@ router.put('/:id/decline', authMiddleware, (req, res, next) =>
 router.put('/:id/start', authMiddleware, (req, res, next) =>
   transition(req, res, next, ['labourer'], ['accepted'], 'in_progress'));
 
-router.put('/:id/complete', authMiddleware, (req, res, next) =>
-  transition(req, res, next, ['labourer'], ['in_progress'], 'completed'));
+// Bilateral completion is authoritative. A worker may request completion via
+// POST /api/projects/:id/completion-requests, but cannot move a booking to
+// completed without the owning customer's explicit confirmation.
+router.put('/:id/complete', authMiddleware, (req, res) => res.status(409).json({
+  error: 'completion_confirmation_required',
+  detail: 'Request completion from the Project flow. The customer must confirm before the job can be completed.',
+  completion_request_path: `/api/projects/${req.params.id}/completion-requests`,
+}));
 
 router.put('/:id/cancel', authMiddleware, (req, res, next) =>
   transition(req, res, next, ['customer'], ['pending', 'accepted'], 'cancelled'));
@@ -352,7 +422,6 @@ router.patch('/:id/status', authMiddleware, async (req, res, next) => {
   const statusMap = {
     accepted:    { roles: ['labourer'], from: ['pending'] },
     in_progress: { roles: ['labourer'], from: ['accepted'] },
-    completed:   { roles: ['labourer'], from: ['in_progress'] },
     cancelled:   { roles: ['customer', 'labourer'], from: ['pending', 'accepted'] },
   };
 

@@ -1,6 +1,6 @@
 # TOGT Android internal APK runbook
 
-**Release target:** `za.togt.app`, `versionName 1.0.1`, `versionCode 2`,
+**Release target:** `za.togt.app`, `versionName 1.1.0`, `versionCode 3`,
 `arm64-v8a`.
 
 Local Gradle is the default internal-APK route. Expo Go, an Expo account, and
@@ -10,6 +10,10 @@ block a local build when EAS/Expo Push is disabled.
 This runbook creates internal synthetic-data artifacts only. It does not
 authorize production data, real KYC, payment, payout, provider activation, or
 deployment.
+
+The stable application/deep-link scheme is `togt://`. Both the checked-in base
+manifest and generated configuration lock this value; changing it is a release
+contract change.
 
 ## Runtime and provider contract
 
@@ -33,7 +37,7 @@ The URL must be an origin with no path, query, fragment, or credentials.
   closed even if a later Android or Expo default changes.
 - `preview` and `production` require HTTPS and reject localhost/private-LAN
   origins, including explicit values.
-- Development builds are labelled `Togt Development` and recorded as
+- Development builds are labelled `TOGT Development` and recorded as
   `development-local`, `development-lan`, or `development-secure` in the
   artifact manifest.
 - `EXPO_PUBLIC_PUSH_PROVIDER` defaults to `disabled`. `expo` requires
@@ -43,8 +47,50 @@ The URL must be an origin with no path, query, fragment, or credentials.
   `GOOGLE_MAPS_ANDROID_API_KEY`. The default is `disabled`.
 - `EXPO_PUBLIC_ENABLE_PEACH` defaults to `false`. Enabling the client allow-list
   still does not override the server capability gate.
+- `TOGT_GROUNDED_MOMENTUM` packages the new role shells and defaults to `true`
+  only for development. Preview/production defaults remain `false` until the
+  exact release explicitly enables the reviewed UI; setting it to `false`
+  provides the packaged shell rollback path.
+- `TOGT_CUSTOMER_FLAGSHIP` and `TOGT_WORKER_EXPERIENCE` default to the master
+  shell value only in development. `TOGT_RELATIONSHIPS`,
+  `TOGT_AI_ASSISTED_INTAKE`, `TOGT_EXPLAINABLE_RECOMMENDATIONS`,
+  `TOGT_LIVE_PLATFORM_STATUS`, `TOGT_CONTEXTUAL_SAFETY_EDUCATION`, and
+  `TOGT_DARK_THEME` default to `false`
+  everywhere. Every child flag is forced off when the master shell is off.
+  Packaging assisted intake, recommendation explanations, or live status only
+  makes its reviewed UI/fallback available: the action still requires a fresh,
+  matching server capability. Package-only or stale evidence always fails
+  closed with an explanatory state.
+- The internal full-lane profiles package relationships and all Phase 4
+  surfaces so the navigation and disabled states can be tested. The current
+  server capability contract keeps their provider paths unavailable until the
+  corresponding provider/privacy/operations evidence is approved. Camera
+  intake, Fast Match, Compare Workers and Diagnostic Visit also remain disabled
+  in the mounted intake; Receive Quotes is the only enabled fulfilment path.
 - Secrets, keystore material, provider tokens, personal data, and backend
   credentials must never use `EXPO_PUBLIC_*` or be committed.
+
+## Android permission boundary
+
+The application selects an existing profile photo through the operating-system
+photo library. It does not record audio, launch a camera, draw overlays, or use
+legacy shared-storage access. Prebuild therefore blocks `RECORD_AUDIO`,
+`CAMERA`, `SYSTEM_ALERT_WINDOW`, `READ_EXTERNAL_STORAGE`, and
+`WRITE_EXTERNAL_STORAGE` even when a transitive native library declares one.
+The APK verifier reads the merged permission set from the signed artifact and
+rejects the build if any blocked permission survives manifest merging.
+
+`POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED`, and `VIBRATE` remain because the
+reviewed notifications module needs them for user-approved delivery, restore,
+and notification-channel vibration. Its merged native dependencies may also
+retain `WAKE_LOCK`, `com.google.android.c2dm.permission.RECEIVE`, network-state,
+and OEM launcher-badge permissions; the exact merged list is written to every
+artifact manifest for review. Their presence does not activate remote push: the
+packaged push provider defaults to `disabled`, the server capability must be
+current and enabled, and Android notification permission is requested only
+inside that capability-gated registration flow. Foreground location and
+Internet permissions remain for the documented matching/job and API paths;
+background location is not requested.
 
 ## Toolchain
 
@@ -55,6 +101,14 @@ Install or point the shell at:
 - JDK 17 through `JAVA_HOME`;
 - Android SDK through `ANDROID_SDK_ROOT` (or matching `ANDROID_HOME`);
 - platform `android-36`, build-tools `36.0.0`, and NDK `27.1.12297006`.
+
+The locked Android SDK contract is `minSdk 24`, `targetSdk 36`, and
+`compileSdk 36`. Minimum and target SDK values are checked from the final APK.
+Compile SDK is not claimed from APK badging: preflight checks the generated
+React Native version catalog (`node_modules/react-native/gradle/libs.versions.toml`)
+against the installed `android-36` platform/build-tools, passes the four locked
+SDK/build-tools values to Gradle explicitly, and records that
+generated/toolchain/enforced-property evidence in the artifact manifest.
 
 The repository preflight checks every item before prebuild or Gradle runs. It
 does not download a JDK/SDK, mutate global settings, or read production secrets.
@@ -74,6 +128,15 @@ $env:EXPO_PUBLIC_API_BASE_URL = 'http://<private-lan-host>:3000'
 $env:EXPO_PUBLIC_ENABLE_PEACH = 'false'
 $env:EXPO_PUBLIC_PUSH_PROVIDER = 'disabled'
 $env:EXPO_PUBLIC_MAPS_PROVIDER = 'disabled'
+$env:TOGT_GROUNDED_MOMENTUM = 'true'
+$env:TOGT_CUSTOMER_FLAGSHIP = 'true'
+$env:TOGT_WORKER_EXPERIENCE = 'true'
+$env:TOGT_RELATIONSHIPS = 'true'
+$env:TOGT_AI_ASSISTED_INTAKE = 'true'
+$env:TOGT_EXPLAINABLE_RECOMMENDATIONS = 'true'
+$env:TOGT_LIVE_PLATFORM_STATUS = 'true'
+$env:TOGT_CONTEXTUAL_SAFETY_EDUCATION = 'true'
+$env:TOGT_DARK_THEME = 'false'
 $env:TOGT_ANDROID_ABIS = 'arm64-v8a'
 $env:TOGT_ANDROID_SIGNING_MODE = 'generated-debug'
 $env:TOGT_ANDROID_EXPECTED_SIGNER_SHA256 = 'FAC61745DC0903786FB9EDE62A962B399F7348F0BB6F899B8332667591033B9C'
@@ -102,16 +165,27 @@ Gradle. `build:apk:local` performs the same preflight/prebuild and then:
    `mobile/dist/apk`.
 
 The filename is deterministic for the configuration, version, source commit,
-and ABI set:
+exact safe runtime contract, and ABI set. `rt<12>` is the first 12 characters
+of the runtime-contract SHA-256:
 
 ```text
-TOGT-<config-class>-1.0.1-vc2-<12-char-commit>-arm64-v8a.apk
+TOGT-<config-class>-1.1.0-vc3-<12-char-commit>-rt<12>-arm64-v8a.apk
 ```
 
 The adjacent manifest records the package, version name/code, source commit,
 configuration class, Android cleartext policy, build provider, ABI set, SDKs,
-signer SHA-256, artifact SHA-256, size, alignment, and signature-verification
-result. `dist` and the generated native project remain ignored; copy only a
+actual merged permission set, packaged feature flags, signer SHA-256, artifact
+SHA-256, size, alignment, and signature-verification result. It also records the
+exact safe API origin, maps/Peach/push selections, and feature flags as a
+versioned runtime contract plus its full SHA-256. Provider keys, service files,
+passwords, and other secrets are never included. Different API endpoints or
+provider/flag selections therefore cannot produce the same artifact identity.
+The bundle scan permits the exact configured API origin and a small explicit
+set of reviewed dependency documentation, asset-CDN, font-metadata, NetInfo
+reachability, and Axios placeholder origins. An unknown hard-coded HTTP or
+HTTPS origin—including a standard-port HTTPS origin—fails the build.
+
+`dist` and the generated native project remain ignored; copy only a
 verified artifact and manifest to the approved Development artifact store
 without overwriting v1.
 
@@ -149,7 +223,11 @@ $env:TOGT_ANDROID_EXPECTED_SIGNER_SHA256 = '<approved-certificate-sha256>'
 Keep passwords in the operator process/approved secret store only. Do not add a
 keystore, password, private path, or secret-bearing Gradle properties file to
 Git. Preview/production configurations require `keystore` mode; generated debug
-signing is rejected.
+signing is rejected. The build resolves both the requested and canonical
+keystore paths and refuses any release keystore located anywhere inside the
+repository (including `mobile`). Repository ignore rules cover non-example env
+files, keystores, signing-property files, `google-services.json`, and
+`GoogleService-Info.plist`; deliberately named example files remain trackable.
 
 An Android downgrade cannot install over a higher `versionCode`. Rollback means
 retaining v1 for clean-install recovery or rebuilding the prior compatible
@@ -167,9 +245,16 @@ The optional command remains:
 npm run build:apk:preview
 ```
 
-The `preview` profile produces an internal APK. Its existence is not proof of
-provider configuration, remote push delivery, physical-device success, or
-release approval.
+The checked-in `preview` profile is explicitly an internal, full-lane Grounded
+Momentum APK: customer, Worker, relationships, assisted-intake,
+recommendation-explanation and live-status UI are packaged, while Peach, maps
+and push providers remain disabled. Contextual safety education is also
+packaged but remains package-and-server gated, locally capped at three displays
+with a 14-day cooldown, and dismissible. The Phase 4 actions still require the same
+fresh server capability evidence as a local build, so the current backend shows
+truthful unavailable notices rather than enabling them from package flags.
+Its existence is not proof of provider configuration, remote push delivery,
+physical-device success, or release approval.
 
 ## P0 release evidence still required
 

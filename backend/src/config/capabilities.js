@@ -55,6 +55,22 @@ const FEATURES = Object.freeze({
     available: true,
     mode: 'device_dialer',
   }),
+  ai_assisted_intake: Object.freeze({
+    available: false,
+    reason_code: 'provider_privacy_and_evaluation_gates_not_approved',
+  }),
+  explainable_recommendations: Object.freeze({
+    available: false,
+    reason_code: 'ranking_fairness_gate_not_approved',
+  }),
+  android_live_updates: Object.freeze({
+    available: false,
+    reason_code: 'native_live_update_contract_not_proven',
+  }),
+  contextual_safety_education: Object.freeze({
+    available: false,
+    reason_code: 'education_measurement_gate_not_proven',
+  }),
 });
 
 function featureAvailable(name) {

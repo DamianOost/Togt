@@ -96,6 +96,64 @@ describe('privacy serializers', () => {
     expect(safe.approx_lat).toBeUndefined();
   });
 
+  test('canonical accepted booking requires active route access before exact fields reveal', () => {
+    const scheduled = booking({
+      status: 'accepted',
+      canonical_fulfilment_policy_present: true,
+      operational_phase: 'scheduled',
+    });
+    const beforeRoute = serializeBookingForUser(scheduled, { userId: LABOURER_ID });
+
+    expect(beforeRoute.address).toBeUndefined();
+    expect(beforeRoute.location_lat).toBeUndefined();
+    expect(beforeRoute.notes).toBeUndefined();
+    expect(beforeRoute.customer_phone).toBeUndefined();
+    expect(beforeRoute.approx_lat).toBe(-33.92);
+
+    const enRoute = serializeBookingForUser({
+      ...scheduled,
+      operational_phase: 'en_route',
+      route_access_granted_at: new Date().toISOString(),
+    }, { userId: LABOURER_ID });
+
+    expect(enRoute.address).toBe('12 Exact Street');
+    expect(enRoute.customer_phone).toBe('+27820000000');
+    expect(enRoute.approx_lat).toBeUndefined();
+  });
+
+  test('canonical scope marker and access revocation both fail closed', () => {
+    const canonical = booking({
+      status: 'accepted',
+      current_scope_version: 1,
+      route_access_granted_at: new Date().toISOString(),
+      fulfilment_access_revoked_at: new Date().toISOString(),
+    });
+    const worker = serializeBookingForUser(canonical, { userId: LABOURER_ID });
+    const customer = serializeBookingForUser(canonical, { userId: CUSTOMER_ID });
+
+    expect(worker.address).toBeUndefined();
+    expect(worker.customer_phone).toBeUndefined();
+    expect(customer.address).toBe('12 Exact Street');
+    expect(customer.labourer_phone).toBeUndefined();
+    expect(customer.labourer_current_lat).toBeUndefined();
+  });
+
+  test('canonical closed booking hides all counterpart contact and Worker exact fields', () => {
+    const closed = booking({
+      status: 'completed',
+      canonical_fulfilment_policy_present: true,
+      operational_phase: 'closed',
+      route_access_granted_at: new Date().toISOString(),
+    });
+    const worker = serializeBookingForUser(closed, { userId: LABOURER_ID });
+    const customer = serializeBookingForUser(closed, { userId: CUSTOMER_ID });
+
+    expect(worker.address).toBeUndefined();
+    expect(worker.customer_phone).toBeUndefined();
+    expect(customer.address).toBe('12 Exact Street');
+    expect(customer.labourer_phone).toBeUndefined();
+  });
+
   test('customer booking view keeps entered address before labourer contact reveal', () => {
     const safe = serializeBookingForUser(booking(), { userId: CUSTOMER_ID });
 

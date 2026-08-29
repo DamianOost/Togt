@@ -109,16 +109,22 @@ router.post('/:id/accept', authMiddleware, requireRole('labourer'), async (req, 
     }
     const result = await matcher.commitAttemptToBooking(matchId, attempt.id, req.user.id);
     if (!result.ok) {
-      return res.status(409).json({ error: result.error });
+      return res.status(409).json({
+        error: result.error,
+        ...(result.reasonCode ? { reason_code: result.reasonCode } : {}),
+        ...(result.detail ? { detail: result.detail } : {}),
+      });
     }
-    matcher.recordResponse(attempt.id, 'accepted');
-    recordPrivacyAudit(req, {
-      action: 'privacy.booking.exact_address_revealed',
-      resource: { type: 'booking', id: result.booking.id },
-      statusCode: 200,
-      metadata: { reason: 'match_accept', booking_status: result.booking.status },
-    });
-    res.json({ booking: serializeBookingForUser(result.booking, req.user) });
+    const safeBooking = serializeBookingForUser(result.booking, req.user);
+    if (safeBooking.address) {
+      recordPrivacyAudit(req, {
+        action: 'privacy.booking.exact_address_revealed',
+        resource: { type: 'booking', id: result.booking.id },
+        statusCode: 200,
+        metadata: { reason: 'match_accept', booking_status: result.booking.status },
+      });
+    }
+    res.json({ booking: safeBooking });
   } catch (err) {
     next(err);
   }

@@ -26,6 +26,21 @@ const {
 
 const BOOKING_READ_SELECT = `
   SELECT b.*,
+         (
+           b.accepted_quote_id IS NOT NULL
+           OR EXISTS (
+             SELECT 1 FROM grounded_booking_agreement_snapshots grounded_agreement
+             WHERE grounded_agreement.booking_id = b.id
+           )
+           OR EXISTS (
+             SELECT 1 FROM grounded_fulfilment_policy_snapshots grounded_policy
+             WHERE grounded_policy.booking_id = b.id
+           )
+           OR EXISTS (
+             SELECT 1 FROM match_requests grounded_match
+             WHERE grounded_match.matched_booking_id = b.id
+           )
+         ) AS canonical_fulfilment_policy_present,
          cu.name AS customer_name, cu.phone AS customer_phone, cu.avatar_url AS customer_avatar,
          lu.name AS labourer_name, lu.phone AS labourer_phone, lu.avatar_url AS labourer_avatar,
          lp.hourly_rate, lp.skills, lp.current_lat, lp.current_lng, lp.location_updated_at
@@ -581,7 +596,7 @@ const TOOLS = [
     handler: cancelMatchRequest,
   },
   { name: 'list_my_bookings', scope: 'mcp:read_only',
-    description: 'List bookings for the current user. Optional status_filter. Labourer views omit exact customer address/location/phone until status is accepted or in_progress.',
+    description: 'List bookings for the current user. Optional status_filter. Canonical fulfilment requires granted, non-revoked route access before exact counterpart/contact fields reveal; legacy-only bookings retain accepted/in_progress compatibility.',
     inputSchema: { type: 'object',
       properties: {
         status_filter: { type: 'string', enum: ['pending', 'accepted', 'in_progress', 'completed', 'cancelled'] },
@@ -591,7 +606,7 @@ const TOOLS = [
     handler: listMyBookings,
   },
   { name: 'get_booking', scope: 'mcp:read_only',
-    description: 'Read a booking by ID. Viewer-dependent privacy: customers keep their entered address; labourers see exact customer address/location/phone only once accepted or in_progress.',
+    description: 'Read a booking by ID. Customers keep their entered address. Canonical fulfilment requires granted, non-revoked route access before exact counterpart/contact fields reveal; legacy-only bookings retain accepted/in_progress compatibility.',
     inputSchema: { type: 'object', required: ['booking_id'],
       properties: { booking_id: { type: 'string', format: 'uuid' } } },
     handler: getBooking,

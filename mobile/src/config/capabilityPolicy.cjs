@@ -14,6 +14,10 @@ const FEATURE_NAMES = Object.freeze([
   'public_live_share',
   'operated_sos',
   'emergency_call',
+  'ai_assisted_intake',
+  'explainable_recommendations',
+  'android_live_updates',
+  'contextual_safety_education',
 ]);
 
 // A server flag cannot turn on code/provider paths that this APK was not
@@ -30,7 +34,21 @@ const BUILD_ALLOW_LIST = Object.freeze({
   public_live_share: false,
   operated_sos: false,
   emergency_call: true,
+  ai_assisted_intake: false,
+  explainable_recommendations: false,
+  android_live_updates: false,
+  contextual_safety_education: false,
 });
+
+function buildAllowListForPackagedFlags(flags = {}) {
+  return Object.freeze({
+    ...BUILD_ALLOW_LIST,
+    ai_assisted_intake: flags.aiAssistedIntake === true,
+    explainable_recommendations: flags.explainableRecommendations === true,
+    android_live_updates: flags.livePlatformStatus === true,
+    contextual_safety_education: flags.contextualSafetyEducation === true,
+  });
+}
 
 function parseVersion(value) {
   if (typeof value !== 'string' || !/^\d+(?:\.\d+){0,2}$/.test(value)) return null;
@@ -135,6 +153,7 @@ module.exports = {
   SUPPORTED_SCHEMA_VERSION,
   FEATURE_NAMES,
   BUILD_ALLOW_LIST,
+  buildAllowListForPackagedFlags,
   compareVersions,
   evaluateCapabilities,
   failClosed,

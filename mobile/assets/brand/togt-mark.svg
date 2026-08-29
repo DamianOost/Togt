@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">TOGT Grounded Momentum mark</title>
+  <desc id="description">A grounded capital T crossed by a rising route.</desc>
+  <path
+    fill="#12844E"
+    d="M180 214c-47 0-86 39-86 86s39 86 86 86h210v352c0 79 54 142 122 142s122-63 122-142V386h210c47 0 86-39 86-86s-39-86-86-86H180Z"
+  />
+  <path
+    fill="none"
+    stroke="#0F1F1B"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="72"
+    d="M512 738c0-134 35-236 118-319l105-105"
+  />
+  <path
+    fill="#0F1F1B"
+    d="M672 278h116v116c0 19-23 29-37 16l-95-95c-14-14-4-37 16-37Z"
+  />
+</svg>

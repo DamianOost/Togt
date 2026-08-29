@@ -20,6 +20,10 @@ describe('GET /api/capabilities', () => {
       'background_tracking',
       'public_live_share',
       'operated_sos',
+      'ai_assisted_intake',
+      'explainable_recommendations',
+      'android_live_updates',
+      'contextual_safety_education',
     ]) {
       expect(res.body.features[feature].available).toBe(false);
       expect(res.body.features[feature].reason_code).toBeTruthy();

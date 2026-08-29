@@ -167,4 +167,31 @@ describe('MCP privacy serialization', () => {
     expect(safe.customer_phone).toBeUndefined();
     expect(safe.approx_lng).toBe(18.42);
   });
+
+  test('MCP helper requires non-revoked route access for canonical accepted bookings', () => {
+    const canonical = booking({
+      status: 'accepted',
+      canonical_fulfilment_policy_present: true,
+    });
+    const scheduled = serializeMcpBooking(canonical, ctx(LABOURER_ID));
+    expect(scheduled.address).toBeUndefined();
+    expect(scheduled.customer_phone).toBeUndefined();
+
+    const enRoute = serializeMcpBooking({
+      ...canonical,
+      operational_phase: 'en_route',
+      route_access_granted_at: new Date().toISOString(),
+    }, ctx(LABOURER_ID));
+    expect(enRoute.address).toBe('12 Exact Street');
+    expect(enRoute.customer_phone).toBe('+27820000000');
+
+    const revoked = serializeMcpBooking({
+      ...canonical,
+      operational_phase: 'en_route',
+      route_access_granted_at: new Date().toISOString(),
+      fulfilment_access_revoked_at: new Date().toISOString(),
+    }, ctx(LABOURER_ID));
+    expect(revoked.address).toBeUndefined();
+    expect(revoked.customer_phone).toBeUndefined();
+  });
 });

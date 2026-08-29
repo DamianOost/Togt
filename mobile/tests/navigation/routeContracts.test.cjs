@@ -60,6 +60,20 @@ test('incoming worker offers dispatch an explicit nested root intent', () => {
     () => createNestedRootIntent('customer', 'ActiveJob', { bookingId: 'booking-1' }),
     /not registered for customer/
   );
+  assert.deepEqual(
+    createNestedRootIntent('labourer', 'WorkerIncomingOffer', { offerId: 'offer-1' }),
+    {
+      name: 'Labourer',
+      params: { screen: 'WorkerIncomingOffer', params: { offerId: 'offer-1' } },
+    }
+  );
+  assert.deepEqual(
+    createNestedRootIntent('labourer', 'WorkerJobDetail', { projectId: 'project-1' }),
+    {
+      name: 'Labourer',
+      params: { screen: 'WorkerJobDetail', params: { projectId: 'project-1' } },
+    }
+  );
 });
 
 test('customer completion return targets the nested home tab explicitly', () => {
@@ -123,7 +137,8 @@ test('registration, offer acceptance, and rating returns avoid stale navigator a
 test('incoming offers render inside the labourer root navigation context', () => {
   const appNavigator = read('src/navigation/AppNavigator.js');
   assert.match(appNavigator, /function LabourerRoot\(\)/);
-  assert.match(appNavigator, /<LabourerStack \/>[\s\S]*<IncomingMatchModal \/>/);
+  assert.match(appNavigator, /const WorkerStack =[\s\S]*GroundedWorkerStack[\s\S]*LabourerStack/);
+  assert.match(appNavigator, /<WorkerStack \/>[\s\S]*<IncomingMatchModal \/>/);
   assert.match(
     appNavigator,
     /<RootStack\.Screen name="Labourer" component=\{LabourerRoot\}/

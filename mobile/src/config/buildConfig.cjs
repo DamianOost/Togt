@@ -9,6 +9,7 @@ const {
 } = require('./apiBaseUrl.cjs');
 
 const ANDROID_PACKAGE_NAME = 'za.togt.app';
+const APP_SCHEME = 'togt';
 const BUILD_PROVIDERS = new Set(['local_gradle', 'eas']);
 const PUSH_PROVIDERS = new Set(['disabled', 'expo', 'fcm']);
 const MAPS_PROVIDERS = new Set(['disabled', 'google']);
@@ -85,6 +86,51 @@ function resolveBuildConfiguration(environment = process.env) {
     'disabled'
   );
   const peachAllowed = readBoolean(environment, 'EXPO_PUBLIC_ENABLE_PEACH', false);
+  const groundedMomentumEnabled = readBoolean(
+    environment,
+    'TOGT_GROUNDED_MOMENTUM',
+    appEnvironment === 'development'
+  );
+  const experienceDefault = groundedMomentumEnabled && appEnvironment === 'development';
+  const featureFlags = Object.freeze({
+    groundedMomentumShell: groundedMomentumEnabled,
+    customerFlagship: groundedMomentumEnabled && readBoolean(
+      environment,
+      'TOGT_CUSTOMER_FLAGSHIP',
+      experienceDefault
+    ),
+    workerExperience: groundedMomentumEnabled && readBoolean(
+      environment,
+      'TOGT_WORKER_EXPERIENCE',
+      experienceDefault
+    ),
+    relationships: groundedMomentumEnabled && readBoolean(
+      environment,
+      'TOGT_RELATIONSHIPS',
+      false
+    ),
+    aiAssistedIntake: groundedMomentumEnabled && readBoolean(
+      environment,
+      'TOGT_AI_ASSISTED_INTAKE',
+      false
+    ),
+    explainableRecommendations: groundedMomentumEnabled && readBoolean(
+      environment,
+      'TOGT_EXPLAINABLE_RECOMMENDATIONS',
+      false
+    ),
+    livePlatformStatus: groundedMomentumEnabled && readBoolean(
+      environment,
+      'TOGT_LIVE_PLATFORM_STATUS',
+      false
+    ),
+    contextualSafetyEducation: groundedMomentumEnabled && readBoolean(
+      environment,
+      'TOGT_CONTEXTUAL_SAFETY_EDUCATION',
+      false
+    ),
+    darkTheme: groundedMomentumEnabled && readBoolean(environment, 'TOGT_DARK_THEME', false),
+  });
 
   const configuredPackage = environment.ANDROID_PACKAGE_NAME?.trim() || ANDROID_PACKAGE_NAME;
   if (configuredPackage !== ANDROID_PACKAGE_NAME) {
@@ -135,16 +181,20 @@ function resolveBuildConfiguration(environment = process.env) {
     buildProvider,
     configClass,
     easProjectId,
+    featureFlags,
     googleMapsAndroidApiKey,
     googleServicesFile,
+    groundedMomentumEnabled,
     mapsProvider,
     packageName: ANDROID_PACKAGE_NAME,
     peachAllowed,
     pushProvider,
+    scheme: APP_SCHEME,
   });
 }
 
 module.exports = {
+  APP_SCHEME,
   ANDROID_CLEARTEXT_CONFIG_CLASSES,
   ANDROID_CONFIG_CLASSES,
   ANDROID_PACKAGE_NAME,

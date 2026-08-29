@@ -21,6 +21,16 @@ const matchRoutes = require('./routes/match');
 const apiKeyRoutes = require('./routes/apiKeys');
 const webhookSubscriptionRoutes = require('./routes/webhookSubscriptions');
 const capabilityRoutes = require('./routes/capabilities');
+const groundedProjectRoutes = require('./routes/groundedProjects');
+const groundedFulfilmentRoutes = require('./routes/groundedFulfilment');
+const groundedTrustRoutes = require('./routes/groundedTrust');
+const groundedIntelligenceRoutes = require('./routes/groundedIntelligence');
+const groundedWorkerRoutes = require('./routes/groundedWorker');
+const {
+  catalogueRouter,
+  quoteRequestRouter,
+  quoteRouter,
+} = require('./routes/groundedQuotes');
 const mcpHttpRoutes = require('../mcp-server/httpHandler');
 const initLocationSockets = require('./sockets/location');
 const initChatSockets = require('./sockets/chat');
@@ -68,17 +78,25 @@ app.use(express.json({
 // /health is a liveness probe — process is up. Always 200 once Express is
 // ready. Use this for launchd/load-balancer keepalive.
 // /health/deep is a readiness probe — pings Postgres (1s budget), checks
-// the webhook dispatcher is fresh (last tick within 3× its interval) AND
+// the webhook and Fast Match dispatchers are fresh (last successful tick
+// within 3× their interval) AND
 // checks the maintenance sweepers are fresh (last SUCCESSFUL sweep within
 // 3× its interval — last_tick_at alone would mask a sweeper whose DELETE
 // throws every tick). Use this for HC.io / on-call alerts that should
 // fire when the system is degraded but the process is technically running.
 const dbModule = require('./config/db');
 const dispatcherModule = require('./services/webhookDispatcher');
+const matchDispatcherModule = require('./services/matcher');
 const sweepersModule = require('./services/maintenanceSweepers');
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 app.get('/health/deep', async (req, res) => {
-  const checks = { process: 'ok', db: 'unknown', dispatcher: 'unknown', sweepers: 'unknown' };
+  const checks = {
+    process: 'ok',
+    db: 'unknown',
+    dispatcher: 'unknown',
+    matcher: 'unknown',
+    sweepers: 'unknown',
+  };
   let ok = true;
   try {
     await dbModule.ping(1000);
@@ -91,10 +109,13 @@ app.get('/health/deep', async (req, res) => {
     // Tests drive tick() directly, no setInterval running. Don't fail
     // /health/deep just because the background workers are idle.
     checks.dispatcher = 'skipped-in-test';
+    checks.matcher = 'skipped-in-test';
     checks.sweepers = 'skipped-in-test';
   } else {
     checks.dispatcher = dispatcherModule.isFresh() ? 'fresh' : 'stale';
     if (checks.dispatcher === 'stale') ok = false;
+    checks.matcher = matchDispatcherModule.isFresh() ? 'fresh' : 'stale';
+    if (checks.matcher === 'stale') ok = false;
     checks.sweepers = sweepersModule.isFresh() ? 'fresh' : 'stale';
     if (checks.sweepers === 'stale') ok = false;
   }
@@ -135,6 +156,14 @@ app.use('/api/match', matchRoutes);
 app.use('/api/api-keys', apiKeyRoutes);
 app.use('/api/webhook-subscriptions', webhookSubscriptionRoutes);
 app.use('/api/capabilities', capabilityRoutes);
+app.use('/api/projects', groundedProjectRoutes);
+app.use('/api/projects', groundedFulfilmentRoutes);
+app.use('/api', groundedTrustRoutes);
+app.use('/api', groundedIntelligenceRoutes);
+app.use('/api/worker', groundedWorkerRoutes);
+app.use('/api/catalogue', catalogueRouter);
+app.use('/api/quote-requests', quoteRequestRouter);
+app.use('/api/quotes', quoteRouter);
 app.use('/mcp', mcpHttpRoutes);
 app.use('/upload', uploadRoutes);
 
@@ -150,6 +179,8 @@ initChatSockets(io);
 initMatchSockets(io);
 
 // Error handler (must be last)
+const { groundedTrustErrorHandler } = require('./middleware/groundedTrustErrors');
+app.use(groundedTrustErrorHandler);
 app.use(problemHandler);
 
 // Graceful shutdown — let in-flight HTTP requests finish, stop the
@@ -157,7 +188,7 @@ app.use(problemHandler);
 // process when reloading; without this handler in-flight requests are
 // dropped and dispatcher ticks die mid-axios. The 10s force-kill ensures
 // we don't hang forever if something is genuinely stuck.
-function installShutdownHandlers(srv, dispatcher, maintenance) {
+function installShutdownHandlers(srv, dispatcher, maintenance, matchDispatcher) {
   let shuttingDown = false;
   const shutdown = (sig) => {
     if (shuttingDown) return;
@@ -165,6 +196,7 @@ function installShutdownHandlers(srv, dispatcher, maintenance) {
     console.log(`[shutdown] ${sig} received — draining`);
     if (dispatcher) dispatcher.stop();
     if (maintenance) maintenance.stop();
+    if (matchDispatcher) matchDispatcher.stop();
     srv.close(async () => {
       try { await require('./config/db').end(); } catch (e) { /* ignore */ }
       console.log('[shutdown] clean exit');
@@ -180,11 +212,15 @@ function installShutdownHandlers(srv, dispatcher, maintenance) {
 }
 
 if (require.main === module) {
-  // Boot-time recovery: kill any 'pending' match_requests stranded by the
-  // previous process. See matcher.js sweepStalePending().
-  require('./services/matcher').sweepStalePending()
-    .then((n) => { if (n > 0) console.log(`[matcher] swept ${n} stale pending match(es) on boot`); })
-    .catch((err) => console.error('[matcher] boot sweep failed:', err.message));
+  // Fast Match recovery is non-destructive: pending work and response
+  // deadlines live in Postgres. Expired leases are reclaimed and the
+  // interval dispatcher resumes them after a restart or rolling deploy.
+  const bootMatchDispatcher = require('./services/matcher');
+  bootMatchDispatcher.recoverPendingDispatches()
+    .then((n) => {
+      if (n > 0) console.log(`[matcher] recovered ${n} pending match(es) on boot`);
+    })
+    .catch((err) => console.error('[matcher] boot recovery failed:', err.message));
 
   // Webhook dispatcher: claims due deliveries every 5s and POSTs them to subscribers.
   // Skipped under NODE_ENV=test because the test suite drives tick() directly.
@@ -197,9 +233,10 @@ if (require.main === module) {
     // and refresh tokens to keep those tables from growing unbounded.
     bootMaintenance = require('./services/maintenanceSweepers');
     bootMaintenance.start();
+    bootMatchDispatcher.start();
   }
 
-  installShutdownHandlers(server, bootDispatcher, bootMaintenance);
+  installShutdownHandlers(server, bootDispatcher, bootMaintenance, bootMatchDispatcher);
 
   server.listen(port, () => {
     console.log(`Togt API running on port ${port}`);

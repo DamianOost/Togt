@@ -7,8 +7,7 @@
  * those rooms.
  */
 
-const jwt = require('jsonwebtoken');
-const { jwtSecret } = require('../config/env');
+const { verifyAccessToken } = require('../lib/jwtTokens');
 
 function initMatchSockets(io) {
   const ns = io.of('/match');
@@ -17,7 +16,7 @@ function initMatchSockets(io) {
     const token = socket.handshake.auth?.token;
     if (!token) return next(new Error('Authentication required'));
     try {
-      socket.user = jwt.verify(token, jwtSecret);
+      socket.user = verifyAccessToken(token);
       next();
     } catch {
       next(new Error('Invalid token'));

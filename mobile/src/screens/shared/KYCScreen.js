@@ -1,13 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+
+import { useTogtTheme } from '../../design';
 import {
-  ActivityIndicator,
-  SafeAreaView,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+  AppScaffold,
+  Button,
+  StatusPill,
+  Surface,
+  TopAppBar,
+} from '../../ui';
+import { translateEnZa as t } from '../../i18n/en-ZA';
 import api from '../../services/api';
 import {
   capabilityEnabled,
@@ -15,124 +18,220 @@ import {
   getEffectiveCapabilities,
 } from '../../services/capabilityService';
 
-const CREAM = '#F7F4EF';
-const INK = '#0F1F1B';
-const EMERALD = '#12844E';
-const AMBER = '#F0A500';
-
 function formatStatus(verification, identityAvailable) {
   const value = verification?.status;
-  if (!value || value === 'unverified') return 'Not verified';
-  if (value === 'pending') return 'Pending review';
-  if (value === 'failed') return 'Check unsuccessful';
+  if (!value || value === 'unverified') {
+    return { label: t('kyc.statusNotVerified'), tone: 'offline' };
+  }
+  if (value === 'pending') {
+    return { label: t('kyc.statusPending'), tone: 'pending' };
+  }
+  if (value === 'failed') {
+    return { label: t('kyc.statusFailed'), tone: 'error' };
+  }
   if (value === 'verified') {
     const supportedProvider = verification?.provider === 'verifynow'
       && !!verification?.verified_at;
     return identityAvailable && supportedProvider
-      ? 'Verified by a supported provider'
-      : 'Legacy/test identity status recorded';
+      ? { label: t('kyc.statusVerified'), tone: 'available' }
+      : { label: t('kyc.statusLegacy'), tone: 'offline' };
   }
-  return 'Status unavailable';
+  return { label: t('kyc.statusUnavailable'), tone: 'offline' };
 }
 
 export default function KYCScreen({ navigation }) {
+  const theme = useTogtTheme();
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [refreshSequence, setRefreshSequence] = useState(0);
   const [verification, setVerification] = useState(null);
   const [capabilities, setCapabilities] = useState(() => failClosedCapabilities('not_loaded'));
 
+  const retry = useCallback(() => {
+    setRefreshSequence((sequence) => sequence + 1);
+  }, []);
+
   useEffect(() => {
     let active = true;
+    setLoading(true);
+    setLoadError(false);
+
     Promise.allSettled([
       getEffectiveCapabilities({ forceRefresh: true }),
       api.get('/api/kyc/status'),
     ]).then(([capabilityResult, statusResult]) => {
       if (!active) return;
-      if (capabilityResult.status === 'fulfilled') setCapabilities(capabilityResult.value);
+      if (capabilityResult.status === 'fulfilled') {
+        setCapabilities(capabilityResult.value);
+      } else {
+        setCapabilities(failClosedCapabilities('capability_data_unavailable'));
+      }
       if (statusResult.status === 'fulfilled') {
         const body = statusResult.value.data;
         setVerification(body.verification || { status: body.kyc_status });
+      } else {
+        setLoadError(true);
       }
       setLoading(false);
     });
-    return () => { active = false; };
-  }, []);
+
+    return () => {
+      active = false;
+    };
+  }, [refreshSequence]);
 
   const identityAvailable = capabilityEnabled(capabilities, 'identity_verification');
   const status = formatStatus(verification, identityAvailable);
 
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-          <Text style={styles.backText}>← Back</Text>
-        </TouchableOpacity>
+    <AppScaffold
+      contentContainerStyle={{ paddingBottom: theme.spacing.xxxl }}
+      scrollable
+      testID="identity-verification-screen"
+      topBar={(
+        <TopAppBar
+          backLabel={t('common.back')}
+          onBack={() => navigation.goBack()}
+          title={t('kyc.title')}
+        />
+      )}
+    >
+      <Text
+        accessibilityRole="header"
+        allowFontScaling
+        style={[theme.typography.display, { color: theme.colors.text }]}
+      >
+        {t('kyc.heading')}
+      </Text>
+      <Text
+        allowFontScaling
+        style={[
+          theme.typography.body,
+          { color: theme.colors.textSecondary, marginTop: theme.spacing.sm },
+        ]}
+      >
+        {t('kyc.subtitle')}
+      </Text>
 
-        <Text style={styles.eyebrow}>TRUST STATUS</Text>
-        <Text style={styles.title}>Identity checks</Text>
-        <Text style={styles.subtitle}>
-          Your account shows only verification outcomes backed by a supported provider.
+      <Surface
+        elevation="card"
+        style={{ marginTop: theme.spacing.xl, padding: theme.spacing.lg }}
+      >
+        <Text
+          allowFontScaling
+          style={[theme.typography.label, { color: theme.colors.textSecondary }]}
+        >
+          {t('kyc.currentStatus')}
         </Text>
-
-        <View style={styles.statusCard}>
-          <Text style={styles.statusLabel}>Current status</Text>
-          {loading ? (
-            <ActivityIndicator color={EMERALD} style={styles.spinner} />
-          ) : (
-            <Text style={styles.statusValue}>{status}</Text>
-          )}
-          {verification?.id_last4 ? (
-            <Text style={styles.detail}>Submitted ID ending •••• {verification.id_last4}</Text>
-          ) : null}
-        </View>
-
-        <View style={styles.noticeCard}>
-          <Text style={styles.noticeMark}>{identityAvailable ? 'i' : '!'}</Text>
-          <View style={styles.noticeCopy}>
-            <Text style={styles.noticeTitle}>
-              {identityAvailable ? 'Provider available' : 'Identity verification is unavailable'}
-            </Text>
-            <Text style={styles.noticeText}>
-              {identityAvailable
-                ? 'Verification can begin when the approved provider flow is connected to this screen.'
-                : 'This internal build cannot complete a production identity or selfie check. No verified badge will be issued here.'}
+        {loading ? (
+          <View
+            accessibilityLabel={t('kyc.loadingStatus')}
+            accessibilityRole="progressbar"
+            style={[styles.loadingRow, { columnGap: theme.spacing.sm, marginTop: theme.spacing.md }]}
+          >
+            <ActivityIndicator color={theme.colors.actionPrimary} size="small" />
+            <Text
+              allowFontScaling
+              style={[theme.typography.bodySmall, { color: theme.colors.textSecondary }]}
+            >
+              {t('kyc.loadingStatus')}
             </Text>
           </View>
-        </View>
+        ) : loadError ? (
+          <View style={{ marginTop: theme.spacing.md }}>
+            <StatusPill label={t('kyc.statusUnavailable')} tone="offline" />
+            <Text
+              accessibilityRole="alert"
+              allowFontScaling
+              style={[
+                theme.typography.bodySmall,
+                { color: theme.colors.textSecondary, marginTop: theme.spacing.sm },
+              ]}
+            >
+              {t('kyc.statusLoadError')}
+            </Text>
+            <Button
+              label={t('common.retry')}
+              onPress={retry}
+              style={{ marginTop: theme.spacing.sm }}
+              variant="secondary"
+            />
+          </View>
+        ) : (
+          <View style={{ marginTop: theme.spacing.md }}>
+            <StatusPill label={status.label} tone={status.tone} />
+            {verification?.id_last4 ? (
+              <Text
+                allowFontScaling
+                style={[
+                  theme.typography.bodySmall,
+                  { color: theme.colors.textSecondary, marginTop: theme.spacing.sm },
+                ]}
+              >
+                {t('kyc.submittedIdEnding', { lastFour: verification.id_last4 })}
+              </Text>
+            ) : null}
+          </View>
+        )}
+      </Surface>
 
-        <Text style={styles.footnote}>
-          Identity, skills, background checks and insurance are separate trust signals.
-        </Text>
-      </ScrollView>
-    </SafeAreaView>
+      <Surface
+        style={[
+          styles.notice,
+          {
+            columnGap: theme.spacing.sm,
+            marginTop: theme.spacing.md,
+            padding: theme.spacing.lg,
+          },
+        ]}
+        variant={identityAvailable ? 'positive' : 'attention'}
+      >
+        <MaterialCommunityIcons
+          accessibilityElementsHidden
+          color={identityAvailable ? theme.colors.actionPrimaryPressed : theme.colors.textOnAttention}
+          importantForAccessibility="no-hide-descendants"
+          name={identityAvailable ? 'shield-check-outline' : 'shield-alert-outline'}
+          size={theme.sizing.iconLarge}
+        />
+        <View style={styles.noticeCopy}>
+          <Text allowFontScaling style={[theme.typography.h3, { color: theme.colors.text }]}>
+            {identityAvailable ? t('kyc.providerAvailableTitle') : t('kyc.unavailableTitle')}
+          </Text>
+          <Text
+            allowFontScaling
+            style={[
+              theme.typography.bodySmall,
+              { color: theme.colors.textSecondary, marginTop: theme.spacing.xs },
+            ]}
+          >
+            {identityAvailable ? t('kyc.providerAvailableBody') : t('kyc.unavailableBody')}
+          </Text>
+        </View>
+      </Surface>
+
+      <Text
+        allowFontScaling
+        style={[
+          theme.typography.bodySmall,
+          { color: theme.colors.textSecondary, marginTop: theme.spacing.xl },
+        ]}
+      >
+        {t('kyc.separateSignals')}
+      </Text>
+    </AppScaffold>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: CREAM },
-  content: { padding: 24, paddingTop: 20 },
-  backButton: { alignSelf: 'flex-start', paddingVertical: 10, marginBottom: 30 },
-  backText: { color: EMERALD, fontSize: 15, fontWeight: '700' },
-  eyebrow: { color: EMERALD, fontSize: 12, fontWeight: '800', letterSpacing: 1.6, marginBottom: 10 },
-  title: { color: INK, fontSize: 32, fontWeight: '800', letterSpacing: -0.7 },
-  subtitle: { color: '#50605B', fontSize: 16, lineHeight: 24, marginTop: 10, marginBottom: 28 },
-  statusCard: {
-    backgroundColor: '#FFFFFF', borderColor: '#E2DED5', borderWidth: 1,
-    borderRadius: 20, padding: 20, minHeight: 116,
+  loadingRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
   },
-  statusLabel: { color: '#66736F', fontSize: 12, fontWeight: '700', letterSpacing: 0.8, textTransform: 'uppercase' },
-  statusValue: { color: INK, fontSize: 22, fontWeight: '800', marginTop: 10 },
-  spinner: { alignSelf: 'flex-start', marginTop: 14 },
-  detail: { color: '#66736F', fontSize: 13, marginTop: 8 },
-  noticeCard: {
-    flexDirection: 'row', backgroundColor: '#FFF8E8', borderColor: '#F3D490',
-    borderWidth: 1, borderRadius: 20, padding: 18, marginTop: 16,
+  notice: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
   },
-  noticeMark: {
-    width: 30, height: 30, borderRadius: 15, backgroundColor: AMBER,
-    color: INK, textAlign: 'center', lineHeight: 30, fontWeight: '900', marginRight: 12,
+  noticeCopy: {
+    flex: 1,
   },
-  noticeCopy: { flex: 1 },
-  noticeTitle: { color: INK, fontSize: 16, fontWeight: '800', marginBottom: 6 },
-  noticeText: { color: '#59635F', fontSize: 14, lineHeight: 21 },
-  footnote: { color: '#6D7773', fontSize: 13, lineHeight: 20, marginTop: 24 },
 });

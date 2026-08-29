@@ -25,36 +25,48 @@ router.post('/initiate', authMiddleware, (req, res) => {
 // POST /payments/webhook — Peach Payments result notification
 router.post('/webhook', async (req, res, next) => {
   try {
-    // Signature verification — defence in depth.
-    // When PEACH_WEBHOOK_SECRET is set, compute HMAC-SHA256 over the raw body
-    // and compare (timing-safe) against the X-Signature header.
+    if (!peach.webhooksEnabled) {
+      return res.status(503).json({
+        error: 'capability_unavailable',
+        capability: 'peach_webhook',
+        reason_code: 'peach_webhook_not_approved',
+        detail: 'Payment webhooks are disabled. No payment state was changed.',
+      });
+    }
+    if (!peach.webhooksConfigured) {
+      return res.status(503).json({
+        error: 'capability_unavailable',
+        capability: 'peach_webhook',
+        reason_code: 'peach_webhook_configuration_incomplete',
+        detail: 'Payment webhooks are disabled. No payment state was changed.',
+      });
+    }
+    // Signature verification is a hard gate. Missing provider configuration
+    // never degrades into an unsigned development path because this endpoint
+    // is allowed to change authoritative payment state.
     // NOTE: Peach's signature scheme varies by product (COPYandPAY vs S2S).
     // Confirm the exact header name and encoding with the Peach integration
     // contact before going to production.
-    if (peach.webhookSecret) {
-      const sig = req.header('X-Signature') || req.header('x-signature');
-      if (!sig) {
-        return res.status(401).json({ error: 'Missing signature' });
-      }
-      // HMAC-SHA256 computed over the raw body (captured pre-parse in app.js).
-      if (!req.rawBody) {
-        return res.status(400).json({ error: 'Raw body unavailable for signature check' });
-      }
-      const expected = crypto
-        .createHmac('sha256', peach.webhookSecret)
-        .update(req.rawBody)
-        .digest('base64');
-      try {
-        const provided = Buffer.from(sig, 'base64');
-        const expectedBuf = Buffer.from(expected, 'base64');
-        if (provided.length !== expectedBuf.length || !crypto.timingSafeEqual(provided, expectedBuf)) {
-          return res.status(401).json({ error: 'Invalid signature' });
-        }
-      } catch {
+    const sig = req.header('X-Signature') || req.header('x-signature');
+    if (!sig) {
+      return res.status(401).json({ error: 'Missing signature' });
+    }
+    // HMAC-SHA256 computed over the raw body (captured pre-parse in app.js).
+    if (!req.rawBody) {
+      return res.status(400).json({ error: 'Raw body unavailable for signature check' });
+    }
+    const expected = crypto
+      .createHmac('sha256', peach.webhookSecret)
+      .update(req.rawBody)
+      .digest('base64');
+    try {
+      const provided = Buffer.from(sig, 'base64');
+      const expectedBuf = Buffer.from(expected, 'base64');
+      if (provided.length !== expectedBuf.length || !crypto.timingSafeEqual(provided, expectedBuf)) {
         return res.status(401).json({ error: 'Invalid signature' });
       }
-    } else if (process.env.NODE_ENV === 'production') {
-      console.warn('[peach webhook] PEACH_WEBHOOK_SECRET not set in production — accepting unsigned webhook');
+    } catch {
+      return res.status(401).json({ error: 'Invalid signature' });
     }
 
     // Body was parsed by express.json (or is empty object for non-JSON requests).
@@ -121,7 +133,8 @@ router.post('/webhook', async (req, res, next) => {
 router.get('/status/:bookingId', authMiddleware, async (req, res, next) => {
   try {
     const result = await db.query(
-      `SELECT p.* FROM payments p
+      `SELECT p.id, p.booking_id, p.amount, p.currency, p.status, p.created_at
+       FROM payments p
        JOIN bookings b ON p.booking_id = b.id
        WHERE p.booking_id = $1
          AND (b.customer_id = $2 OR b.labourer_id = $2)`,
@@ -131,7 +144,7 @@ router.get('/status/:bookingId', authMiddleware, async (req, res, next) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Payment not found' });
     }
-    res.json({ payment: result.rows[0] });
+    res.set('Cache-Control', 'private, no-store').json({ payment: result.rows[0] });
   } catch (err) {
     next(err);
   }

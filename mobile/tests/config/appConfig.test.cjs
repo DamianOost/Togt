@@ -21,6 +21,15 @@ const CONFIG_ENVIRONMENT_NAMES = [
   'EXPO_PUBLIC_PUSH_PROVIDER',
   'GOOGLE_MAPS_ANDROID_API_KEY',
   'GOOGLE_SERVICES_JSON',
+  'TOGT_GROUNDED_MOMENTUM',
+  'TOGT_CUSTOMER_FLAGSHIP',
+  'TOGT_WORKER_EXPERIENCE',
+  'TOGT_RELATIONSHIPS',
+  'TOGT_AI_ASSISTED_INTAKE',
+  'TOGT_EXPLAINABLE_RECOMMENDATIONS',
+  'TOGT_LIVE_PLATFORM_STATUS',
+  'TOGT_CONTEXTUAL_SAFETY_EDUCATION',
+  'TOGT_DARK_THEME',
   'TOGT_STANDALONE_BUILD',
 ];
 
@@ -60,7 +69,7 @@ test('local Gradle development config is labelled and locks release identity', (
     EXPO_PUBLIC_APP_ENV: 'development',
   });
 
-  assert.equal(config.name, 'Togt Development');
+  assert.equal(config.name, 'TOGT Development');
   assert.equal(config.extra.apiUrl, 'http://192.168.10.20:3000');
   assert.equal(config.extra.appEnvironment, 'development');
   assert.equal(config.extra.buildProvider, 'local_gradle');
@@ -75,14 +84,60 @@ test('local Gradle development config is labelled and locks release identity', (
     peach: false,
     push: 'disabled',
   });
+  assert.deepEqual(config.extra.features, { groundedMomentum: true });
+  assert.deepEqual(config.extra.featureFlags, {
+    schemaVersion: 1,
+    flags: {
+      groundedMomentumShell: true,
+      customerFlagship: true,
+      workerExperience: true,
+      relationships: false,
+      aiAssistedIntake: false,
+      explainableRecommendations: false,
+      livePlatformStatus: false,
+      contextualSafetyEducation: false,
+      darkTheme: false,
+    },
+  });
   assert.equal(config.android.package, 'za.togt.app');
-  assert.equal(config.android.versionCode, 2);
+  assert.equal(config.android.versionCode, 3);
   assert.doesNotMatch(
     config.android.permissions.join(','),
     /ACCESS_BACKGROUND_LOCATION/
   );
-  assert.equal(config.version, '1.0.1');
+  assert.equal(config.version, '1.1.0');
+  assert.equal(config.scheme, 'togt');
+  assert.equal(base.expo.scheme, 'togt');
   assert.equal(config.extra.eas, undefined);
+});
+
+test('Android blocks unused sensitive permissions while preserving library-only photo selection', () => {
+  const config = configFor({
+    ANDROID_BUILD_PROVIDER: 'local_gradle',
+    EXPO_PUBLIC_API_BASE_URL: 'http://127.0.0.1:3003',
+    EXPO_PUBLIC_APP_ENV: 'development',
+  });
+  assert.deepEqual(config.android.blockedPermissions, [
+    'android.permission.RECORD_AUDIO',
+    'android.permission.CAMERA',
+    'android.permission.SYSTEM_ALERT_WINDOW',
+    'android.permission.READ_EXTERNAL_STORAGE',
+    'android.permission.WRITE_EXTERNAL_STORAGE',
+  ]);
+  const imagePicker = config.plugins.find(
+    (entry) => Array.isArray(entry) && entry[0] === 'expo-image-picker'
+  );
+  assert.deepEqual(imagePicker, [
+    'expo-image-picker',
+    {
+      photosPermission: 'Allow TOGT to select an existing profile photo.',
+      cameraPermission: false,
+      microphonePermission: false,
+    },
+  ]);
+  assert.ok(config.plugins.some((entry) =>
+    Array.isArray(entry) && entry[0] === 'expo-notifications'
+  ));
 });
 
 test('Android release cleartext is limited to local and LAN development configs', () => {
@@ -207,10 +262,73 @@ test('local preview config does not require an Expo project', () => {
     EXPO_PUBLIC_APP_ENV: 'preview',
   });
 
-  assert.equal(config.name, 'Togt');
+  assert.equal(config.name, 'TOGT');
   assert.equal(config.extra.configClass, 'preview');
   assert.equal(config.extra.buildProvider, 'local_gradle');
   assert.equal(config.extra.eas, undefined);
+  assert.deepEqual(config.extra.features, { groundedMomentum: false });
+  assert.equal(config.extra.featureFlags.flags.groundedMomentumShell, false);
+  assert.equal(config.extra.featureFlags.flags.customerFlagship, false);
+});
+
+test('Grounded Momentum shell has an explicit packaged rollback flag', () => {
+  const preview = configFor({
+    ANDROID_BUILD_PROVIDER: 'local_gradle',
+    EXPO_PUBLIC_API_BASE_URL: 'https://preview.example.test',
+    EXPO_PUBLIC_APP_ENV: 'preview',
+    TOGT_GROUNDED_MOMENTUM: 'true',
+  });
+  assert.deepEqual(preview.extra.features, { groundedMomentum: true });
+  assert.equal(preview.extra.featureFlags.flags.groundedMomentumShell, true);
+  assert.equal(preview.extra.featureFlags.flags.customerFlagship, false);
+
+  const developmentRollback = configFor({
+    ANDROID_BUILD_PROVIDER: 'local_gradle',
+    EXPO_PUBLIC_API_BASE_URL: 'http://localhost:3000',
+    EXPO_PUBLIC_APP_ENV: 'development',
+    TOGT_GROUNDED_MOMENTUM: 'false',
+  });
+  assert.deepEqual(developmentRollback.extra.features, { groundedMomentum: false });
+  assert.deepEqual(
+    new Set(Object.values(developmentRollback.extra.featureFlags.flags)),
+    new Set([false])
+  );
+});
+
+test('packaged child experiences require the master shell and explicit production opt-in', () => {
+  const enabled = configFor({
+    ANDROID_BUILD_PROVIDER: 'local_gradle',
+    EXPO_PUBLIC_API_BASE_URL: 'https://preview.example.test',
+    EXPO_PUBLIC_APP_ENV: 'preview',
+    TOGT_GROUNDED_MOMENTUM: 'true',
+    TOGT_CUSTOMER_FLAGSHIP: 'true',
+    TOGT_AI_ASSISTED_INTAKE: 'true',
+    TOGT_EXPLAINABLE_RECOMMENDATIONS: 'true',
+    TOGT_LIVE_PLATFORM_STATUS: 'true',
+    TOGT_CONTEXTUAL_SAFETY_EDUCATION: 'true',
+  });
+  assert.equal(enabled.extra.featureFlags.flags.customerFlagship, true);
+  assert.equal(enabled.extra.featureFlags.flags.aiAssistedIntake, true);
+  assert.equal(enabled.extra.featureFlags.flags.explainableRecommendations, true);
+  assert.equal(enabled.extra.featureFlags.flags.livePlatformStatus, true);
+  assert.equal(enabled.extra.featureFlags.flags.contextualSafetyEducation, true);
+
+  const rolledBack = configFor({
+    ANDROID_BUILD_PROVIDER: 'local_gradle',
+    EXPO_PUBLIC_API_BASE_URL: 'https://preview.example.test',
+    EXPO_PUBLIC_APP_ENV: 'preview',
+    TOGT_GROUNDED_MOMENTUM: 'false',
+    TOGT_CUSTOMER_FLAGSHIP: 'true',
+    TOGT_AI_ASSISTED_INTAKE: 'true',
+    TOGT_EXPLAINABLE_RECOMMENDATIONS: 'true',
+    TOGT_LIVE_PLATFORM_STATUS: 'true',
+    TOGT_CONTEXTUAL_SAFETY_EDUCATION: 'true',
+  });
+  assert.equal(rolledBack.extra.featureFlags.flags.customerFlagship, false);
+  assert.equal(rolledBack.extra.featureFlags.flags.aiAssistedIntake, false);
+  assert.equal(rolledBack.extra.featureFlags.flags.explainableRecommendations, false);
+  assert.equal(rolledBack.extra.featureFlags.flags.livePlatformStatus, false);
+  assert.equal(rolledBack.extra.featureFlags.flags.contextualSafetyEducation, false);
 });
 
 test('EAS and Expo Push require a project ID only when selected', () => {
@@ -294,9 +412,24 @@ test('optional EAS profile remains an internal APK profile', () => {
   assert.equal(eas.build.preview.environment, 'preview');
   assert.equal(eas.build.preview.env.ANDROID_BUILD_PROVIDER, 'eas');
   assert.equal(eas.build.preview.android.buildType, 'apk');
+  assert.equal(eas.build.preview.env.EXPO_PUBLIC_ENABLE_PEACH, 'false');
+  assert.equal(eas.build.preview.env.EXPO_PUBLIC_MAPS_PROVIDER, 'disabled');
+  assert.equal(eas.build.preview.env.EXPO_PUBLIC_PUSH_PROVIDER, 'disabled');
+  for (const name of [
+    'TOGT_GROUNDED_MOMENTUM',
+    'TOGT_CUSTOMER_FLAGSHIP',
+    'TOGT_WORKER_EXPERIENCE',
+    'TOGT_RELATIONSHIPS',
+    'TOGT_AI_ASSISTED_INTAKE',
+    'TOGT_EXPLAINABLE_RECOMMENDATIONS',
+    'TOGT_LIVE_PLATFORM_STATUS',
+    'TOGT_CONTEXTUAL_SAFETY_EDUCATION',
+  ]) {
+    assert.equal(eas.build.preview.env[name], 'true', `${name} must be packaged for the internal full-lane preview`);
+  }
 });
 
-test('notification config does not reference a missing custom icon', () => {
+test('notification config uses the generated monochrome Grounded Momentum icon', () => {
   const config = configFor({
     ANDROID_BUILD_PROVIDER: 'local_gradle',
     EXPO_PUBLIC_API_BASE_URL: 'http://localhost:3000',
@@ -306,5 +439,6 @@ test('notification config does not reference a missing custom icon', () => {
     (entry) => Array.isArray(entry) && entry[0] === 'expo-notifications'
   );
   assert.ok(plugin);
-  assert.equal(plugin[1].icon, undefined);
+  assert.equal(plugin[1].icon, './assets/notification-icon.png');
+  assert.equal(plugin[1].color, '#12844E');
 });

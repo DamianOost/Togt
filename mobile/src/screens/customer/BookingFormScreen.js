@@ -13,12 +13,6 @@ import api from '../../services/api';
 
 const { createCustomerHomeIntent, createRouteParams } = require('../../navigation/routeContracts');
 
-const RECURRENCE_OPTIONS = [
-  { label: 'Weekly', value: 'weekly', days: 7 },
-  { label: 'Fortnightly', value: 'fortnightly', days: 14 },
-  { label: 'Monthly', value: 'monthly', days: 30 },
-];
-
 const DURATION_OPTIONS = [
   { label: '2h', hours: 2 },
   { label: '4h', hours: 4 },
@@ -56,8 +50,6 @@ export default function BookingFormScreen({ route, navigation }) {
   const [scheduledDate, setScheduledDate] = useState(new Date(Date.now() + 60 * 60 * 1000));
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
-  const [recurPattern, setRecurPattern] = useState(null); // null | 'weekly' | 'fortnightly' | 'monthly'
-  const [recurLoading, setRecurLoading] = useState(false);
 
   function goBackSafely() {
     if (navigation.canGoBack()) {
@@ -216,15 +208,6 @@ export default function BookingFormScreen({ route, navigation }) {
     if (createBookingThunk.fulfilled.match(result)) {
       const bookingId = result.payload.booking.id;
 
-      // If user selected recurrence, create future bookings
-      if (recurPattern) {
-        setRecurLoading(true);
-        try {
-          await api.post(`/api/bookings/${bookingId}/make-recurring`, { pattern: recurPattern });
-        } catch {}
-        setRecurLoading(false);
-      }
-
       navigation.replace('ActiveBooking', { bookingId });
     }
   }
@@ -372,43 +355,14 @@ export default function BookingFormScreen({ route, navigation }) {
             />
           </View>
 
-          {/* Recurring booking */}
+          {/* Recurring work requires bilateral terms after eligible completed work. */}
           <View style={styles.card}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionIcon}>🔄</Text>
-              <Text style={styles.sectionTitle}>Make this recurring?</Text>
+              <Text style={styles.sectionTitle}>Recurring bookings unavailable here</Text>
             </View>
-            <Text style={styles.recurSub}>Saves you rebooking every time</Text>
-            <View style={styles.durationRow}>
-              {RECURRENCE_OPTIONS.map((opt) => (
-                <TouchableOpacity
-                  key={opt.value}
-                  style={[styles.durationChip, recurPattern === opt.value && styles.durationChipActive]}
-                  onPress={() => setRecurPattern(recurPattern === opt.value ? null : opt.value)}
-                >
-                  <Text style={[styles.durationChipText, recurPattern === opt.value && styles.durationChipTextActive]}>
-                    {opt.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            {recurPattern && (
-              <View style={styles.recurPreview}>
-                <Text style={styles.recurPreviewTitle}>📅 Next 4 scheduled dates:</Text>
-                {RECURRENCE_OPTIONS.find((o) => o.value === recurPattern) &&
-                  Array.from({ length: 4 }).map((_, i) => {
-                    const days = RECURRENCE_OPTIONS.find((o) => o.value === recurPattern).days;
-                    const d = new Date(scheduledDate);
-                    d.setDate(d.getDate() + days * (i + 1));
-                    return (
-                      <Text key={i} style={styles.recurDate}>
-                        {i + 1}. {d.toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
-                      </Text>
-                    );
-                  })
-                }
-              </View>
-            )}
+            <Text style={styles.recurSub}>
+              Recurring work requires catalogue eligibility and both parties accepting the terms after a completed Project.
+            </Text>
           </View>
 
           {/* Price estimate */}
@@ -430,8 +384,8 @@ export default function BookingFormScreen({ route, navigation }) {
 
         {/* Fixed CTA */}
         <View style={styles.footer}>
-          <TouchableOpacity style={styles.confirmBtn} onPress={handleBook} disabled={loading || recurLoading}>
-            {loading || recurLoading ? (
+          <TouchableOpacity style={styles.confirmBtn} onPress={handleBook} disabled={loading}>
+            {loading ? (
               <ActivityIndicator color={colors.primary} />
             ) : (
               <Text style={styles.confirmBtnText}>

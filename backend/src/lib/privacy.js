@@ -1,8 +1,19 @@
 const crypto = require('crypto');
+const { approvedPublicProfileImageUrl } = require('./publicMedia');
+const { publicTextOrNull } = require('./publicText');
 
 const CONTACT_REVEAL_STATUSES = new Set(['accepted', 'in_progress']);
 const LOCATION_REVEAL_STATUSES = new Set(['accepted', 'in_progress']);
+const CANONICAL_ROUTE_ACCESS_PHASES = new Set([
+  'en_route',
+  'arrived',
+  'scope_confirmation',
+  'work_active',
+  'completion_review',
+]);
 const LIVE_LOCATION_TTL_MS = 15 * 60 * 1000;
+const MATCH_SCOPE_SUMMARY_FALLBACK = 'Service requested through TOGT';
+const MATCH_SCOPE_SUMMARY_MAX_CHARS = 120;
 
 const SENSITIVE_KEYS = new Set([
   'phone',
@@ -77,6 +88,54 @@ function isOperationallyActive(status) {
   return CONTACT_REVEAL_STATUSES.has(status);
 }
 
+function normalizedPrivateText(value) {
+  return typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').toLowerCase() : '';
+}
+
+function matchScopeSummary(row = {}) {
+  if (typeof row.skill_needed !== 'string') return MATCH_SCOPE_SUMMARY_FALLBACK;
+  const candidate = row.skill_needed.trim().replace(/\s+/g, ' ');
+  const normalizedCandidate = normalizedPrivateText(candidate);
+  const normalizedAddress = normalizedPrivateText(row.address || row.private_address);
+  const containsPrivatePattern =
+    /\b[^\s@]+@[^\s@]+\.[^\s@]+\b/i.test(candidate)
+    || /(?:\+?\d[\d\s().-]*){7,}/.test(candidate)
+    || /-?\d{1,3}\.\d{3,}\s*[,;]\s*-?\d{1,3}\.\d{3,}/.test(candidate)
+    || (normalizedAddress.length > 0 && normalizedCandidate.includes(normalizedAddress));
+  return candidate.length > 0
+    && candidate.length <= MATCH_SCOPE_SUMMARY_MAX_CHARS
+    && !containsPrivatePattern
+    ? candidate
+    : MATCH_SCOPE_SUMMARY_FALLBACK;
+}
+
+function hasCanonicalFulfilment(row = {}) {
+  return row.canonical_fulfilment_policy_present === true
+    || row.policy_version != null
+    || row.current_scope_version != null
+    || row.accepted_quote_id != null
+    || row.agreement_quote_id != null
+    || row.canonical_agreement_snapshot_present === true
+    || row.canonical_match_acceptance_present === true;
+}
+
+function hasActiveCanonicalRouteAccess(row = {}) {
+  return row.route_access_granted_at != null
+    && row.fulfilment_access_revoked_at == null
+    && CANONICAL_ROUTE_ACCESS_PHASES.has(row.operational_phase)
+    && !['completed', 'cancelled', 'terminated_after_start'].includes(row.status);
+}
+
+function canUseLiveLocation(row = {}) {
+  if (!CONTACT_REVEAL_STATUSES.has(row.status)) return false;
+  return !hasCanonicalFulfilment(row) || hasActiveCanonicalRouteAccess(row);
+}
+
+function canRevealLegacyBookingOperations(row = {}) {
+  if (!CONTACT_REVEAL_STATUSES.has(row.status)) return false;
+  return !hasCanonicalFulfilment(row) || hasActiveCanonicalRouteAccess(row);
+}
+
 function redactForAudit(value) {
   if (Array.isArray(value)) return value.map(redactForAudit);
   if (!value || typeof value !== 'object') return value;
@@ -105,14 +164,15 @@ function serializeUserPrivate(user = {}) {
 }
 
 function serializeLabourerPublic(row = {}) {
+  const publicName = publicTextOrNull(row.name, { maxLength: 80 }) || 'Worker';
   return stripUndefined({
     id: row.id || row.user_id,
     user_id: row.user_id || row.id,
-    name: row.name,
-    avatar_url: row.avatar_url,
+    name: publicName,
+    avatar_url: approvedPublicProfileImageUrl(row.avatar_url) || undefined,
     skills: row.skills,
     hourly_rate: row.hourly_rate,
-    bio: row.bio,
+    bio: publicTextOrNull(row.bio, { maxLength: 1_000 }) || undefined,
     is_available: row.is_available,
     rating_avg: row.rating_avg,
     rating_count: row.rating_count,
@@ -154,8 +214,9 @@ function serializeBookingForUser(row = {}, viewer = {}) {
   const role = viewer.role;
   const isCustomer = row.customer_id === viewerId || role === 'customer';
   const isLabourer = row.labourer_id === viewerId || role === 'labourer';
-  const revealContact = CONTACT_REVEAL_STATUSES.has(row.status);
-  const revealLocation = LOCATION_REVEAL_STATUSES.has(row.status);
+  const revealContact = canRevealLegacyBookingOperations(row);
+  const revealLocation = LOCATION_REVEAL_STATUSES.has(row.status)
+    && canRevealLegacyBookingOperations(row);
 
   const out = {
     id: row.id,
@@ -232,11 +293,13 @@ function serializeMatchForCustomer(row = {}) {
 }
 
 function serializeMatchForLabourerCandidate(row = {}) {
+  const scopeSummary = matchScopeSummary(row);
   return stripUndefined({
     id: row.id,
     matchId: row.matchId || row.id,
     attemptId: row.attemptId,
-    skill_needed: row.skill_needed,
+    skill_needed: scopeSummary,
+    scopeSummary,
     scheduled_at: row.scheduled_at,
     hours_est: row.hours_est,
     hourly_rate: row.hourly_rate,
@@ -301,7 +364,10 @@ function sanitizeEventPayload(eventType, payload = {}, opts = {}) {
 module.exports = {
   CONTACT_REVEAL_STATUSES,
   LOCATION_REVEAL_STATUSES,
+  CANONICAL_ROUTE_ACCESS_PHASES,
   LIVE_LOCATION_TTL_MS,
+  MATCH_SCOPE_SUMMARY_FALLBACK,
+  MATCH_SCOPE_SUMMARY_MAX_CHARS,
   normalizeSouthAfricanId,
   idLast4,
   blindIndex,
@@ -309,6 +375,11 @@ module.exports = {
   approxLocation,
   isLocationFresh,
   isOperationallyActive,
+  matchScopeSummary,
+  hasCanonicalFulfilment,
+  hasActiveCanonicalRouteAccess,
+  canUseLiveLocation,
+  canRevealLegacyBookingOperations,
   stripUndefined,
   redactForAudit,
   serializeUserPrivate,

@@ -1,3 +1,6 @@
+const originalLegacyDirectBookingGate = process.env.LEGACY_DIRECT_BOOKING_CREATION_ENABLED;
+process.env.LEGACY_DIRECT_BOOKING_CREATION_ENABLED = 'true';
+
 const { request, app, db, truncateAll, registerUser, authHeader } = require('./helpers');
 
 beforeEach(async () => {
@@ -5,6 +8,8 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  if (originalLegacyDirectBookingGate === undefined) delete process.env.LEGACY_DIRECT_BOOKING_CREATION_ENABLED;
+  else process.env.LEGACY_DIRECT_BOOKING_CREATION_ENABLED = originalLegacyDirectBookingGate;
   if (db.end) await db.end();
 });
 

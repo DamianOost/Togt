@@ -1,16 +1,35 @@
-import React, { useState } from 'react';
-import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet,
-  SafeAreaView, ScrollView, ActivityIndicator, Alert,
-} from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Linking, StyleSheet, Text, View } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useDispatch, useSelector } from 'react-redux';
-import { registerThunk } from '../../store/authSlice';
+
+import { adaptRegistrationPolicyV1 } from '../../data/grounded';
+import { useTogtTheme } from '../../design';
+import {
+  AppScaffold,
+  ConsentCheckbox,
+  InlineError,
+  PrimaryButton,
+  Surface,
+  TertiaryButton,
+  TextField,
+  TopAppBar,
+} from '../../ui';
+import { translateEnZa as t } from '../../i18n/en-ZA';
+import { authService } from '../../services/authService';
+import { clearError, registerThunk } from '../../store/authSlice';
+import { AuthFormSurface, AuthIntro, FieldSpacer } from './AuthLayout';
+
+const ROLES = [
+  { value: 'customer', labelKey: 'auth.customer', icon: 'hammer-wrench' },
+  { value: 'labourer', labelKey: 'auth.worker', icon: 'briefcase-outline' },
+];
 
 export default function RegisterScreen({ route, navigation }) {
-  const preselectedRole = route.params?.role || 'customer';
+  const preselectedRole = route?.params?.role === 'labourer' ? 'labourer' : 'customer';
   const dispatch = useDispatch();
-  const { loading, error } = useSelector((s) => s.auth);
-
+  const theme = useTogtTheme();
+  const { loading, error } = useSelector((state) => state.auth);
   const [form, setForm] = useState({
     name: '',
     email: '',
@@ -18,117 +37,309 @@ export default function RegisterScreen({ route, navigation }) {
     password: '',
     role: preselectedRole,
   });
-  function set(key) {
-    return (value) => setForm((f) => ({ ...f, [key]: value }));
+  const [showPassword, setShowPassword] = useState(false);
+  const [validationError, setValidationError] = useState('');
+  const [policyAttempt, setPolicyAttempt] = useState(0);
+  const [policyState, setPolicyState] = useState({ status: 'loading' });
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [privacyAccepted, setPrivacyAccepted] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    setPolicyState({ status: 'loading' });
+    setTermsAccepted(false);
+    setPrivacyAccepted(false);
+    authService.getRegistrationPolicy()
+      .then((response) => {
+        if (!active) return;
+        const adapted = adaptRegistrationPolicyV1(response);
+        if (!adapted.ok || !adapted.value.available) {
+          setPolicyState({ status: 'error' });
+          return;
+        }
+        setPolicyState({ status: 'ready', value: adapted.value });
+      })
+      .catch(() => {
+        if (active) setPolicyState({ status: 'error' });
+      });
+    return () => { active = false; };
+  }, [policyAttempt]);
+
+  function setField(key) {
+    return (value) => {
+      setForm((current) => ({ ...current, [key]: value }));
+      setValidationError('');
+      if (error) dispatch(clearError());
+    };
   }
 
-  async function handleRegister() {
-    if (!form.name || !form.email || !form.phone || !form.password) {
-      Alert.alert('Error', 'Please fill in all fields');
+  function chooseRole(role) {
+    setForm((current) => ({ ...current, role }));
+    if (error) dispatch(clearError());
+  }
+
+  function handleRegister() {
+    const name = form.name.trim();
+    const email = form.email.trim().toLowerCase();
+    const phone = form.phone.trim();
+    if (!name || !email || !phone || !form.password) {
+      setValidationError(t('auth.errorRequired'));
       return;
     }
-    // A successful registration changes the authorized root shell. Do not
-    // dispatch a navigation action from this auth stack after it unmounts.
-    dispatch(registerThunk(form));
+    if (form.password.length < 8) {
+      setValidationError(t('auth.errorPasswordLength'));
+      return;
+    }
+    if (policyState.status !== 'ready') {
+      setValidationError(t('auth.policyUnavailable'));
+      return;
+    }
+    if (!termsAccepted || !privacyAccepted) {
+      setValidationError(t('auth.policyRequired'));
+      return;
+    }
+
+    setValidationError('');
+    // The internal compatibility value remains `labourer`; the authorised
+    // account shell maps it to the canonical customer-facing term Worker.
+    dispatch(registerThunk({
+      ...form,
+      name,
+      email,
+      phone,
+      policyConsent: {
+        revision: policyState.value.revision,
+        termsAccepted: true,
+        privacyAccepted: true,
+      },
+    }));
   }
 
+  const registerBody = form.role === 'customer'
+    ? t('auth.registerBodyCustomer')
+    : t('auth.registerBodyWorker');
+  const submitLabel = form.role === 'customer'
+    ? t('auth.createCustomer')
+    : t('auth.createWorker');
+
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-        <Text style={styles.title}>Create Account</Text>
-        <Text style={styles.subtitle}>
-          Joining as a <Text style={styles.roleText}>{form.role === 'customer' ? 'Customer' : 'Labourer'}</Text>
-        </Text>
+    <AppScaffold
+      contentContainerStyle={{ paddingBottom: theme.spacing.xxxl }}
+      keyboardAware
+      scrollable
+      testID="auth-register-screen"
+      topBar={(
+        <TopAppBar
+          backLabel={t('common.back')}
+          onBack={() => navigation.goBack()}
+        />
+      )}
+    >
+      <AuthIntro body={registerBody} compact title={t('auth.registerTitle')} />
 
-        {/* Role Toggle */}
-        <View style={styles.roleToggle}>
-          {['customer', 'labourer'].map((r) => (
-            <TouchableOpacity
-              key={r}
-              style={[styles.roleBtn, form.role === r && styles.roleBtnActive]}
-              onPress={() => set('role')(r)}
+      <View
+        accessibilityRole="radiogroup"
+        style={[styles.roleRow, { columnGap: theme.spacing.sm, marginTop: theme.spacing.lg }]}
+      >
+        {ROLES.map((role) => {
+          const selected = form.role === role.value;
+          const label = t(role.labelKey);
+          return (
+            <Surface
+              accessibilityLabel={label}
+              key={role.value}
+              onPress={() => chooseRole(role.value)}
+              selected={selected}
+              style={[styles.roleChoice, { minHeight: theme.sizing.controlHeightLarge }]}
+              testID={`role-${role.value}`}
+              variant={selected ? 'positive' : 'default'}
             >
-              <Text style={[styles.roleBtnText, form.role === r && styles.roleBtnTextActive]}>
-                {r === 'customer' ? 'Customer' : 'Labourer'}
+              <MaterialCommunityIcons
+                color={selected ? theme.colors.actionPrimaryPressed : theme.colors.textSecondary}
+                name={role.icon}
+                size={theme.sizing.iconLarge}
+              />
+              <Text
+                allowFontScaling
+                style={[
+                  theme.typography.label,
+                  {
+                    color: selected ? theme.colors.actionPrimaryPressed : theme.colors.text,
+                    marginLeft: theme.spacing.xs,
+                  },
+                ]}
+              >
+                {label}
               </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+            </Surface>
+          );
+        })}
+      </View>
 
-        {error && <Text style={styles.error}>{error}</Text>}
+      <AuthFormSurface testID="register-form">
+        {validationError || error ? (
+          <InlineError message={validationError || t('auth.errorRegister')} testID="register-error" />
+        ) : null}
+        {validationError || error ? <FieldSpacer /> : null}
 
-        <TextInput
-          style={styles.input}
-          placeholder="Full Name"
-          value={form.name}
-          onChangeText={set('name')}
+        <TextField
           autoCapitalize="words"
+          autoComplete="name"
+          label={t('auth.fullName')}
+          onChangeText={setField('name')}
+          placeholder={t('auth.fullNamePlaceholder')}
+          required
+          textContentType="name"
+          value={form.name}
         />
-        <TextInput
-          style={styles.input}
-          placeholder="Email Address"
-          value={form.email}
-          onChangeText={set('email')}
-          keyboardType="email-address"
+        <FieldSpacer />
+        <TextField
           autoCapitalize="none"
+          autoComplete="email"
+          autoCorrect={false}
+          keyboardType="email-address"
+          label={t('auth.email')}
+          onChangeText={setField('email')}
+          placeholder={t('auth.emailPlaceholder')}
+          required
+          textContentType="emailAddress"
+          value={form.email}
         />
-        <TextInput
-          style={styles.input}
-          placeholder="Phone Number (e.g. 0821234567)"
-          value={form.phone}
-          onChangeText={set('phone')}
+        <FieldSpacer />
+        <TextField
+          autoComplete="tel"
+          helperText={t('auth.phoneHelper')}
           keyboardType="phone-pad"
+          label={t('auth.phone')}
+          onChangeText={setField('phone')}
+          placeholder={t('auth.phonePlaceholder')}
+          required
+          textContentType="telephoneNumber"
+          value={form.phone}
         />
-        <TextInput
-          style={styles.input}
-          placeholder="Password (min 8 characters)"
+        <FieldSpacer />
+        <TextField
+          autoComplete="new-password"
+          label={t('auth.password')}
+          onChangeText={setField('password')}
+          onSubmitEditing={handleRegister}
+          placeholder={t('auth.newPasswordPlaceholder')}
+          required
+          returnKeyType="done"
+          secureTextEntry={!showPassword}
+          textContentType="newPassword"
           value={form.password}
-          onChangeText={set('password')}
-          secureTextEntry
         />
+        <View style={styles.passwordAction}>
+          <TertiaryButton
+            label={showPassword ? t('auth.hidePassword') : t('auth.showPassword')}
+            leading={(
+              <MaterialCommunityIcons
+                color={theme.colors.actionPrimaryPressed}
+                name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                size={theme.sizing.iconSmall}
+              />
+            )}
+            onPress={() => setShowPassword((visible) => !visible)}
+          />
+        </View>
+        <FieldSpacer />
+        <Surface style={{ gap: theme.spacing.sm }} testID="registration-policy-consent" variant="subtle">
+          <Text accessibilityRole="header" allowFontScaling style={[theme.typography.h3, { color: theme.colors.text }]}>
+            {t('auth.policyTitle')}
+          </Text>
+          <Text allowFontScaling style={[theme.typography.bodySmall, { color: theme.colors.textSecondary }]}>
+            {t('auth.policyBody')}
+          </Text>
+          {policyState.status === 'loading' ? (
+            <Text allowFontScaling style={[theme.typography.bodySmall, { color: theme.colors.textSecondary }]}>
+              {t('auth.policyLoading')}
+            </Text>
+          ) : policyState.status === 'error' ? (
+            <>
+              <InlineError message={t('auth.policyUnavailable')} testID="registration-policy-error" />
+              <TertiaryButton label={t('common.retry')} onPress={() => setPolicyAttempt((attempt) => attempt + 1)} />
+            </>
+          ) : (
+            <>
+              {policyState.value.releaseChannel === 'internal_testing' ? (
+                <Text allowFontScaling style={[theme.typography.caption, { color: theme.colors.textSecondary }]}>
+                  {t('auth.policyInternal')}
+                </Text>
+              ) : null}
+              {policyState.value.documents.map((document) => (
+                <View key={document.kind} style={{ gap: theme.spacing.xs }}>
+                  <ConsentCheckbox
+                    checked={document.kind === 'terms' ? termsAccepted : privacyAccepted}
+                    label={document.kind === 'terms' ? t('auth.acceptTerms') : t('auth.acceptPrivacy')}
+                    onPress={() => {
+                      setValidationError('');
+                      if (document.kind === 'terms') setTermsAccepted((accepted) => !accepted);
+                      else setPrivacyAccepted((accepted) => !accepted);
+                    }}
+                    testID={`consent-${document.kind}`}
+                  />
+                  <TertiaryButton
+                    accessibilityHint={t('auth.policyLinkHint')}
+                    label={`${t('auth.readPolicy')} ${document.title} · ${document.version}`}
+                    onPress={() => {
+                      void Linking.openURL(document.url).catch(() => setValidationError(t('auth.policyLinkError')));
+                    }}
+                  />
+                </View>
+              ))}
+            </>
+          )}
+        </Surface>
+        <FieldSpacer />
+        <Surface style={{ gap: theme.spacing.xs }} variant="attention">
+          <Text accessibilityRole="header" allowFontScaling style={[theme.typography.label, { color: theme.colors.text }]}>
+            {t('auth.nextStepTitle')}
+          </Text>
+          <Text allowFontScaling style={[theme.typography.bodySmall, { color: theme.colors.textSecondary }]}>
+            {form.role === 'customer' ? t('auth.nextStepCustomer') : t('auth.nextStepWorker')}
+          </Text>
+        </Surface>
+        <FieldSpacer />
+        <PrimaryButton
+          disabled={policyState.status !== 'ready' || !termsAccepted || !privacyAccepted}
+          fullWidth
+          label={submitLabel}
+          large
+          loading={loading}
+          onPress={handleRegister}
+          testID="register-submit"
+        />
+      </AuthFormSurface>
 
-        <TouchableOpacity style={styles.button} onPress={handleRegister} disabled={loading}>
-          {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Create Account</Text>}
-        </TouchableOpacity>
-
-        <TouchableOpacity onPress={() => navigation.navigate('Login')} style={styles.link}>
-          <Text style={styles.linkText}>Already have an account? <Text style={styles.linkBold}>Log in</Text></Text>
-        </TouchableOpacity>
-      </ScrollView>
-    </SafeAreaView>
+      <View style={[styles.signInRow, { marginTop: theme.spacing.md }]}>
+        <Text allowFontScaling style={[theme.typography.bodySmall, { color: theme.colors.textSecondary }]}>
+          {t('auth.haveAccount')}
+        </Text>
+        <TertiaryButton label={t('auth.signIn')} onPress={() => navigation.navigate('Login')} />
+      </View>
+    </AppScaffold>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F9FAFB' },
-  scroll: { padding: 24, paddingTop: 40 },
-  title: { fontSize: 28, fontWeight: '800', color: '#111827', marginBottom: 4 },
-  subtitle: { fontSize: 15, color: '#6B7280', marginBottom: 24 },
-  roleText: { color: '#1A6B3A', fontWeight: '700' },
-  roleToggle: { flexDirection: 'row', marginBottom: 24, borderRadius: 10, overflow: 'hidden', borderWidth: 1, borderColor: '#E5E7EB' },
-  roleBtn: { flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: '#fff' },
-  roleBtnActive: { backgroundColor: '#1A6B3A' },
-  roleBtnText: { fontSize: 15, fontWeight: '600', color: '#6B7280' },
-  roleBtnTextActive: { color: '#fff' },
-  error: { color: '#EF4444', marginBottom: 12, fontSize: 14 },
-  input: {
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 10,
-    padding: 14,
-    fontSize: 15,
-    marginBottom: 12,
+  passwordAction: {
+    alignItems: 'flex-end',
   },
-  button: {
-    backgroundColor: '#1A6B3A',
-    borderRadius: 12,
-    padding: 16,
+  roleChoice: {
     alignItems: 'center',
-    marginTop: 8,
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'center',
   },
-  buttonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  link: { alignItems: 'center', marginTop: 20 },
-  linkText: { fontSize: 14, color: '#6B7280' },
-  linkBold: { color: '#1A6B3A', fontWeight: '600' },
+  roleRow: {
+    alignItems: 'stretch',
+    flexDirection: 'row',
+  },
+  signInRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+  },
 });

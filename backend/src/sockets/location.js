@@ -1,6 +1,36 @@
-const jwt = require('jsonwebtoken');
 const db = require('../config/db');
-const { jwtSecret } = require('../config/env');
+const { verifyAccessToken } = require('../lib/jwtTokens');
+const { canUseLiveLocation } = require('../lib/privacy');
+
+const LOCATION_BOOKING_SELECT = `
+  SELECT b.*,
+         (
+           b.accepted_quote_id IS NOT NULL
+           OR EXISTS (
+             SELECT 1 FROM grounded_booking_agreement_snapshots grounded_agreement
+              WHERE grounded_agreement.booking_id = b.id
+           )
+           OR EXISTS (
+             SELECT 1 FROM grounded_fulfilment_policy_snapshots grounded_policy
+              WHERE grounded_policy.booking_id = b.id
+           )
+           OR EXISTS (
+             SELECT 1 FROM match_requests grounded_match
+              WHERE grounded_match.matched_booking_id = b.id
+           )
+         ) AS canonical_fulfilment_policy_present
+    FROM bookings b
+   WHERE b.id = $1
+     AND b.status IN ('accepted', 'in_progress')`;
+
+async function loadLocationBooking(bookingId) {
+  const result = await db.query(LOCATION_BOOKING_SELECT, [bookingId]);
+  return result.rows[0] || null;
+}
+
+function leaveBookingRoom(socket, bookingId) {
+  if (typeof socket.leave === 'function') socket.leave(`booking:${bookingId}`);
+}
 
 function initLocationSockets(io) {
   const locationNs = io.of('/location');
@@ -9,7 +39,7 @@ function initLocationSockets(io) {
     const token = socket.handshake.auth.token;
     if (!token) return next(new Error('Authentication required'));
     try {
-      socket.user = jwt.verify(token, jwtSecret);
+      socket.user = verifyAccessToken(token);
       next();
     } catch {
       next(new Error('Invalid token'));
@@ -23,14 +53,13 @@ function initLocationSockets(io) {
     // Labourer joins the room for each of their active bookings
     socket.on('join:booking', async (bookingId) => {
       try {
-        const result = await db.query(
-          'SELECT * FROM bookings WHERE id = $1 AND status IN ($2, $3)',
-          [bookingId, 'accepted', 'in_progress']
-        );
-        if (result.rows.length === 0) return;
-
-        const booking = result.rows[0];
-        if (booking.customer_id !== userId && booking.labourer_id !== userId) return;
+        const booking = await loadLocationBooking(bookingId);
+        if (!booking
+            || (booking.customer_id !== userId && booking.labourer_id !== userId)
+            || !canUseLiveLocation(booking)) {
+          leaveBookingRoom(socket, bookingId);
+          return;
+        }
 
         socket.join(`booking:${bookingId}`);
       } catch (err) {
@@ -44,13 +73,11 @@ function initLocationSockets(io) {
 
       try {
         // Fetch booking to get destination and verify this labourer owns it.
-        const bookingRes = await db.query(
-          'SELECT * FROM bookings WHERE id = $1 AND status IN ($2, $3)',
-          [bookingId, 'accepted', 'in_progress']
-        );
-        if (bookingRes.rows.length === 0) return;
-        const booking = bookingRes.rows[0];
-        if (booking.labourer_id !== userId) return;
+        const booking = await loadLocationBooking(bookingId);
+        if (!booking || booking.labourer_id !== userId || !canUseLiveLocation(booking)) {
+          leaveBookingRoom(socket, bookingId);
+          return;
+        }
 
         await db.query(
           'UPDATE labourer_profiles SET current_lat = $1, current_lng = $2, location_updated_at = NOW() WHERE user_id = $3',

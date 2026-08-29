@@ -1,6 +1,7 @@
 const request = require('supertest');
 const { app } = require('../src/app');
 const db = require('../src/config/db');
+const { createRegistrationPolicy, registrationConsentFor } = require('../src/config/registrationPolicy');
 
 async function truncateAll() {
   // Order matters: child tables reference parents. CASCADE handles the rest.
@@ -17,6 +18,7 @@ async function registerUser(overrides = {}) {
     phone: `07${String(unique).slice(-9)}`,
     password: 'password123',
     role: 'customer',
+    policyConsent: registrationConsentFor(createRegistrationPolicy()),
     ...overrides,
   };
   const res = await request(app).post('/auth/register').send(body);

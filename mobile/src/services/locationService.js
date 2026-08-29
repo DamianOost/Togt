@@ -13,6 +13,7 @@ export const locationService = {
     return {
       lat: location.coords.latitude,
       lng: location.coords.longitude,
+      capturedAt: location.timestamp,
     };
   },
 

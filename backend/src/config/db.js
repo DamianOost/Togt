@@ -13,25 +13,34 @@ const POOL_CONNECTION_TIMEOUT_MS = parseInt(process.env.PG_CONNECTION_TIMEOUT_MS
 // in <50ms at sane scale. 15s is generous and still bounds the worst case.
 const STATEMENT_TIMEOUT_MS = parseInt(process.env.PG_STATEMENT_TIMEOUT_MS || '15000', 10);
 
+function productionSslConfig() {
+  if (process.env.NODE_ENV !== 'production') return false;
+  const configuredCa = process.env.PG_SSL_CA;
+  return {
+    // Never silently accept a certificate for the wrong database host. Node's
+    // trusted CA store is used by default; managed providers may supply their
+    // reviewed chain through the secret-bearing PG_SSL_CA environment value.
+    rejectUnauthorized: true,
+    ...(configuredCa && configuredCa.trim()
+      ? { ca: configuredCa.replace(/\\n/g, '\n') }
+      : {}),
+  };
+}
+
 const pool = new Pool({
   connectionString: databaseUrl,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  ssl: productionSslConfig(),
   max: POOL_MAX,
   idleTimeoutMillis: POOL_IDLE_TIMEOUT_MS,
   connectionTimeoutMillis: POOL_CONNECTION_TIMEOUT_MS,
+  // pg sends this as a startup parameter before the connection is released
+  // to callers. Running an asynchronous setup query from the pool connection
+  // event races the first application query and is deprecated by pg.
+  statement_timeout: STATEMENT_TIMEOUT_MS,
 });
 
 pool.on('error', (err) => {
   console.error('Unexpected PostgreSQL client error', err);
-});
-
-// Apply statement_timeout to every newly checked-out connection. Done as
-// `connect`-event hook rather than the connection-string `options` param
-// because the latter is brittle across pg URL parsers.
-pool.on('connect', (client) => {
-  client.query(`SET statement_timeout = ${STATEMENT_TIMEOUT_MS}`).catch((e) => {
-    console.error('failed to apply statement_timeout to new pg connection', e.message);
-  });
 });
 
 async function withTx(fn) {
@@ -65,5 +74,6 @@ module.exports = {
   end: () => pool.end(),
   withTx,
   ping,
+  productionSslConfig,
   pool,
 };

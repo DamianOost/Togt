@@ -6,6 +6,8 @@
  * payment paths.
  */
 
+process.env.LEGACY_DIRECT_BOOKING_CREATION_ENABLED = 'true';
+
 const { request, app, db, truncateAll, registerUser, authHeader } = require('./helpers');
 const { encryptSecret } = require('../src/lib/webhookSecretCrypto');
 
@@ -36,7 +38,7 @@ async function deliveriesByType() {
 }
 
 describe('booking lifecycle emits webhook events', () => {
-  test('manual booking: created -> accepted -> in_progress -> completed each fires the matching event', async () => {
+  test('manual booking emits completion only after worker request and customer confirmation', async () => {
     const customer = await registerUser({ role: 'customer' });
     const labourer = await registerUser({ role: 'labourer' });
     await subscribe(customer.user.id, [
@@ -81,9 +83,32 @@ describe('booking lifecycle emits webhook events', () => {
       .send({ start_pin: customerView.body.booking.start_pin });
     expect(start.status).toBe(200);
 
-    const complete = await request(app)
+    const unilateralComplete = await request(app)
       .put(`/api/bookings/${bookingId}/complete`)
       .set(authHeader(labourer.accessToken));
+    expect(unilateralComplete.status).toBe(409);
+    expect(unilateralComplete.body.error).toBe('completion_confirmation_required');
+
+    const genericComplete = await request(app)
+      .patch(`/api/bookings/${bookingId}/status`)
+      .set(authHeader(labourer.accessToken))
+      .send({ status: 'completed' });
+    expect(genericComplete.status).toBe(400);
+
+    const completionRequest = await request(app)
+      .post(`/api/projects/${bookingId}/completion-requests`)
+      .set(authHeader(labourer.accessToken))
+      .set('If-Match', '"0"')
+      .set('Idempotency-Key', 'events-request-completion')
+      .send({});
+    expect(completionRequest.status).toBe(201);
+
+    const complete = await request(app)
+      .post(`/api/projects/${bookingId}/completion-confirmations`)
+      .set(authHeader(customer.accessToken))
+      .set('If-Match', '"1"')
+      .set('Idempotency-Key', 'events-confirm-completion')
+      .send({});
     expect(complete.status).toBe(200);
 
     const deliveries = await deliveriesByType();

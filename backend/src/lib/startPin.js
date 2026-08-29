@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { jwtSecret } = require('../config/env');
+const { hasCanonicalFulfilment } = require('./privacy');
 
 function startPinForBooking(bookingId) {
   if (!bookingId) throw new Error('bookingId is required');
@@ -18,6 +19,15 @@ function verifyStartPin(bookingId, candidate) {
 }
 
 function withStartContext(serialized, booking, viewer = {}) {
+  if (hasCanonicalFulfilment(booking)) {
+    return {
+      ...serialized,
+      start_pin_required: false,
+      ready_to_start: false,
+      canonical_start_required: true,
+      start_path: `/api/projects/${booking.id}/start`,
+    };
+  }
   const bothConfirmed = booking.scope_confirmed_by_customer === true
     && booking.scope_confirmed_by_labourer === true;
   const canStart = booking.status === 'accepted' && bothConfirmed;

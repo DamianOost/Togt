@@ -5,8 +5,26 @@ node_modules/
 
 # Environment
 .env
+.env.*
 .env.local
 .env.*.local
+!.env.example
+!.env.*.example
+
+# Signing and provider credentials (examples remain reviewable)
+*.jks
+*.keystore
+*.p12
+*.pfx
+key.properties
+keystore.properties
+signing.properties
+google-services.json
+GoogleService-Info.plist
+!*.example.jks
+!*.example.keystore
+!google-services.example.json
+!GoogleService-Info.example.plist
 
 # Expo
 .expo/

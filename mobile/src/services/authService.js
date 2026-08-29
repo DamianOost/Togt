@@ -1,6 +1,10 @@
 import api from './api';
 
 export const authService = {
+  async getRegistrationPolicy() {
+    const res = await api.get('/auth/registration-policy', { skipAuthRefresh: true });
+    return res.data;
+  },
   async register(data) {
     const res = await api.post('/auth/register', data);
     return res.data;

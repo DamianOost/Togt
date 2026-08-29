@@ -1,138 +1,95 @@
 import React, { useState } from 'react';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+
+import { useTogtTheme } from '../../design';
 import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet,
-  StatusBar, ActivityIndicator, Alert, KeyboardAvoidingView, Platform, ScrollView,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+  AppScaffold,
+  InlineError,
+  PrimaryButton,
+  TextField,
+  TopAppBar,
+} from '../../ui';
+import { translateEnZa as t } from '../../i18n/en-ZA';
 import { authService } from '../../services/authService';
-import { colors, typography, spacing, borderRadius, shadows } from '../../theme';
+import { AuthFormSurface, AuthIntro, FieldSpacer } from './AuthLayout';
 
 export default function ForgotPasswordScreen({ navigation }) {
+  const theme = useTogtTheme();
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
+  const [validationError, setValidationError] = useState('');
 
   async function onSubmit() {
-    const trimmed = email.trim().toLowerCase();
-    if (!trimmed) {
-      Alert.alert('Email required', 'Please enter the email you registered with.');
+    const normalisedEmail = email.trim().toLowerCase();
+    if (!normalisedEmail) {
+      setValidationError(t('auth.errorRequired'));
       return;
     }
+
+    setValidationError('');
     setLoading(true);
     try {
-      await authService.forgotPassword(trimmed);
+      await authService.forgotPassword(normalisedEmail);
     } catch {
-      // Server always returns 200 here — catch is only for network failure.
+      // Account-existence privacy is preserved. The next screen keeps the
+      // same generic recovery copy and allows a later retry.
     } finally {
       setLoading(false);
-      navigation.navigate('ResetPassword', { email: trimmed });
+      navigation.navigate('ResetPassword', { email: normalisedEmail });
     }
   }
 
   return (
-    <View style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor={colors.primary} />
-      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
-          <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-            <View style={styles.header}>
-              <Text style={styles.title}>Forgot password</Text>
-              <Text style={styles.sub}>
-                Enter the email you registered with. We'll send you a 6-digit code that's valid for 15 minutes.
-              </Text>
-            </View>
+    <AppScaffold
+      contentContainerStyle={{ paddingBottom: theme.spacing.xxxl }}
+      keyboardAware
+      scrollable
+      testID="auth-forgot-password-screen"
+      topBar={(
+        <TopAppBar
+          backLabel={t('common.back')}
+          onBack={() => navigation.goBack()}
+        />
+      )}
+    >
+      <AuthIntro body={t('auth.forgotBody')} compact title={t('auth.forgotTitle')} />
 
-            <View style={styles.card}>
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Email</Text>
-                <View style={styles.inputWrapper}>
-                  <Text style={styles.inputIcon}>✉️</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={email}
-                    onChangeText={setEmail}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    placeholder="you@example.com"
-                    placeholderTextColor={colors.textMuted}
-                    returnKeyType="send"
-                    onSubmitEditing={onSubmit}
-                    editable={!loading}
-                  />
-                </View>
-              </View>
-
-              <TouchableOpacity style={styles.submitBtn} onPress={onSubmit} disabled={loading}>
-                {loading ? (
-                  <ActivityIndicator color={colors.primary} />
-                ) : (
-                  <Text style={styles.submitBtnText}>Send code</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-
-            <TouchableOpacity
-              onPress={() => navigation.goBack()}
-              style={styles.backLink}
-              disabled={loading}
-            >
-              <Text style={styles.backText}>← Back to login</Text>
-            </TouchableOpacity>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
-    </View>
+      <AuthFormSurface testID="forgot-password-form">
+        {validationError ? <InlineError message={validationError} /> : null}
+        {validationError ? <FieldSpacer /> : null}
+        <TextField
+          autoCapitalize="none"
+          autoComplete="email"
+          autoCorrect={false}
+          keyboardType="email-address"
+          label={t('auth.email')}
+          leading={(
+            <MaterialCommunityIcons
+              color={theme.colors.textSecondary}
+              name="email-lock-outline"
+              size={theme.sizing.iconMedium}
+            />
+          )}
+          onChangeText={(value) => {
+            setEmail(value);
+            setValidationError('');
+          }}
+          onSubmitEditing={onSubmit}
+          placeholder={t('auth.emailPlaceholder')}
+          returnKeyType="send"
+          textContentType="emailAddress"
+          value={email}
+        />
+        <FieldSpacer />
+        <PrimaryButton
+          fullWidth
+          label={t('auth.sendCode')}
+          large
+          loading={loading}
+          onPress={onSubmit}
+          testID="send-reset-code"
+        />
+      </AuthFormSurface>
+    </AppScaffold>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.primary },
-  scroll: { flexGrow: 1, paddingHorizontal: spacing.lg },
-  header: { paddingTop: spacing.xl, paddingBottom: spacing.lg, alignItems: 'center' },
-  title: { fontSize: typography.xl, fontWeight: '800', color: colors.textInverse, marginBottom: spacing.sm },
-  sub: {
-    fontSize: typography.sm, color: colors.textMuted, textAlign: 'center',
-    lineHeight: 20, paddingHorizontal: spacing.md,
-  },
-  card: {
-    backgroundColor: colors.card,
-    borderRadius: borderRadius.lg,
-    padding: spacing.lg,
-    ...shadows.card,
-  },
-  inputGroup: { marginBottom: spacing.md },
-  inputLabel: {
-    fontSize: typography.sm, fontWeight: '700', color: colors.textSecondary,
-    marginBottom: spacing.xs,
-  },
-  inputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f9fafb',
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: borderRadius.sm,
-    paddingHorizontal: spacing.sm,
-  },
-  inputIcon: { fontSize: 16, marginRight: spacing.xs },
-  input: {
-    flex: 1,
-    fontSize: typography.md,
-    color: colors.textPrimary,
-    paddingVertical: spacing.sm + 4,
-  },
-  submitBtn: {
-    backgroundColor: colors.accent,
-    borderRadius: borderRadius.md,
-    paddingVertical: spacing.md,
-    alignItems: 'center',
-    marginTop: spacing.sm,
-    ...shadows.card,
-  },
-  submitBtnText: { color: colors.primary, fontSize: typography.lg, fontWeight: '800' },
-  backLink: { alignItems: 'center', marginTop: spacing.lg, paddingBottom: spacing.lg },
-  backText: { color: colors.accent, fontWeight: '700', fontSize: typography.sm },
-});

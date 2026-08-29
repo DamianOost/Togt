@@ -8,6 +8,7 @@
 
 const { request, app, db } = require('./helpers');
 const dispatcher = require('../src/services/webhookDispatcher');
+const matcher = require('../src/services/matcher');
 
 afterAll(async () => {
   if (db.end) await db.end();
@@ -32,6 +33,7 @@ describe('/health/deep (readiness)', () => {
     // freshness check under NODE_ENV=test so we don't fail just because
     // the setInterval isn't running.
     expect(res.body.checks.dispatcher).toBe('skipped-in-test');
+    expect(res.body.checks.matcher).toBe('skipped-in-test');
   });
 });
 
@@ -58,5 +60,21 @@ describe('webhookDispatcher.isFresh', () => {
     dispatcher.stats.interval_ms = 5000;
     expect(dispatcher.isFresh()).toBe(false);
     Object.assign(dispatcher.stats, original);
+  });
+});
+
+describe('matcher.isFresh', () => {
+  test('tracks the last successful durable dispatch tick', () => {
+    const original = { ...matcher.stats };
+    matcher.stats.last_success_at = null;
+    expect(matcher.isFresh()).toBe(false);
+
+    matcher.stats.last_success_at = new Date().toISOString();
+    matcher.stats.interval_ms = 1000;
+    expect(matcher.isFresh()).toBe(true);
+
+    matcher.stats.last_success_at = new Date(Date.now() - 60_000).toISOString();
+    expect(matcher.isFresh()).toBe(false);
+    Object.assign(matcher.stats, original);
   });
 });

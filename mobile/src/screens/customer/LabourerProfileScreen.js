@@ -37,6 +37,9 @@ export default function LabourerProfileScreen({ route, navigation }) {
 
   const workerId = parsedParams?.workerId;
   const serviceId = parsedParams?.serviceId;
+  const stackRouteNames = navigation.getState?.()?.routeNames || [];
+  const usesGroundedCatalogueIntake = stackRouteNames.includes('ServiceSelect')
+    && !stackRouteNames.includes('BookingForm');
   const [labourer, setLabourer] = useState(null);
   const [reviews, setReviews] = useState([]);
   const [loading, setLoading] = useState(Boolean(workerId));
@@ -46,6 +49,10 @@ export default function LabourerProfileScreen({ route, navigation }) {
   function goBackSafely() {
     if (navigation.canGoBack()) {
       navigation.goBack();
+      return;
+    }
+    if (usesGroundedCatalogueIntake) {
+      navigation.navigate('CustomerTabs', { screen: 'Home' });
       return;
     }
     const intent = createCustomerHomeIntent();
@@ -249,21 +256,32 @@ export default function LabourerProfileScreen({ route, navigation }) {
         </View>
 
         {/* Spacer for CTA */}
-        <View style={{ height: 90 }} />
+        <View style={{ height: usesGroundedCatalogueIntake ? 145 : 90 }} />
       </ScrollView>
 
       {/* Book button */}
       {labourer.is_available && (
         <View style={styles.footer}>
+          {usesGroundedCatalogueIntake ? (
+            <Text style={styles.requestNotice}>
+              Direct booking is unavailable here. Start with a current published service and review its exact terms.
+            </Text>
+          ) : null}
           <TouchableOpacity
             style={styles.bookBtn}
-            onPress={() => navigation.navigate('BookingForm', createRouteParams('BookingForm', {
-              workerId: labourer.id,
-              serviceId,
-            }))}
+            onPress={() => {
+              if (usesGroundedCatalogueIntake) {
+                navigation.navigate('ServiceSelect');
+                return;
+              }
+              navigation.navigate('BookingForm', createRouteParams('BookingForm', {
+                workerId: labourer.id,
+                serviceId,
+              }));
+            }}
           >
             <Text style={styles.bookBtnText}>
-              Book {labourer.name.split(' ')[0]}
+              {usesGroundedCatalogueIntake ? 'Browse published services' : `Book ${labourer.name.split(' ')[0]}`}
             </Text>
           </TouchableOpacity>
         </View>
@@ -537,6 +555,13 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     alignItems: 'center',
     ...shadows.card,
+  },
+  requestNotice: {
+    color: colors.textSecondary,
+    fontSize: typography.xs,
+    lineHeight: 18,
+    marginBottom: spacing.sm,
+    textAlign: 'center',
   },
   bookBtnText: {
     color: colors.primary,

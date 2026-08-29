@@ -1,200 +1,170 @@
 import React, { useState } from 'react';
-import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet,
-  StatusBar, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { StyleSheet, Text, View } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useDispatch, useSelector } from 'react-redux';
-import { loginThunk } from '../../store/authSlice';
-import { colors, typography, spacing, borderRadius, shadows } from '../../theme';
+
+import { useTogtTheme } from '../../design';
+import {
+  AppScaffold,
+  InlineError,
+  PrimaryButton,
+  TertiaryButton,
+  TextField,
+} from '../../ui';
+import { translateEnZa as t } from '../../i18n/en-ZA';
+import { clearError, loginThunk } from '../../store/authSlice';
+import { AuthFormSurface, AuthIntro, FieldSpacer } from './AuthLayout';
 
 export default function LoginScreen({ navigation }) {
   const dispatch = useDispatch();
-  const { loading, error } = useSelector((s) => s.auth);
+  const theme = useTogtTheme();
+  const { loading, error } = useSelector((state) => state.auth);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [validationError, setValidationError] = useState('');
+
+  function updateEmail(value) {
+    setEmail(value);
+    setValidationError('');
+    if (error) dispatch(clearError());
+  }
+
+  function updatePassword(value) {
+    setPassword(value);
+    setValidationError('');
+    if (error) dispatch(clearError());
+  }
 
   function handleLogin() {
-    if (!email.trim() || !password) return;
-    dispatch(loginThunk({ email: email.trim().toLowerCase(), password }));
+    const normalisedEmail = email.trim().toLowerCase();
+    if (!normalisedEmail || !password) {
+      setValidationError(t('auth.errorRequired'));
+      return;
+    }
+    setValidationError('');
+    dispatch(loginThunk({ email: normalisedEmail, password }));
   }
 
   return (
-    <View style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor={colors.primary} />
-      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
-          <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-            {/* Logo */}
-            <View style={styles.logoSection}>
-              <View style={styles.logoCircle}>
-                <Text style={styles.logoText}>T</Text>
-              </View>
-              <Text style={styles.appName}>Togt</Text>
-              <Text style={styles.tagline}>Find skilled local help with clear scope and progress.</Text>
-            </View>
+    <AppScaffold
+      contentContainerStyle={{
+        justifyContent: 'center',
+        paddingBottom: theme.spacing.xxl,
+        paddingTop: theme.spacing.xxl,
+      }}
+      keyboardAware
+      scrollable
+      testID="auth-sign-in-screen"
+    >
+      <AuthIntro
+        body={t('auth.signInBody')}
+        compact
+        title={t('auth.signInTitle')}
+      />
 
-            {/* Form card */}
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Welcome back</Text>
+      <AuthFormSurface testID="sign-in-form">
+        {validationError || error ? (
+          <InlineError message={validationError || t('auth.errorSignIn')} testID="sign-in-error" />
+        ) : null}
 
-              {error && (
-                <View style={styles.errorBanner}>
-                  <Text style={styles.errorText}>⚠️ {error}</Text>
-                </View>
-              )}
+        {validationError || error ? <FieldSpacer size="md" /> : null}
 
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Email Address</Text>
-                <View style={styles.inputWrapper}>
-                  <Text style={styles.inputIcon}>✉️</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={email}
-                    onChangeText={setEmail}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    placeholder="you@example.com"
-                    placeholderTextColor={colors.textMuted}
-                    returnKeyType="next"
-                  />
-                </View>
-              </View>
+        <TextField
+          autoCapitalize="none"
+          autoComplete="email"
+          autoCorrect={false}
+          keyboardType="email-address"
+          label={t('auth.email')}
+          leading={(
+            <MaterialCommunityIcons
+              color={theme.colors.textSecondary}
+              name="email-outline"
+              size={theme.sizing.iconMedium}
+            />
+          )}
+          onChangeText={updateEmail}
+          placeholder={t('auth.emailPlaceholder')}
+          returnKeyType="next"
+          textContentType="emailAddress"
+          value={email}
+        />
 
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Password</Text>
-                <View style={styles.inputWrapper}>
-                  <Text style={styles.inputIcon}>🔒</Text>
-                  <TextInput
-                    style={[styles.input, { flex: 1 }]}
-                    value={password}
-                    onChangeText={setPassword}
-                    secureTextEntry={!showPassword}
-                    placeholder="Enter password"
-                    placeholderTextColor={colors.textMuted}
-                    returnKeyType="done"
-                    onSubmitEditing={handleLogin}
-                  />
-                  <TouchableOpacity onPress={() => setShowPassword((v) => !v)}>
-                    <Text style={styles.showPassBtn}>{showPassword ? '🙈' : '👁️'}</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
+        <FieldSpacer />
 
-              <TouchableOpacity style={styles.loginBtn} onPress={handleLogin} disabled={loading}>
-                {loading ? (
-                  <ActivityIndicator color={colors.primary} />
-                ) : (
-                  <Text style={styles.loginBtnText}>Log In</Text>
-                )}
-              </TouchableOpacity>
+        <TextField
+          autoComplete="current-password"
+          label={t('auth.password')}
+          leading={(
+            <MaterialCommunityIcons
+              color={theme.colors.textSecondary}
+              name="lock-outline"
+              size={theme.sizing.iconMedium}
+            />
+          )}
+          onChangeText={updatePassword}
+          onSubmitEditing={handleLogin}
+          placeholder={t('auth.passwordPlaceholder')}
+          returnKeyType="done"
+          secureTextEntry={!showPassword}
+          textContentType="password"
+          value={password}
+        />
 
-              <TouchableOpacity
-                onPress={() => navigation.navigate('ForgotPassword')}
-                style={{ alignItems: 'center', marginTop: spacing.md }}
-                disabled={loading}
-              >
-                <Text style={{ color: colors.accent, fontWeight: '700', fontSize: typography.sm }}>
-                  Forgot password?
-                </Text>
-              </TouchableOpacity>
-            </View>
+        <View style={styles.passwordAction}>
+          <TertiaryButton
+            accessibilityHint={showPassword ? t('auth.hidePassword') : t('auth.showPassword')}
+            label={showPassword ? t('auth.hidePassword') : t('auth.showPassword')}
+            leading={(
+              <MaterialCommunityIcons
+                color={theme.colors.actionPrimaryPressed}
+                name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                size={theme.sizing.iconSmall}
+              />
+            )}
+            onPress={() => setShowPassword((visible) => !visible)}
+          />
+        </View>
 
-            <TouchableOpacity
-              onPress={() => navigation.navigate('Onboarding')}
-              style={styles.signupLink}
-            >
-              <Text style={styles.signupText}>
-                Don't have an account?{' '}
-                <Text style={styles.signupBold}>Sign up</Text>
-              </Text>
-            </TouchableOpacity>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
-    </View>
+        <PrimaryButton
+          fullWidth
+          label={t('auth.signIn')}
+          large
+          loading={loading}
+          onPress={handleLogin}
+          testID="sign-in-submit"
+        />
+
+        <TertiaryButton
+          disabled={loading}
+          fullWidth
+          label={t('auth.forgotPassword')}
+          onPress={() => navigation.navigate('ForgotPassword')}
+          style={{ marginTop: theme.spacing.xs }}
+        />
+      </AuthFormSurface>
+
+      <View style={[styles.createRow, { marginTop: theme.spacing.md }]}>
+        <Text allowFontScaling style={[theme.typography.bodySmall, { color: theme.colors.textSecondary }]}>
+          {t('auth.noAccount')}
+        </Text>
+        <TertiaryButton
+          label={t('auth.createAccount')}
+          onPress={() => navigation.navigate('Onboarding')}
+        />
+      </View>
+    </AppScaffold>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.primary },
-  scroll: { flexGrow: 1, paddingHorizontal: spacing.lg },
-  logoSection: {
+  createRow: {
     alignItems: 'center',
-    paddingTop: spacing.xl + spacing.md,
-    paddingBottom: spacing.xl,
-  },
-  logoCircle: {
-    width: 72,
-    height: 72,
-    borderRadius: borderRadius.full,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.sm,
-    ...shadows.card,
-  },
-  logoText: { fontSize: 40, fontWeight: '900', color: colors.primary },
-  appName: { fontSize: typography.xxl, fontWeight: '900', color: '#fff', letterSpacing: -1 },
-  tagline: { fontSize: typography.sm, color: colors.textMuted, marginTop: 4 },
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: borderRadius.md + 4,
-    padding: spacing.lg,
-    ...shadows.heavy,
-  },
-  cardTitle: {
-    fontSize: typography.xl,
-    fontWeight: '800',
-    color: colors.textPrimary,
-    marginBottom: spacing.md,
-  },
-  errorBanner: {
-    backgroundColor: colors.dangerLight,
-    borderRadius: borderRadius.sm,
-    padding: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  errorText: { color: colors.danger, fontSize: typography.sm },
-  inputGroup: { marginBottom: spacing.md },
-  inputLabel: {
-    fontSize: typography.sm,
-    fontWeight: '600',
-    color: colors.textSecondary,
-    marginBottom: spacing.xs,
-  },
-  inputWrapper: {
     flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f9fafb',
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: borderRadius.sm,
-    paddingHorizontal: spacing.sm,
+    flexWrap: 'wrap',
+    justifyContent: 'center',
   },
-  inputIcon: { fontSize: 16, marginRight: spacing.xs },
-  input: {
-    flex: 1,
-    fontSize: typography.md,
-    color: colors.textPrimary,
-    paddingVertical: spacing.sm + 4,
+  passwordAction: {
+    alignItems: 'flex-end',
   },
-  showPassBtn: { fontSize: 18, padding: 4 },
-  loginBtn: {
-    backgroundColor: colors.accent,
-    borderRadius: borderRadius.md,
-    paddingVertical: spacing.md,
-    alignItems: 'center',
-    marginTop: spacing.sm,
-    ...shadows.card,
-  },
-  loginBtnText: { color: colors.primary, fontSize: typography.lg, fontWeight: '800' },
-  signupLink: { alignItems: 'center', marginTop: spacing.lg, paddingBottom: spacing.lg },
-  signupText: { fontSize: typography.sm, color: colors.textMuted },
-  signupBold: { color: colors.accent, fontWeight: '700' },
 });

@@ -1,22 +1,40 @@
 import React, { useEffect } from 'react';
-import {
-  View,
-  Text,
-  ActivityIndicator,
-  StyleSheet,
-  TouchableOpacity,
-} from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { Provider, useSelector, useDispatch } from 'react-redux';
-import { StatusBar } from 'expo-status-bar';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { useFonts } from 'expo-font';
+import {
+  Inter_400Regular,
+  Inter_500Medium,
+  Inter_600SemiBold,
+  Inter_700Bold,
+} from '@expo-google-fonts/inter';
+import {
+  Manrope_700Bold,
+  Manrope_800ExtraBold,
+} from '@expo-google-fonts/manrope';
 import store from './src/store/store';
 import AppNavigator from './src/navigation/AppNavigator';
 import { setAuthHandlers } from './src/services/api';
+import { lightTheme, TogtThemeProvider, useTogtTheme } from './src/design';
+import { AppScaffold, BrandMark, Button, Surface } from './src/ui';
+import { translateEnZa as t } from './src/i18n/en-ZA';
 import {
   RESTORE_STATUS,
   restoreSessionThunk,
   logoutThunk,
   refreshTokensThunk,
 } from './src/store/authSlice';
+
+const systemFallbackTheme = {
+  ...lightTheme,
+  typography: Object.fromEntries(
+    Object.entries(lightTheme.typography).map(([name, style]) => {
+      const { fontFamily: _fontFamily, ...systemStyle } = style;
+      return [name, systemStyle];
+    })
+  ),
+};
 
 // Wire api.js into Redux + SecureStore.
 function AuthWirer() {
@@ -31,56 +49,104 @@ function AuthWirer() {
 }
 
 function RestoreProgress() {
+  const theme = useTogtTheme();
+
   return (
-    <View style={styles.startup} accessibilityLiveRegion="polite">
-      <StatusBar style="dark" backgroundColor="#F7F4EF" />
-      <View style={styles.mark} accessible accessibilityRole="header">
-        <Text style={styles.markText}>T</Text>
+    <AppScaffold
+      contentContainerStyle={styles.startup}
+      testID="session-restore-progress"
+    >
+      <View accessibilityLiveRegion="polite" style={styles.centeredContent}>
+        <BrandMark showDescriptor />
+        <ActivityIndicator
+          accessibilityLabel={t('auth.restoringSession')}
+          color={theme.colors.actionPrimary}
+          size="small"
+          style={{ marginTop: theme.spacing.xxl }}
+        />
+        <Text
+          allowFontScaling
+          style={[
+            theme.typography.bodySmall,
+            { color: theme.colors.textSecondary, marginTop: theme.spacing.sm },
+          ]}
+        >
+          {t('auth.restoringSession')}
+        </Text>
       </View>
-      <Text style={styles.brand}>TOGT</Text>
-      <ActivityIndicator
-        size="small"
-        color="#12844E"
-        style={styles.progress}
-        accessibilityLabel="Checking your saved session"
-      />
-      <Text style={styles.progressText}>Checking your saved session…</Text>
-    </View>
+    </AppScaffold>
   );
 }
 
 function RestoreIssue({ issue, hasStoredSession, onRetry, onSignIn }) {
-  return (
-    <View style={styles.startup}>
-      <StatusBar style="dark" backgroundColor="#F7F4EF" />
-      <View style={styles.issueCard} accessibilityLiveRegion="assertive">
-        <View style={styles.issueAccent} />
-        <Text style={styles.issueEyebrow}>
-          {hasStoredSession ? 'SAVED SESSION LOCKED' : 'STARTUP CHECK'}
-        </Text>
-        <Text style={styles.issueTitle}>{issue?.title || 'Session unavailable'}</Text>
-        <Text style={styles.issueDetail}>
-          {issue?.detail || 'TOGT could not verify your session. Try again or return to sign in.'}
-        </Text>
+  const theme = useTogtTheme();
 
-        <TouchableOpacity
-          style={styles.primaryButton}
+  return (
+    <AppScaffold contentContainerStyle={styles.startup} testID="session-restore-issue">
+      <Surface
+        accessibilityLabel={issue?.title || 'Session unavailable'}
+        elevation="card"
+        style={{ padding: theme.spacing.xl }}
+      >
+        <View
+          importantForAccessibility="no"
+          style={[
+            styles.issueAccent,
+            {
+              backgroundColor: theme.colors.actionPrimary,
+              borderRadius: theme.radius.pill,
+              height: theme.border.strong + theme.border.strong,
+              marginBottom: theme.spacing.xl,
+              width: theme.spacing.xxxl,
+            },
+          ]}
+        />
+        <Text
+          allowFontScaling
+          style={[theme.typography.label, { color: theme.colors.actionPrimary }]}
+        >
+          {hasStoredSession ? t('auth.savedSessionLocked') : t('auth.startupCheck')}
+        </Text>
+        <Text
+          accessibilityLiveRegion="assertive"
+          accessibilityRole="header"
+          allowFontScaling
+          style={[
+            theme.typography.h1,
+            { color: theme.colors.text, marginTop: theme.spacing.xs },
+          ]}
+        >
+          {issue?.title || t('auth.sessionUnavailable')}
+        </Text>
+        <Text
+          allowFontScaling
+          style={[
+            theme.typography.body,
+            {
+              color: theme.colors.textSecondary,
+              marginBottom: theme.spacing.xl,
+              marginTop: theme.spacing.sm,
+            },
+          ]}
+        >
+          {issue?.detail || t('auth.sessionUnavailableBody')}
+        </Text>
+        <Button
+          fullWidth
+          label={t('common.retry')}
           onPress={onRetry}
-          accessibilityRole="button"
-          accessibilityLabel="Try session check again"
-        >
-          <Text style={styles.primaryButtonText}>Try again</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.secondaryButton}
+          accessibilityHint={t('auth.trySessionAgainHint')}
+        />
+        <Button
+          fullWidth
+          label={t('auth.returnSignIn')}
           onPress={onSignIn}
-          accessibilityRole="button"
-          accessibilityLabel="Clear the saved session and return to sign in"
-        >
-          <Text style={styles.secondaryButtonText}>Return to sign in</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+          accessibilityHint={t('auth.returnSignInHint')}
+          style={{ marginTop: theme.spacing.sm }}
+          variant="secondary"
+        />
+      </Surface>
+    </AppScaffold>
   );
 }
 
@@ -118,119 +184,56 @@ function SessionRestorer({ children }) {
 }
 
 export default function App() {
+  const [fontsLoaded, fontError] = useFonts({
+    Inter_400Regular,
+    Inter_500Medium,
+    Inter_600SemiBold,
+    Inter_700Bold,
+    Manrope_700Bold,
+    Manrope_800ExtraBold,
+  });
+
+  if (!fontsLoaded && !fontError) {
+    return (
+      <View
+        accessibilityLabel="Loading TOGT"
+        accessibilityRole="progressbar"
+        style={[styles.fontGate, { backgroundColor: lightTheme.colors.canvas }]}
+      >
+        <ActivityIndicator color={lightTheme.colors.actionPrimary} size="small" />
+      </View>
+    );
+  }
+
   return (
-    <Provider store={store}>
-      <AuthWirer />
-      <SessionRestorer>
-        <AppNavigator />
-      </SessionRestorer>
-    </Provider>
+    <SafeAreaProvider>
+      <TogtThemeProvider theme={fontError ? systemFallbackTheme : lightTheme}>
+        <Provider store={store}>
+          <AuthWirer />
+          <SessionRestorer>
+            <AppNavigator />
+          </SessionRestorer>
+        </Provider>
+      </TogtThemeProvider>
+    </SafeAreaProvider>
   );
 }
 
 const styles = StyleSheet.create({
   startup: {
     flex: 1,
-    backgroundColor: '#F7F4EF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  mark: {
-    width: 64,
-    height: 64,
-    borderRadius: 20,
-    backgroundColor: '#12844E',
-    alignItems: 'center',
     justifyContent: 'center',
   },
-  markText: {
-    color: '#FFFFFF',
-    fontSize: 34,
-    lineHeight: 40,
-    fontWeight: '900',
-  },
-  brand: {
-    marginTop: 12,
-    color: '#0F1F1B',
-    fontSize: 22,
-    lineHeight: 28,
-    fontWeight: '800',
-    letterSpacing: 2,
-  },
-  progress: { marginTop: 28 },
-  progressText: {
-    marginTop: 12,
-    color: '#4E5C57',
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  issueCard: {
-    width: '100%',
-    maxWidth: 420,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#D6DED9',
-    borderRadius: 24,
-    padding: 24,
-    overflow: 'hidden',
+  centeredContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   issueAccent: {
-    width: 40,
-    height: 5,
-    borderRadius: 999,
-    backgroundColor: '#12844E',
-    marginBottom: 24,
+    alignSelf: 'flex-start',
   },
-  issueEyebrow: {
-    color: '#12844E',
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '800',
-    letterSpacing: 1,
-  },
-  issueTitle: {
-    marginTop: 8,
-    color: '#0F1F1B',
-    fontSize: 24,
-    lineHeight: 30,
-    fontWeight: '800',
-  },
-  issueDetail: {
-    marginTop: 12,
-    marginBottom: 24,
-    color: '#4E5C57',
-    fontSize: 16,
-    lineHeight: 24,
-  },
-  primaryButton: {
-    minHeight: 48,
-    borderRadius: 12,
-    backgroundColor: '#12844E',
+  fontGate: {
     alignItems: 'center',
+    flex: 1,
     justifyContent: 'center',
-    paddingHorizontal: 16,
-  },
-  primaryButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    lineHeight: 24,
-    fontWeight: '700',
-  },
-  secondaryButton: {
-    minHeight: 48,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#D6DED9',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-    marginTop: 12,
-  },
-  secondaryButtonText: {
-    color: '#0F1F1B',
-    fontSize: 16,
-    lineHeight: 24,
-    fontWeight: '700',
   },
 });

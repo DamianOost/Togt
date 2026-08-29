@@ -1,3 +1,5 @@
+process.env.LEGACY_DIRECT_BOOKING_CREATION_ENABLED = 'true';
+
 const { request, app, db, truncateAll, registerUser, authHeader } = require('./helpers');
 
 const future = () => new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
@@ -109,18 +111,52 @@ describe('P0 payment and sharing truth', () => {
     expect(rows.rows).toHaveLength(0);
   });
 
-  test('shares a non-live summary without address, booking ID or public link', async () => {
-    const { customer, bookingId } = await acceptedBooking();
+  test('shares a participant-only, non-live preview without private location, contact or identifiers', async () => {
+    const { customer, labourer, bookingId } = await acceptedBooking();
     const res = await request(app)
       .post(`/api/bookings/${bookingId}/share-trip`)
       .set(authHeader(customer.accessToken));
 
     expect(res.status).toBe(200);
+    expect(res.body.bookingDetailsShare).toEqual({
+      available: true,
+      mode: 'non_live_no_address',
+    });
+    expect(res.body.preview).toEqual({
+      projectReference: 'TOGT Project',
+      serviceLabel: 'Plumbing',
+      broadAreaLabel: 'Area not shared',
+      scheduleLabel: expect.any(String),
+      statusLabel: 'Worker confirmed',
+    });
     expect(res.body.live_tracking).toBe(false);
     expect(res.body.public_link).toBeNull();
     expect(res.body.shareText).toMatch(/not a live tracking link/i);
-    expect(res.body.shareText).not.toContain('17 Private Place');
-    expect(res.body.shareText).not.toContain(bookingId);
+    const serialized = JSON.stringify(res.body);
+    for (const privateValue of [
+      '17 Private Place',
+      bookingId,
+      customer.user.id,
+      labourer.user.id,
+      customer.user.name,
+      labourer.user.name,
+      '-29.8',
+      '31.0',
+    ]) {
+      expect(serialized).not.toContain(privateValue);
+    }
+
+    const workerView = await request(app)
+      .post(`/api/bookings/${bookingId}/share-trip`)
+      .set(authHeader(labourer.accessToken));
+    expect(workerView.status).toBe(200);
+    expect(workerView.body.preview).toEqual(res.body.preview);
+
+    const outsider = await registerUser({ role: 'customer', name: 'Outside Viewer' });
+    const denied = await request(app)
+      .post(`/api/bookings/${bookingId}/share-trip`)
+      .set(authHeader(outsider.accessToken));
+    expect(denied.status).toBe(403);
   });
 });
 
@@ -159,5 +195,22 @@ describe('P0 identity truth', () => {
     expect(userRow.rows[0].kyc_status).toBe('unverified');
     const rows = await db.query('SELECT id FROM kyc_verifications WHERE user_id = $1', [user.user.id]);
     expect(rows.rows).toHaveLength(0);
+  });
+});
+
+describe('P0 remote-push truth', () => {
+  test('rejects token registration while remote push is disabled', async () => {
+    const user = await registerUser({ role: 'customer' });
+    const res = await request(app)
+      .post('/api/auth/push-token')
+      .set(authHeader(user.accessToken))
+      .send({ token: 'ExponentPushToken[must-not-be-stored]' });
+
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe('capability_unavailable');
+    expect(res.body.capability).toBe('remote_push');
+
+    const row = await db.query('SELECT push_token FROM users WHERE id = $1', [user.user.id]);
+    expect(row.rows[0].push_token).toBeNull();
   });
 });

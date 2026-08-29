@@ -1,6 +1,5 @@
-const jwt = require('jsonwebtoken');
 const db = require('../config/db');
-const { jwtSecret } = require('../config/env');
+const { verifyAccessToken } = require('../lib/jwtTokens');
 
 function initChatSockets(io) {
   const chatNs = io.of('/chat');
@@ -9,7 +8,7 @@ function initChatSockets(io) {
     const token = socket.handshake.auth.token;
     if (!token) return next(new Error('Authentication required'));
     try {
-      socket.user = jwt.verify(token, jwtSecret);
+      socket.user = verifyAccessToken(token);
       next();
     } catch {
       next(new Error('Invalid token'));

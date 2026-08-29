@@ -5,6 +5,8 @@ const ROUTE_SCHEMAS = Object.freeze({
   BookingForm: { requiredIds: ['workerId'], optionalIds: ['serviceId'] },
   ActiveBooking: { requiredIds: ['bookingId'] },
   ActiveJob: { requiredIds: ['bookingId'] },
+  WorkerJobDetail: { requiredIds: ['projectId'] },
+  WorkerIncomingOffer: { requiredIds: ['offerId'] },
   ScopeConfirm: { requiredIds: ['bookingId'] },
   Payment: { requiredIds: ['bookingId'] },
   Rate: { requiredIds: ['bookingId'] },
@@ -20,7 +22,7 @@ const ROLE_ROUTES = Object.freeze({
     'RequestMatch', 'LabourerProfile', 'BookingForm', 'ActiveBooking',
     'Payment', 'Rate', 'Chat', 'KYC', 'ScopeConfirm',
   ]),
-  labourer: new Set(['ActiveJob', 'Chat', 'KYC', 'ScopeConfirm']),
+  labourer: new Set(['ActiveJob', 'WorkerJobDetail', 'WorkerIncomingOffer', 'Chat', 'KYC', 'ScopeConfirm']),
 });
 
 function stableId(value, field) {

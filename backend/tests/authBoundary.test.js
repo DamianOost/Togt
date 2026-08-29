@@ -7,6 +7,8 @@
  * auth_forbidden_role types.
  */
 
+const jwt = require('jsonwebtoken');
+const { jwtSecret } = require('../src/config/env');
 const { request, app, db } = require('./helpers');
 
 afterAll(async () => {
@@ -34,6 +36,20 @@ describe('auth boundary returns RFC 9457 problem+json', () => {
     expect(res.body.type).toMatch(/errors\/auth_invalid_token/);
     expect(res.body.title).toBe('Invalid or expired token');
     expect(res.body.error).toBe('Invalid or expired token'); // legacy
+  });
+
+  test('refresh-purpose token signed with the access key is rejected at the access boundary', async () => {
+    const wrongPurpose = jwt.sign(
+      { id: '11111111-1111-4111-8111-111111111111', role: 'customer', token_type: 'refresh' },
+      jwtSecret,
+      { algorithm: 'HS256', expiresIn: '5m' }
+    );
+    const res = await request(app)
+      .get('/api/webhook-subscriptions')
+      .set('Authorization', `Bearer ${wrongPurpose}`);
+
+    expect(res.status).toBe(401);
+    expect(res.body.type).toMatch(/errors\/auth_invalid_token/);
   });
 
   test('non-Bearer auth scheme => 401 auth_missing_token (treats as missing)', async () => {

@@ -17,6 +17,32 @@ const SIGNING_MODES = new Set(['generated-debug', 'keystore']);
 const REQUIRED_ANDROID_PLATFORM = 'android-36';
 const REQUIRED_BUILD_TOOLS_VERSION = '36.0.0';
 const REQUIRED_NDK_VERSION = '27.1.12297006';
+const REQUIRED_MIN_SDK_VERSION = '24';
+const REQUIRED_TARGET_SDK_VERSION = '36';
+const REQUIRED_COMPILE_SDK_VERSION = '36';
+const BLOCKED_ANDROID_PERMISSIONS = Object.freeze([
+  'android.permission.CAMERA',
+  'android.permission.READ_EXTERNAL_STORAGE',
+  'android.permission.RECORD_AUDIO',
+  'android.permission.SYSTEM_ALERT_WINDOW',
+  'android.permission.WRITE_EXTERNAL_STORAGE',
+]);
+const REVIEWED_NON_API_ORIGINS = new Set([
+  'http://localhost',
+  'https://bit.ly',
+  'https://classic-assets.eascdn.net',
+  'https://clients3.google.com',
+  'https://docs.expo.dev',
+  'https://expo.fyi',
+  'https://fonts.gstatic.com',
+  'https://github.com',
+  'https://react.dev',
+  'https://reactnative.dev',
+  'https://reactnavigation.org',
+  'https://redux-toolkit.js.org',
+  'https://redux.js.org',
+  'https://socket.io',
+]);
 
 function normalizeFingerprint(value, name = 'fingerprint') {
   const normalized = typeof value === 'string'
@@ -51,21 +77,69 @@ function sanitizeArtifactPart(value) {
   return sanitized;
 }
 
-function createArtifactBaseName({ configClass, versionName, versionCode, sourceCommit, abis }) {
+function createArtifactBaseName({
+  configClass,
+  versionName,
+  versionCode,
+  sourceCommit,
+  abis,
+  runtimeConfigSha256,
+}) {
   const abiLabel = abis.map(sanitizeArtifactPart).join('+');
+  const runtimeLabel = normalizeFingerprint(
+    runtimeConfigSha256,
+    'runtime configuration SHA-256'
+  ).slice(0, 12);
   return [
     'TOGT',
     sanitizeArtifactPart(configClass),
     sanitizeArtifactPart(versionName),
     `vc${versionCode}`,
     sanitizeArtifactPart(sourceCommit.slice(0, 12)),
+    `rt${sanitizeArtifactPart(runtimeLabel)}`,
     abiLabel,
   ].join('-');
 }
 
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) =>
+      `${JSON.stringify(key)}:${stableJson(value[key])}`
+    ).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function createSafeRuntimeContract(runtime) {
+  return Object.freeze({
+    schemaVersion: 1,
+    apiOrigin: new URL(runtime.apiBaseUrl).origin,
+    appEnvironment: runtime.appEnvironment,
+    androidCleartextAllowed: runtime.androidCleartextAllowed,
+    buildProvider: runtime.buildProvider,
+    configClass: runtime.configClass,
+    packageName: runtime.packageName,
+    scheme: runtime.scheme,
+    providers: Object.freeze({
+      maps: runtime.mapsProvider,
+      peach: runtime.peachAllowed,
+      push: runtime.pushProvider,
+    }),
+    featureFlags: Object.freeze({
+      schemaVersion: 1,
+      flags: Object.freeze({ ...runtime.featureFlags }),
+    }),
+  });
+}
+
+function fingerprintRuntimeContract(contract) {
+  return crypto.createHash('sha256').update(stableJson(contract)).digest('hex').toUpperCase();
+}
+
 function parseAaptBadging(output) {
   const packageMatch = output.match(
-    /^package: name='([^']+)' versionCode='([^']+)' versionName='([^']+)'(?:.*compileSdkVersion='([^']+)')?/m
+    /^package: name='([^']+)' versionCode='([^']+)' versionName='([^']+)'/m
   );
   if (!packageMatch) throw new Error('aapt did not report package/version metadata.');
 
@@ -78,13 +152,43 @@ function parseAaptBadging(output) {
 
   return {
     abis,
-    compileSdkVersion: packageMatch[4] || null,
     packageName: packageMatch[1],
     targetSdkVersion: targetSdkMatch?.[1] || null,
     minSdkVersion: sdkMatch?.[1] || null,
     versionCode: Number(packageMatch[2]),
     versionName: packageMatch[3],
   };
+}
+
+function parseAaptPermissions(output) {
+  return [...new Set(
+    [...String(output).matchAll(/uses-permission(?:-sdk-\d+)?:\s+name='([^']+)'/g)]
+      .map((match) => match[1])
+  )].sort();
+}
+
+function assertAndroidPermissionBoundary(permissions) {
+  const forbidden = BLOCKED_ANDROID_PERMISSIONS.filter((permission) =>
+    permissions.includes(permission)
+  );
+  if (forbidden.length > 0) {
+    throw new Error(`APK contains blocked Android permissions: ${forbidden.join(', ')}.`);
+  }
+}
+
+function assertApkSdkVersions(badging) {
+  if (badging.minSdkVersion !== REQUIRED_MIN_SDK_VERSION) {
+    throw new Error(
+      `APK minSdk mismatch: expected ${REQUIRED_MIN_SDK_VERSION}; ` +
+      `found ${badging.minSdkVersion || 'missing'}.`
+    );
+  }
+  if (badging.targetSdkVersion !== REQUIRED_TARGET_SDK_VERSION) {
+    throw new Error(
+      `APK targetSdk mismatch: expected ${REQUIRED_TARGET_SDK_VERSION}; ` +
+      `found ${badging.targetSdkVersion || 'missing'}.`
+    );
+  }
 }
 
 function parseSignerFingerprint(output) {
@@ -132,6 +236,15 @@ function assertAndroidCleartextPolicy(context) {
 function isPathInside(parent, candidate) {
   const relative = path.relative(path.resolve(parent), path.resolve(candidate));
   return relative !== '' && !relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative);
+}
+
+function isPathAtOrInside(parent, candidate) {
+  const relative = path.relative(path.resolve(parent), path.resolve(candidate));
+  return relative === '' || (
+    !relative.startsWith(`..${path.sep}`) &&
+    relative !== '..' &&
+    !path.isAbsolute(relative)
+  );
 }
 
 function removeGeneratedFile(filePath, outputRoot) {
@@ -188,6 +301,58 @@ function requireDirectory(directoryPath, message) {
   return directoryPath;
 }
 
+function parseAndroidVersionCatalog(source) {
+  const readVersion = (name) => {
+    const match = String(source).match(new RegExp(`^${name}\\s*=\\s*["']([^"']+)["']`, 'm'));
+    if (!match) throw new Error(`React Native Android version catalog is missing ${name}.`);
+    return match[1];
+  };
+  return Object.freeze({
+    buildToolsVersion: readVersion('buildTools'),
+    compileSdkVersion: readVersion('compileSdk'),
+    minSdkVersion: readVersion('minSdk'),
+    targetSdkVersion: readVersion('targetSdk'),
+  });
+}
+
+function resolveGeneratedAndroidSdkEvidence(toolchain) {
+  const relativeCatalogPath = path.join(
+    'node_modules',
+    'react-native',
+    'gradle',
+    'libs.versions.toml'
+  );
+  const catalogPath = requireFile(
+    path.join(mobileRoot, relativeCatalogPath),
+    'React Native Android version catalog is missing. Run npm ci from mobile.'
+  );
+  const versions = parseAndroidVersionCatalog(fs.readFileSync(catalogPath, 'utf8'));
+  const expected = {
+    buildToolsVersion: REQUIRED_BUILD_TOOLS_VERSION,
+    compileSdkVersion: REQUIRED_COMPILE_SDK_VERSION,
+    minSdkVersion: REQUIRED_MIN_SDK_VERSION,
+    targetSdkVersion: REQUIRED_TARGET_SDK_VERSION,
+  };
+  for (const [name, expectedValue] of Object.entries(expected)) {
+    if (versions[name] !== expectedValue) {
+      throw new Error(
+        `Generated Android ${name} mismatch: expected ${expectedValue}; found ${versions[name]}.`
+      );
+    }
+  }
+  if (toolchain.buildToolsVersion !== versions.buildToolsVersion) {
+    throw new Error(
+      `Android build-tools mismatch: generated configuration requires ` +
+      `${versions.buildToolsVersion}; toolchain resolved ${toolchain.buildToolsVersion}.`
+    );
+  }
+  return Object.freeze({
+    ...versions,
+    androidPlatform: REQUIRED_ANDROID_PLATFORM,
+    source: relativeCatalogPath.replaceAll(path.sep, '/'),
+  });
+}
+
 function resolveToolchain(environment) {
   const javaHomeValue = environment.JAVA_HOME?.trim();
   if (!javaHomeValue) throw new Error('JAVA_HOME must point to a JDK 17 installation.');
@@ -230,6 +395,7 @@ function resolveToolchain(environment) {
     aapt: requireFile(executable(buildTools, 'aapt')),
     apksigner: requireFile(batchExecutable(buildTools, 'apksigner')),
     buildToolsVersion: REQUIRED_BUILD_TOOLS_VERSION,
+    androidPlatform: REQUIRED_ANDROID_PLATFORM,
     java,
     javaHome,
     sdkRoot,
@@ -273,10 +439,22 @@ function resolveSigningConfiguration(environment, runtime, { requireGeneratedKey
   if (!keystoreValue) {
     throw new Error('TOGT_ANDROID_KEYSTORE_PATH is required for keystore signing.');
   }
+  const requestedKeystorePath = path.resolve(keystoreValue);
+  const repositoryRoot = path.resolve(mobileRoot, '..');
+  if (isPathAtOrInside(repositoryRoot, requestedKeystorePath)) {
+    throw new Error('TOGT_ANDROID_KEYSTORE_PATH must be outside the repository tree.');
+  }
   const keystorePath = requireFile(
-    path.resolve(keystoreValue),
+    requestedKeystorePath,
     'TOGT_ANDROID_KEYSTORE_PATH must point to a readable keystore outside the repository.'
   );
+  const realRepositoryRoot = fs.realpathSync(repositoryRoot);
+  const realKeystorePath = fs.realpathSync(keystorePath);
+  if (isPathAtOrInside(realRepositoryRoot, realKeystorePath)) {
+    throw new Error(
+      'TOGT_ANDROID_KEYSTORE_PATH resolves inside the repository tree and is not allowed.'
+    );
+  }
   const alias = environment.TOGT_ANDROID_KEY_ALIAS?.trim();
   if (!alias) throw new Error('TOGT_ANDROID_KEY_ALIAS is required for keystore signing.');
   if (!environment.TOGT_ANDROID_KEYSTORE_PASSWORD) {
@@ -321,8 +499,8 @@ function verifyReleaseIdentity(runtime) {
   if (expo.android?.package !== 'za.togt.app' || runtime.packageName !== 'za.togt.app') {
     throw new Error('Android package identity must remain za.togt.app.');
   }
-  if (expo.android?.versionCode !== 2) {
-    throw new Error('The P0 successor must use Android versionCode 2.');
+  if (!Number.isInteger(expo.android?.versionCode) || expo.android.versionCode < 3) {
+    throw new Error('Grounded Momentum successors must use Android versionCode 3 or higher.');
   }
   if (typeof expo.version !== 'string' || !expo.version.trim()) {
     throw new Error('app.json must contain a non-empty versionName.');
@@ -346,6 +524,7 @@ function preflight(
   const abis = parseAbiList(environment.TOGT_ANDROID_ABIS);
   const signing = requireSigning ? resolveSigningConfiguration(environment, runtime) : null;
   const toolchain = requireToolchain ? resolveToolchain(environment) : null;
+  const sdkEvidence = toolchain ? resolveGeneratedAndroidSdkEvidence(toolchain) : null;
   const expoCli = expoCliPath();
 
   run(process.execPath, [expoCli, 'config', '--type', 'public', '--json'], {
@@ -363,7 +542,7 @@ function preflight(
     `${toolchainSummary}${signingSummary}.`
   );
 
-  return { abis, environment, identity, runtime, signing, toolchain };
+  return { abis, environment, identity, runtime, sdkEvidence, signing, toolchain };
 }
 
 function runPrebuild(context) {
@@ -444,28 +623,35 @@ function assertRuntimeAssetMetadata(appConfigSource, bundleSource, runtime) {
       );
     }
   }
+  if (extra.featureFlags?.schemaVersion !== 1) {
+    throw new Error('Generated app.config feature-flag schema mismatch: expected version 1.');
+  }
+  for (const [name, expected] of Object.entries(runtime.featureFlags)) {
+    const actual = extra.featureFlags?.flags?.[name];
+    if (actual !== expected) {
+      throw new Error(
+        `Generated app.config feature flag ${name} mismatch: expected ${expected}; found ${actual}.`
+      );
+    }
+  }
 
   if (typeof bundleSource !== 'string' || !bundleSource.trim()) {
     throw new Error('Generated Android JavaScript bundle is empty.');
   }
   const expectedOrigin = new URL(runtime.apiBaseUrl).origin;
-  const expectedPort = new URL(expectedOrigin).port;
-  if (!expectedPort) return;
-
   const embeddedOrigins = [
     ...new Set(
       [...bundleSource.matchAll(
-        /\bhttps?:\/\/(?:\[[0-9a-f:]+\]|[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)(?::\d{1,5})?/gi
+        /\bhttps?:\/\/(?:localhost|\[[0-9a-f:]+\]|[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)(?::\d{1,5})?/gi
       )].map((match) => new URL(match[0]).origin)
     ),
   ];
-  const staleOrigins = embeddedOrigins.filter((origin) => {
-    const candidate = new URL(origin);
-    return candidate.port === expectedPort && candidate.origin !== expectedOrigin;
-  });
+  const staleOrigins = embeddedOrigins.filter((origin) =>
+    origin !== expectedOrigin && !REVIEWED_NON_API_ORIGINS.has(origin)
+  );
   if (staleOrigins.length > 0) {
     throw new Error(
-      `Android bundle contains a stale API origin for port ${expectedPort}: ` +
+      'Android bundle contains a stale or unreviewed runtime origin: ' +
       `${staleOrigins.join(', ')}; expected ${expectedOrigin}.`
     );
   }
@@ -514,6 +700,10 @@ function buildApk(context, sourceCommit) {
     ':app:assembleRelease',
     '--no-daemon',
     '--stacktrace',
+    `-Pandroid.buildToolsVersion=${REQUIRED_BUILD_TOOLS_VERSION}`,
+    `-Pandroid.compileSdkVersion=${REQUIRED_COMPILE_SDK_VERSION}`,
+    `-Pandroid.minSdkVersion=${REQUIRED_MIN_SDK_VERSION}`,
+    `-Pandroid.targetSdkVersion=${REQUIRED_TARGET_SDK_VERSION}`,
     `-PreactNativeArchitectures=${context.abis.join(',')}`,
   ];
   run(gradleWrapper, gradleArgs, {
@@ -527,10 +717,13 @@ function buildApk(context, sourceCommit) {
     path.join(androidRoot, 'app', 'build', 'outputs', 'apk', 'release', 'app-release.apk'),
     'Gradle did not produce app-release.apk.'
   );
+  const runtimeConfig = createSafeRuntimeContract(context.runtime);
+  const runtimeConfigSha256 = fingerprintRuntimeContract(runtimeConfig);
   const artifactBaseName = createArtifactBaseName({
     ...context.identity,
     abis: context.abis,
     configClass: context.runtime.configClass,
+    runtimeConfigSha256,
     sourceCommit,
   });
   const outputRoot = path.join(mobileRoot, 'dist', 'apk');
@@ -561,7 +754,7 @@ function buildApk(context, sourceCommit) {
       '--ks-key-alias', context.signing.alias,
       '--ks-pass', `env:${context.signing.storePasswordEnvironmentName}`,
       '--key-pass', `env:${context.signing.keyPasswordEnvironmentName}`,
-      '--min-sdk-version', '24',
+      '--min-sdk-version', REQUIRED_MIN_SDK_VERSION,
       '--out', artifactPath,
       alignedApk,
     ],
@@ -602,11 +795,19 @@ function buildApk(context, sourceCommit) {
       `APK version mismatch: ${badging.versionName} (${badging.versionCode}).`
     );
   }
+  assertApkSdkVersions(badging);
   assertSameValues(badging.abis, context.abis, 'APK ABI');
+  const androidPermissions = parseAaptPermissions(
+    run(context.toolchain.aapt, ['dump', 'permissions', artifactPath], {
+      capture: true,
+      env: context.environment,
+    })
+  );
+  assertAndroidPermissionBoundary(androidPermissions);
 
   const artifactSha256 = sha256File(artifactPath);
   const manifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     artifactFile: path.basename(artifactPath),
     artifactSha256,
     artifactSizeBytes: fs.statSync(artifactPath).size,
@@ -618,10 +819,23 @@ function buildApk(context, sourceCommit) {
     androidCleartextAllowed: context.runtime.androidCleartextAllowed,
     configClass: context.runtime.configClass,
     buildProvider: context.runtime.buildProvider,
+    apiOrigin: runtimeConfig.apiOrigin,
+    providers: runtimeConfig.providers,
+    featureFlags: context.runtime.featureFlags,
+    runtimeConfig,
+    runtimeConfigSha256,
     abis: badging.abis,
+    androidPermissions,
     minSdkVersion: badging.minSdkVersion,
     targetSdkVersion: badging.targetSdkVersion,
-    compileSdkVersion: badging.compileSdkVersion,
+    compileSdkVersion: context.sdkEvidence.compileSdkVersion,
+    androidSdkEvidence: context.sdkEvidence,
+    enforcedAndroidGradleProperties: {
+      buildToolsVersion: REQUIRED_BUILD_TOOLS_VERSION,
+      compileSdkVersion: REQUIRED_COMPILE_SDK_VERSION,
+      minSdkVersion: REQUIRED_MIN_SDK_VERSION,
+      targetSdkVersion: REQUIRED_TARGET_SDK_VERSION,
+    },
     signerSha256,
     expectedSignerSha256: context.signing.expectedSignerSha256,
     signingMode: context.signing.mode,
@@ -674,11 +888,22 @@ if (require.main === module) {
 
 module.exports = {
   BASELINE_SIGNER_SHA256,
+  BLOCKED_ANDROID_PERMISSIONS,
+  REQUIRED_COMPILE_SDK_VERSION,
+  REQUIRED_MIN_SDK_VERSION,
+  REQUIRED_TARGET_SDK_VERSION,
+  assertAndroidPermissionBoundary,
+  assertApkSdkVersions,
   assertRuntimeAssetMetadata,
   createArtifactBaseName,
+  createSafeRuntimeContract,
+  fingerprintRuntimeContract,
   normalizeFingerprint,
   parseAaptBadging,
+  parseAaptPermissions,
   parseAbiList,
   parseAndroidCleartextPolicy,
+  parseAndroidVersionCatalog,
   parseSignerFingerprint,
+  resolveSigningConfiguration,
 };

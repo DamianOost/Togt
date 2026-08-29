@@ -8,6 +8,20 @@ jest.mock('../src/services/verifynow', () => {
   };
 });
 
+jest.mock('../src/config/capabilities', () => {
+  const actual = jest.requireActual('../src/config/capabilities');
+  return {
+    ...actual,
+    FEATURES: {
+      ...actual.FEATURES,
+      identity_verification: {
+        ...actual.FEATURES.identity_verification,
+        available: true,
+      },
+    },
+  };
+});
+
 const { request, app, db, truncateAll, registerUser, authHeader } = require('./helpers');
 const verifynow = require('../src/services/verifynow');
 const mockVerifyId = verifynow.__mockVerifyId;
@@ -102,7 +116,7 @@ describe('POST /api/kyc/verify-id with VerifyNow configured', () => {
     expect(userRow.rows[0].kyc_status).toBe('failed');
   });
 
-  test('VerifyNow throws (network/timeout) -> falls back to structural-only, provider=poc_structural', async () => {
+  test('VerifyNow throws (network/timeout) -> remains pending and retryable', async () => {
     mockVerifyId.mockRejectedValueOnce(new Error('ECONNRESET'));
 
     const u = await registerUser({ role: 'labourer' });
@@ -111,17 +125,22 @@ describe('POST /api/kyc/verify-id with VerifyNow configured', () => {
       .set(authHeader(u.accessToken))
       .send({ idNumber: VALID_ADULT_ID, firstName: 'Test', lastName: 'Labourer' });
 
-    expect(res.status).toBe(200);
-    expect(res.body.verified).toBe(true);
+    expect(res.status).toBe(503);
+    expect(res.body.verified).toBe(false);
     expect(res.body.provider).toBe('poc_structural');
-    expect(res.body.poc_mode).toBe(true);
-    expect(res.body.name).toBe('Test Labourer');
+    expect(res.body.assurance).toBe('structural_only');
+    expect(res.body.status).toBe('pending_review');
+    expect(res.body.retryable).toBe(true);
 
     const kyc = await db.query(
-      'SELECT provider FROM kyc_verifications WHERE user_id = $1',
+      'SELECT provider, status FROM kyc_verifications WHERE user_id = $1',
       [u.user.id]
     );
     expect(kyc.rows[0].provider).toBe('poc_structural');
+    expect(kyc.rows[0].status).toBe('pending');
+
+    const userRow = await db.query('SELECT kyc_status FROM users WHERE id = $1', [u.user.id]);
+    expect(userRow.rows[0].kyc_status).toBe('pending');
   });
 
   test('Structural fail short-circuits before VerifyNow is called (saves a credit)', async () => {

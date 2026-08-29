@@ -8,6 +8,8 @@ import { matchSocket } from '../services/matchSocket';
 import { matchService } from '../services/matchService';
 import { colors, typography, spacing, borderRadius, shadows } from '../theme';
 
+const { createNestedRootIntent } = require('../navigation/routeContracts');
+
 const DEFAULT_TIMEOUT_MS = 30000;
 
 function formatApproxArea(item) {
@@ -71,7 +73,8 @@ export default function IncomingMatchModal() {
     try {
       const r = await matchService.accept(request.matchId);
       dismiss();
-      navigation.navigate('ActiveJob', { bookingId: r.booking.id });
+      const intent = createNestedRootIntent('labourer', 'ActiveJob', { bookingId: r.booking.id });
+      navigation.navigate(intent.name, intent.params);
     } catch (err) {
       const msg = err.response?.data?.error || 'Could not accept job.';
       Alert.alert('Accept failed', msg);

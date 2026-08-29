@@ -6,11 +6,13 @@ const { notifyUser } = require('../services/notifications');
 const { emitEvent } = require('../services/events');
 const { serializeBookingForUser } = require('../lib/privacy');
 const { recordPrivacyAudit } = require('../lib/privacyAudit');
+const { withStartContext } = require('../lib/startPin');
 
 const router = express.Router();
 
 // PATCH /api/bookings/:id/confirm-scope
-// Both customer and labourer must call this; job auto-starts once both confirm
+// Both customer and labourer must call this. Confirmation never starts work;
+// the assigned worker must separately submit the customer-held start PIN.
 router.patch('/:id/confirm-scope', authMiddleware, async (req, res, next) => {
   try {
     const result = await db.query('SELECT * FROM bookings WHERE id = $1', [req.params.id]);
@@ -22,7 +24,7 @@ router.patch('/:id/confirm-scope', authMiddleware, async (req, res, next) => {
     if (booking.customer_id !== userId && booking.labourer_id !== userId) {
       return res.status(403).json({ error: 'Access denied' });
     }
-    if (!['accepted', 'pending'].includes(booking.status)) {
+    if (booking.status !== 'accepted') {
       return res.status(400).json({ error: 'Can only confirm scope for accepted bookings' });
     }
 
@@ -32,11 +34,21 @@ router.patch('/:id/confirm-scope', authMiddleware, async (req, res, next) => {
     let notifyBody = '';
 
     if (role === 'customer') {
+      if (booking.scope_confirmed_by_customer) {
+        return res.json({
+          booking: withStartContext(serializeBookingForUser(booking, req.user), booking, req.user),
+        });
+      }
       updateFields = 'scope_confirmed_by_customer = true';
       notifyTarget = booking.labourer_id;
       notifyTitle = '✅ Customer confirmed scope';
       notifyBody = 'Customer confirmed the job scope. Confirm yours to start!';
     } else if (role === 'labourer') {
+      if (booking.scope_confirmed_by_labourer) {
+        return res.json({
+          booking: withStartContext(serializeBookingForUser(booking, req.user), booking, req.user),
+        });
+      }
       updateFields = 'scope_confirmed_by_labourer = true';
       notifyTarget = booking.customer_id;
       notifyTitle = '✅ Worker confirmed scope';
@@ -45,48 +57,43 @@ router.patch('/:id/confirm-scope', authMiddleware, async (req, res, next) => {
       return res.status(403).json({ error: 'Invalid role' });
     }
 
-    // Update this party's confirmation + (if both now confirmed) flip to
-    // in_progress AND emit booking.in_progress, all in the same tx.
+    // Update this party's confirmation. Bilateral confirmation only unlocks
+    // the separate start-PIN transition; it never starts work by itself.
     const finalBooking = await withTx(async (client) => {
       await client.query(`UPDATE bookings SET ${updateFields} WHERE id = $1`, [booking.id]);
       const updated = await client.query('SELECT * FROM bookings WHERE id = $1', [booking.id]);
       const b = updated.rows[0];
-      if (b.scope_confirmed_by_customer && b.scope_confirmed_by_labourer && b.status !== 'in_progress') {
-        const started = await client.query(
+      if (b.scope_confirmed_by_customer && b.scope_confirmed_by_labourer && !b.scope_confirmed_at) {
+        const confirmed = await client.query(
           `UPDATE bookings
-              SET status = 'in_progress', scope_confirmed_at = NOW()
+              SET scope_confirmed_at = NOW()
             WHERE id = $1 RETURNING *`,
           [booking.id]
         );
-        const started_row = started.rows[0];
-        await emitEvent(client, {
-          eventType: 'booking.in_progress',
-          resourceType: 'booking',
-          resourceId: started_row.id,
-          actorUserIds: [started_row.customer_id, started_row.labourer_id],
-          previousState: booking.status,
-          state: 'in_progress',
-          data: started_row,
-        });
-        return started_row;
+        return confirmed.rows[0];
       }
       return b;
     });
 
-    if (finalBooking.status === 'in_progress' && finalBooking.scope_confirmed_at) {
-      // Notify both parties (best-effort, post-commit)
-      notifyUser(booking.customer_id, '🚀 Job Started!',
-        'Both parties confirmed scope. The job is now in progress.',
+    if (finalBooking.scope_confirmed_by_customer && finalBooking.scope_confirmed_by_labourer) {
+      notifyUser(booking.customer_id, 'Scope confirmed',
+        'Both parties confirmed the scope. Share the start PIN only when work is ready to begin.',
         { bookingId: booking.id, screen: 'ActiveBooking' });
-      notifyUser(booking.labourer_id, '🚀 Job Started!',
-        'Both parties confirmed scope. Start the job now!',
+      notifyUser(booking.labourer_id, 'Scope confirmed',
+        'Both parties confirmed the scope. Ask the customer for the 6-digit start PIN.',
         { bookingId: booking.id, screen: 'ActiveJob' });
     } else if (notifyTarget) {
       // Only one side confirmed — notify the other
       notifyUser(notifyTarget, notifyTitle, notifyBody, { bookingId: booking.id, screen: 'ScopeConfirm' });
     }
 
-    res.json({ booking: serializeBookingForUser(finalBooking, req.user) });
+    res.json({
+      booking: withStartContext(
+        serializeBookingForUser(finalBooking, req.user),
+        finalBooking,
+        req.user
+      ),
+    });
   } catch (err) {
     next(err);
   }
@@ -161,7 +168,7 @@ router.post('/:id/make-recurring', authMiddleware, async (req, res, next) => {
 });
 
 // POST /api/bookings/:id/share-trip
-// Returns shareable text for WhatsApp/native share
+// Legacy-compatible route returning non-live, privacy-minimized booking text.
 router.post('/:id/share-trip', authMiddleware, async (req, res, next) => {
   try {
     const result = await db.query(
@@ -178,24 +185,19 @@ router.post('/:id/share-trip', authMiddleware, async (req, res, next) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    const safeBooking = serializeBookingForUser(b, req.user);
-    if (safeBooking.address && req.user.role === 'labourer') {
-      recordPrivacyAudit(req, {
-        action: 'privacy.booking.exact_address_revealed',
-        resource: { type: 'booking', id: safeBooking.id },
-        statusCode: 200,
-        metadata: { viewer_role: req.user.role, booking_status: safeBooking.status, surface: 'share_trip' },
-      });
-    }
-
     const shareText =
-      `🔧 Togt Job in Progress\n` +
+      `TOGT booking details\n` +
       `Worker: ${b.labourer_name}\n` +
       `Job: ${b.skill_needed}\n` +
-      `Location: ${safeBooking.address || 'Approximate area only'}\n` +
-      `Track: togt://booking/${b.id}`;
+      `Scheduled: ${new Date(b.scheduled_at).toLocaleString('en-ZA')}\n` +
+      `Status: ${b.status}\n` +
+      `This is a booking summary, not a live tracking link.`;
 
-    res.json({ shareText, bookingId: b.id });
+    res.json({
+      shareText,
+      live_tracking: false,
+      public_link: null,
+    });
   } catch (err) {
     next(err);
   }

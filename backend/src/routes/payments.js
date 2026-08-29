@@ -3,83 +3,23 @@ const axios = require('axios');
 const db = require('../config/db');
 const { withTx } = require('../config/db');
 const { authMiddleware } = require('../middleware/auth');
-const { idempotencyMiddleware } = require('../middleware/idempotency');
 const crypto = require('crypto');
 const { peach } = require('../config/env');
 const { emitEvent } = require('../services/events');
+const { FEATURES } = require('../config/capabilities');
 
 const router = express.Router();
 
-// POST /payments/initiate — create a Peach Payments checkout for a completed booking
-router.post('/initiate', authMiddleware, idempotencyMiddleware(), async (req, res, next) => {
-  try {
-    const { booking_id } = req.body;
-    if (!booking_id) return res.status(400).json({ error: 'booking_id required' });
-
-    const bookingResult = await db.query(
-      'SELECT * FROM bookings WHERE id = $1 AND customer_id = $2',
-      [booking_id, req.user.id]
-    );
-    if (bookingResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Booking not found' });
-    }
-
-    const booking = bookingResult.rows[0];
-    if (booking.status !== 'completed') {
-      return res.status(400).json({ error: 'Payment only available after job is completed' });
-    }
-    if (!booking.total_amount) {
-      return res.status(400).json({ error: 'No amount set for this booking' });
-    }
-
-    // Check if payment already exists
-    const existingPayment = await db.query(
-      'SELECT * FROM payments WHERE booking_id = $1 AND status = $2',
-      [booking_id, 'paid']
-    );
-    if (existingPayment.rows.length > 0) {
-      return res.status(400).json({ error: 'Booking already paid' });
-    }
-
-    // Create Peach Payments checkout
-    const params = new URLSearchParams({
-      entityId: peach.entityId,
-      amount: parseFloat(booking.total_amount).toFixed(2),
-      currency: 'ZAR',
-      paymentType: 'DB',
-    });
-
-    const peachResponse = await axios.post(
-      `${peach.baseUrl}/v1/checkouts`,
-      params.toString(),
-      {
-        headers: {
-          Authorization: `Bearer ${peach.accessToken}`,
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-      }
-    );
-
-    const checkoutId = peachResponse.data.id;
-
-    // Store pending payment
-    const paymentResult = await db.query(
-      `INSERT INTO payments (booking_id, amount, currency, status, peach_checkout_id)
-       VALUES ($1, $2, 'ZAR', 'pending', $3)
-       ON CONFLICT (booking_id) DO UPDATE
-         SET peach_checkout_id = $3, status = 'pending'
-       RETURNING *`,
-      [booking_id, booking.total_amount, checkoutId]
-    );
-
-    res.json({
-      payment: paymentResult.rows[0],
-      checkoutId,
-      checkoutUrl: `${peach.baseUrl}/v1/paymentWidgets.js?checkoutId=${checkoutId}`,
-    });
-  } catch (err) {
-    next(err);
-  }
+// P0-Triage deliberately disables checkout creation. The previous endpoint
+// produced a paymentWidgets.js script URL rather than a proven Hosted Checkout
+// handoff and therefore cannot be safely enabled by configuration alone.
+router.post('/initiate', authMiddleware, (req, res) => {
+  res.status(503).json({
+    error: 'capability_unavailable',
+    capability: 'peach_checkout',
+    reason_code: FEATURES.peach_checkout.reason_code,
+    detail: 'Online payment is not enabled in this build. No checkout was created.',
+  });
 });
 
 // POST /payments/webhook — Peach Payments result notification
@@ -197,37 +137,15 @@ router.get('/status/:bookingId', authMiddleware, async (req, res, next) => {
   }
 });
 
-// POST /payments/cash — mark booking as paid via cash (fallback)
-router.post('/cash', authMiddleware, idempotencyMiddleware(), async (req, res, next) => {
-  try {
-    const { booking_id } = req.body;
-    if (!booking_id) return res.status(400).json({ error: 'booking_id required' });
-
-    const bookingResult = await db.query(
-      'SELECT * FROM bookings WHERE id = $1 AND customer_id = $2',
-      [booking_id, req.user.id]
-    );
-    if (bookingResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Booking not found' });
-    }
-    const booking = bookingResult.rows[0];
-    if (booking.status !== 'completed') {
-      return res.status(400).json({ error: 'Can only pay for completed bookings' });
-    }
-
-    // Upsert payment record
-    const result = await db.query(
-      `INSERT INTO payments (booking_id, amount, currency, status, peach_result_code)
-       VALUES ($1, $2, 'ZAR', 'paid', 'CASH')
-       ON CONFLICT DO NOTHING
-       RETURNING *`,
-      [booking_id, booking.total_amount || 0]
-    );
-
-    res.json({ success: true, payment: result.rows[0] || null });
-  } catch (err) {
-    next(err);
-  }
+// Cash can be arranged out of app, but it cannot be recorded as settled until
+// bilateral receipt confirmation and dispute handling exist.
+router.post('/cash', authMiddleware, (req, res) => {
+  res.status(503).json({
+    error: 'capability_unavailable',
+    capability: 'cash_settlement',
+    reason_code: FEATURES.cash_settlement.reason_code,
+    detail: 'Cash settlement is not recorded in this build. No paid state was created.',
+  });
 });
 
 module.exports = router;

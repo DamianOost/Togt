@@ -20,6 +20,7 @@ const uploadRoutes = require('./routes/upload');
 const matchRoutes = require('./routes/match');
 const apiKeyRoutes = require('./routes/apiKeys');
 const webhookSubscriptionRoutes = require('./routes/webhookSubscriptions');
+const capabilityRoutes = require('./routes/capabilities');
 const mcpHttpRoutes = require('../mcp-server/httpHandler');
 const initLocationSockets = require('./sockets/location');
 const initChatSockets = require('./sockets/chat');
@@ -133,6 +134,7 @@ app.use('/api/upload', uploadRoutes);
 app.use('/api/match', matchRoutes);
 app.use('/api/api-keys', apiKeyRoutes);
 app.use('/api/webhook-subscriptions', webhookSubscriptionRoutes);
+app.use('/api/capabilities', capabilityRoutes);
 app.use('/mcp', mcpHttpRoutes);
 app.use('/upload', uploadRoutes);
 

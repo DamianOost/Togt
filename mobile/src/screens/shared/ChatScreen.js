@@ -13,12 +13,10 @@ import {
 } from 'react-native';
 import { useSelector } from 'react-redux';
 import { io } from 'socket.io-client';
-import Constants from 'expo-constants';
 import api from '../../services/api';
+import { socketUrl } from '../../config/apiConfig';
 import BookingStatusBadge from '../../components/BookingStatusBadge';
 import { colors, typography, spacing, borderRadius, shadows } from '../../theme';
-
-const BASE_URL = Constants.expoConfig?.extra?.apiUrl || 'http://localhost:3002';
 
 export default function ChatScreen({ route }) {
   const { bookingId, otherPartyName, bookingStatus } = route.params;
@@ -39,7 +37,7 @@ export default function ChatScreen({ route }) {
 
   // Connect socket
   useEffect(() => {
-    const socket = io(`${BASE_URL}/chat`, {
+    const socket = io(socketUrl('/chat'), {
       auth: { token: accessToken },
       transports: ['websocket'],
     });

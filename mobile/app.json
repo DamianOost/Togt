@@ -2,7 +2,7 @@
   "expo": {
     "name": "Togt",
     "slug": "togt",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -21,14 +21,14 @@
     },
     "android": {
       "package": "za.togt.app",
+      "versionCode": 2,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#1A6B3A"
       },
       "permissions": [
         "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION",
-        "ACCESS_BACKGROUND_LOCATION"
+        "ACCESS_COARSE_LOCATION"
       ]
     },
     "plugins": [
@@ -41,7 +41,6 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/notification-icon.png",
           "color": "#1A6B3A"
         }
       ],
@@ -49,10 +48,6 @@
       "expo-asset",
       "expo-font",
       "expo-secure-store"
-    ],
-    "extra": {
-      "apiUrl": "http://192.168.10.69:3002"
-    },
-    "sdkVersion": "54.0.0"
+    ]
   }
 }

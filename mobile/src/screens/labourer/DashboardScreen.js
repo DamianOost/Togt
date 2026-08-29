@@ -108,10 +108,10 @@ export default function DashboardScreen({ navigation }) {
                   {/* KYC badge */}
                   {user?.kyc_status !== 'verified' ? (
                     <TouchableOpacity onPress={() => navigation.navigate('KYC')} style={{ marginTop: 4 }}>
-                      <Text style={{ fontSize: 12, color: '#F59E0B', fontWeight: '600' }}>⚠️ Unverified — Tap to verify</Text>
+                      <Text style={{ fontSize: 12, color: '#F59E0B', fontWeight: '600' }}>Identity checks unavailable in this internal build — view status</Text>
                     </TouchableOpacity>
                   ) : (
-                    <Text style={{ fontSize: 12, color: '#10B981', fontWeight: '600', marginTop: 4 }}>✅ Verified</Text>
+                    <Text style={{ fontSize: 12, color: '#4E5C57', fontWeight: '600', marginTop: 4 }}>Legacy/test identity status recorded — production checks unavailable</Text>
                   )}
                 </View>
                 <View style={styles.headerActions}>
@@ -138,12 +138,12 @@ export default function DashboardScreen({ navigation }) {
               >
                 <View style={styles.availLeft}>
                   <Text style={styles.availStatus}>
-                    {available ? '🟢 Online' : '⭕ Offline'}
+                    {available ? 'Accepting requests' : 'Requests paused'}
                   </Text>
                   <Text style={styles.availDesc}>
                     {available
-                      ? 'Customers can find and book you'
-                      : 'Tap to go online and start earning'}
+                      ? 'Customers can send you booking requests'
+                      : 'Turn on requests when you are ready to respond'}
                   </Text>
                 </View>
                 {toggling ? (
@@ -275,8 +275,10 @@ export default function DashboardScreen({ navigation }) {
                     <View key={b.id} style={styles.recentCard}>
                       <View style={styles.cardRow}>
                         <Text style={styles.cardCustomer}>{b.customer_name}</Text>
-                        <Text style={styles.cardAmountGreen}>
-                          {b.total_amount ? formatZAR(b.total_amount) : '—'}
+                        <Text style={b.payment_status === 'paid' ? styles.cardAmountGreen : styles.cardAmountMuted}>
+                          {b.payment_status === 'paid'
+                            ? (b.total_amount ? `${formatZAR(b.total_amount)} paid` : 'Paid')
+                            : 'Payment unrecorded'}
                         </Text>
                       </View>
                       <Text style={styles.cardSkill}>{b.skill_needed}</Text>
@@ -448,5 +450,6 @@ const styles = StyleSheet.create({
   cardTime: { fontSize: typography.xs, color: colors.textMuted },
   cardAmount: { fontSize: typography.sm, fontWeight: '700', color: colors.accent },
   cardAmountGreen: { fontSize: typography.sm, fontWeight: '700', color: colors.success },
+  cardAmountMuted: { fontSize: typography.xs, fontWeight: '700', color: colors.textMuted },
   cardAction: { fontSize: typography.xs, color: colors.success, fontWeight: '600', marginTop: spacing.xs },
 });

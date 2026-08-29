@@ -10,20 +10,20 @@ const { width } = Dimensions.get('window');
 const SLIDES = [
   {
     icon: '🔍',
-    title: 'Find skilled workers near you',
-    subtitle: 'Browse hundreds of verified, rated labourers in your area — plumbers, painters, electricians and more.',
+    title: 'Find the right worker nearby',
+    subtitle: 'Browse profiles, rates and customer ratings where they are available.',
     color: colors.accent,
   },
   {
     icon: '⚡',
-    title: 'Book in 60 seconds',
-    subtitle: 'Pick a skill, choose a time, confirm. Your labourer gets notified instantly and heads your way.',
+    title: 'Request with clear details',
+    subtitle: 'Choose the work and timing, then keep the scope visible as the booking progresses.',
     color: colors.info,
   },
   {
     icon: '🛡️',
-    title: 'Safe, rated & insured',
-    subtitle: 'Every labourer is background-checked and rated by real customers. Your satisfaction is guaranteed.',
+    title: 'Clear trust signals',
+    subtitle: 'TOGT shows only checks supported by evidence. Identity, skills, background and insurance are separate.',
     color: colors.success,
   },
 ];

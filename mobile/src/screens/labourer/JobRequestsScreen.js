@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet,
   ActivityIndicator, Alert, Animated,
@@ -10,8 +10,6 @@ import { bookingService } from '../../services/bookingService';
 import { formatZAR, formatDateTime } from '../../utils/formatters';
 import { colors, typography, spacing, borderRadius, shadows } from '../../theme';
 
-const EXPIRE_SECONDS = 30;
-
 function formatApproxArea(item) {
   const lat = Number(item?.approx_lat);
   const lng = Number(item?.approx_lng);
@@ -20,62 +18,7 @@ function formatApproxArea(item) {
   return `${label}: ${lat.toFixed(2)}, ${lng.toFixed(2)}`;
 }
 
-function CountdownTimer({ createdAt, onExpire }) {
-  const [remaining, setRemaining] = useState(EXPIRE_SECONDS);
-
-  useEffect(() => {
-    const elapsed = Math.floor((Date.now() - new Date(createdAt).getTime()) / 1000);
-    const initial = Math.max(0, EXPIRE_SECONDS - elapsed);
-    setRemaining(initial);
-
-    if (initial === 0) { onExpire?.(); return; }
-
-    const interval = setInterval(() => {
-      setRemaining((prev) => {
-        if (prev <= 1) {
-          clearInterval(interval);
-          onExpire?.();
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [createdAt]);
-
-  const urgent = remaining <= 10;
-  const progress = remaining / EXPIRE_SECONDS;
-
-  return (
-    <View style={timerStyles.container}>
-      <View style={timerStyles.track}>
-        <View style={[timerStyles.fill, {
-          width: `${progress * 100}%`,
-          backgroundColor: urgent ? colors.danger : colors.accent,
-        }]} />
-      </View>
-      <Text style={[timerStyles.text, urgent && timerStyles.textUrgent]}>
-        {remaining}s
-      </Text>
-    </View>
-  );
-}
-
-const timerStyles = StyleSheet.create({
-  container: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.sm },
-  track: {
-    flex: 1,
-    height: 4,
-    backgroundColor: colors.border,
-    borderRadius: borderRadius.full,
-    overflow: 'hidden',
-  },
-  fill: { height: '100%', borderRadius: borderRadius.full },
-  text: { fontSize: typography.sm, fontWeight: '700', color: colors.textMuted, width: 32, textAlign: 'right' },
-  textUrgent: { color: colors.danger },
-});
-
-function JobRequestCard({ item, onAccept, onDecline, onExpire }) {
+function JobRequestCard({ item, onAccept, onDecline }) {
   const scaleAnim = useRef(new Animated.Value(0)).current;
   const locationText = item.address || formatApproxArea(item);
 
@@ -90,7 +33,10 @@ function JobRequestCard({ item, onAccept, onDecline, onExpire }) {
 
   return (
     <Animated.View style={[styles.card, { transform: [{ scale: scaleAnim }] }]}>
-      <CountdownTimer createdAt={item.created_at || new Date().toISOString()} onExpire={() => onExpire(item.id)} />
+      <View style={styles.requestTypeRow}>
+        <Text style={styles.requestType}>Scheduled request</Text>
+        <Text style={styles.requestTypeHint}>Open until you respond or the customer cancels</Text>
+      </View>
 
       <View style={styles.cardHeader}>
         <View style={styles.customerAvatar}>
@@ -101,7 +47,7 @@ function JobRequestCard({ item, onAccept, onDecline, onExpire }) {
           <Text style={styles.cardSkill}>{item.skill_needed}</Text>
         </View>
         {item.total_amount && (
-          <Text style={styles.earningsAmount}>{formatZAR(item.total_amount)}</Text>
+          <Text style={styles.earningsAmount}>{formatZAR(item.total_amount)} est.</Text>
         )}
       </View>
 
@@ -197,14 +143,6 @@ export default function JobRequestsScreen({ navigation }) {
     ]);
   }
 
-  async function handleExpire(bookingId) {
-    // Auto-decline on timer expiry
-    try {
-      await bookingService.decline(bookingId);
-      dispatch(fetchMyBookings());
-    } catch {}
-  }
-
   if (loading && pendingBookings.length === 0) {
     return (
       <View style={styles.loadingContainer}>
@@ -245,7 +183,6 @@ export default function JobRequestsScreen({ navigation }) {
                 item={item}
                 onAccept={handleAccept}
                 onDecline={handleDecline}
-                onExpire={handleExpire}
               />
             )}
           />
@@ -256,10 +193,10 @@ export default function JobRequestsScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f3f4f6' },
+  container: { flex: 1, backgroundColor: '#F7F4EF' },
   loadingContainer: {
     flex: 1,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: '#F7F4EF',
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.sm,
@@ -271,7 +208,7 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
-    backgroundColor: colors.primary,
+    backgroundColor: '#0F1F1B',
   },
   headerTitle: {
     fontSize: typography.xl,
@@ -290,14 +227,22 @@ const styles = StyleSheet.create({
   countBadgeText: { color: '#fff', fontSize: typography.xs, fontWeight: '800' },
   list: { padding: spacing.md },
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFCF7',
     borderRadius: borderRadius.md + 4,
     padding: spacing.md,
     marginBottom: spacing.md,
     ...shadows.card,
     borderLeftWidth: 4,
-    borderLeftColor: colors.accent,
+    borderLeftColor: '#12844E',
   },
+  requestTypeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.sm,
+  },
+  requestType: { color: '#12844E', fontSize: typography.xs, fontWeight: '800' },
+  requestTypeHint: { color: '#64706B', fontSize: typography.xs },
   cardHeader: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -1,23 +1,10 @@
 import axios from 'axios';
-import Constants from 'expo-constants';
+import { API_BASE_URL } from '../config/apiConfig';
 
-const env = typeof process !== 'undefined' ? process.env || {} : {};
-const BASE_URL = env.EXPO_PUBLIC_API_BASE_URL ||
-  env.API_BASE_URL ||
-  Constants.expoConfig?.extra?.apiUrl ||
-  'http://localhost:3000';
-
-const isHttpApi = /^http:\/\//i.test(BASE_URL);
-const isDev = typeof __DEV__ !== 'undefined' && __DEV__;
-const isExpoGo = Constants.appOwnership === 'expo' ||
-  Constants.executionEnvironment === 'storeClient';
-
-if (isHttpApi && !isDev && !isExpoGo) {
-  throw new Error('Refusing insecure API_BASE_URL in production builds. Use HTTPS.');
-}
+const { createSingleFlight } = require('../auth/sessionRestore');
 
 const api = axios.create({
-  baseURL: BASE_URL,
+  baseURL: API_BASE_URL,
   timeout: 15000,
   headers: { 'Content-Type': 'application/json' },
 });
@@ -47,15 +34,15 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// On 401, try one silent refresh + retry. Multiple in-flight 401s share the
-// same refresh promise so we never fire parallel /auth/refresh calls.
-let refreshPromise = null;
+// On 401, try one silent refresh + retry. Multiple in-flight 401s share both
+// the refresh request and its failure cleanup effect.
+const refreshFlight = createSingleFlight();
 
 api.interceptors.response.use(
   (r) => r,
   async (error) => {
     const original = error.config;
-    if (!original || error.response?.status !== 401 || original._retried) {
+    if (!original || error.response?.status !== 401 || original._retried || original.skipAuthRefresh) {
       return Promise.reject(error);
     }
     // Don't intercept the auth endpoints themselves — that would loop or
@@ -75,18 +62,21 @@ api.interceptors.response.use(
     original._retried = true;
 
     try {
-      if (!refreshPromise) {
-        refreshPromise = handlers.refreshAndStore()
-          .finally(() => { refreshPromise = null; });
-      }
-      const tokens = await refreshPromise;
+      const tokens = await refreshFlight.run(async () => {
+        try {
+          return await handlers.refreshAndStore();
+        } catch (refreshError) {
+          await handlers.onLogout?.();
+          throw refreshError;
+        }
+      });
+      original.headers = original.headers || {};
       original.headers.Authorization = `Bearer ${tokens.accessToken}`;
       return api(original);
-    } catch (refreshErr) {
+    } catch {
       // Refresh itself failed (revoked / expired refresh token) — log the
       // user out cleanly. Reject with the ORIGINAL 401 so callers see the
       // real reason rather than the refresh failure.
-      handlers.onLogout?.();
       return Promise.reject(error);
     }
   }

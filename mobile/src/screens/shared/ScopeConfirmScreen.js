@@ -10,11 +10,11 @@ import { bookingService } from '../../services/bookingService';
 import { colors, typography, spacing, borderRadius, shadows } from '../../theme';
 
 const DEFAULT_SCOPE_ITEMS = [
-  'Assess the site and confirm requirements',
-  'Obtain all necessary materials/tools',
-  'Complete the agreed work to specification',
-  'Clean up work area on completion',
-  'Customer inspection and sign-off',
+  'The work location and access requirements are understood',
+  'Who supplies materials and tools has been agreed',
+  'Included work and exclusions have been agreed',
+  'Cleanup expectations have been agreed',
+  'Completion and sign-off expectations have been agreed',
 ];
 
 function formatApproxArea(item) {
@@ -47,8 +47,11 @@ export default function ScopeConfirmScreen({ route, navigation }) {
 
   const [booking, setBooking] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [checkedItems, setCheckedItems] = useState({});
+  const [changeModal, setChangeModal] = useState(false);
+  const [changeText, setChangeText] = useState('');
 
   useEffect(() => {
     loadBooking();
@@ -58,23 +61,23 @@ export default function ScopeConfirmScreen({ route, navigation }) {
     try {
       const res = await bookingService.getBooking(bookingId);
       setBooking(res.booking);
-      // Initialise all items checked
+      setLoadError('');
+      // A green check must reflect an explicit user choice. Never infer
+      // agreement from loading the screen or from fallback prompts.
       const scopeItems = res.booking.scope_items?.length
         ? res.booking.scope_items
         : DEFAULT_SCOPE_ITEMS;
       const init = {};
-      scopeItems.forEach((_, i) => { init[i] = true; });
+      scopeItems.forEach((_, i) => { init[i] = false; });
       setCheckedItems(init);
-    } catch {
-      Alert.alert('Error', 'Could not load booking details.');
+    } catch (err) {
+      setLoadError(err.message || 'Could not load booking details.');
     } finally {
       setLoading(false);
     }
   }
 
   const isCustomer = user?.role === 'customer';
-  const isLabourer = user?.role === 'labourer';
-
   const hasConfirmed = isCustomer
     ? booking?.scope_confirmed_by_customer
     : booking?.scope_confirmed_by_labourer;
@@ -86,7 +89,10 @@ export default function ScopeConfirmScreen({ route, navigation }) {
   const scopeItems = booking?.scope_items?.length
     ? booking.scope_items
     : DEFAULT_SCOPE_ITEMS;
+  const hasServerScopeItems = !!booking?.scope_items?.length;
   const locationText = booking?.address || formatApproxArea(booking) || 'Location hidden until accepted';
+  const bothConfirmed = booking?.scope_confirmed_by_customer
+    && booking?.scope_confirmed_by_labourer;
 
   const allChecked = scopeItems.every((_, i) => checkedItems[i]);
 
@@ -99,24 +105,21 @@ export default function ScopeConfirmScreen({ route, navigation }) {
     try {
       const res = await api.patch(`/api/bookings/${bookingId}/confirm-scope`);
       setBooking(res.data.booking);
-      if (res.data.booking.status === 'in_progress') {
+      const scopeReady = res.data.booking.scope_confirmed_by_customer
+        && res.data.booking.scope_confirmed_by_labourer;
+      if (scopeReady) {
         Alert.alert(
-          '🚀 Job Started!',
-          'Both parties confirmed. The job is now in progress.',
+          'Scope confirmed',
+          isCustomer
+            ? 'Both parties agreed. Share the start PIN only when you are ready for work to begin.'
+            : 'Both parties agreed. Return to the job and enter the PIN shown to the customer.',
           [{
-            text: 'Go to Job',
-            onPress: () => {
-              if (isLabourer) {
-                navigation.replace('ActiveJob', { bookingId });
-              } else {
-                navigation.replace('ActiveBooking', { bookingId });
-              }
-            },
+            text: 'OK',
           }]
         );
       } else {
         Alert.alert(
-          '✅ Confirmed!',
+          'Scope confirmed',
           `You've confirmed the scope. Waiting for ${isCustomer ? 'the worker' : 'the customer'} to confirm.`
         );
       }
@@ -144,10 +147,22 @@ export default function ScopeConfirmScreen({ route, navigation }) {
     setChangeText('');
   }
 
-  if (loading || !booking) {
+  if (loading) {
     return (
       <View style={styles.loading}>
         <ActivityIndicator color={colors.accent} size="large" />
+      </View>
+    );
+  }
+
+  if (!booking) {
+    return (
+      <View style={styles.loadErrorContainer}>
+        <Text style={styles.loadErrorTitle}>Scope unavailable</Text>
+        <Text style={styles.loadErrorText}>{loadError || 'Reconnect and try again.'}</Text>
+        <TouchableOpacity style={styles.retryBtn} onPress={loadBooking}>
+          <Text style={styles.retryBtnText}>Retry</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -186,9 +201,34 @@ export default function ScopeConfirmScreen({ route, navigation }) {
             </View>
           </View>
 
+          {booking._offline && (
+            <View style={styles.offlineBanner}>
+              <Text style={styles.offlineTitle}>Cached scope</Text>
+              <Text style={styles.offlineText}>Reconnect and refresh before confirming anything.</Text>
+            </View>
+          )}
+
+          {bothConfirmed && (
+            <View style={styles.startCard}>
+              <Text style={styles.startCardEyebrow}>READY TO START</Text>
+              {isCustomer && booking.start_pin ? (
+                <>
+                  <Text style={styles.startPin}>{booking.start_pin}</Text>
+                  <Text style={styles.startCardText}>
+                    Share this PIN with the worker only when the agreed work is ready to begin.
+                  </Text>
+                </>
+              ) : (
+                <Text style={styles.startCardText}>
+                  Ask the customer for the 6-digit start PIN, then enter it from the job screen.
+                </Text>
+              )}
+            </View>
+          )}
+
           {/* Job details card */}
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>📋 Agreed Work</Text>
+            <Text style={styles.cardTitle}>Booking details</Text>
             <View style={styles.jobMeta}>
               <Text style={styles.metaLabel}>With: </Text>
               <Text style={styles.metaValue}>
@@ -208,9 +248,13 @@ export default function ScopeConfirmScreen({ route, navigation }) {
 
           {/* Scope checklist */}
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>✅ Scope Checklist</Text>
+            <Text style={styles.cardTitle}>
+              {hasServerScopeItems ? 'Scope items to confirm' : 'Scope prompts to review together'}
+            </Text>
             <Text style={styles.cardSubtitle}>
-              Tick each item to confirm what was agreed
+              {hasServerScopeItems
+                ? 'Tick each item only after you have actually agreed it.'
+                : 'These are prompts, not an agreed scope. Discuss them, then tick only what you both agree.'}
             </Text>
             {scopeItems.map((item, i) => (
               <CheckItem
@@ -231,18 +275,18 @@ export default function ScopeConfirmScreen({ route, navigation }) {
             {hasConfirmed ? (
               <View style={styles.confirmedBanner}>
                 <Text style={styles.confirmedText}>
-                  ✅ You've confirmed. {otherConfirmed ? 'Job started!' : 'Waiting for the other party…'}
+                  You've confirmed. {otherConfirmed ? 'Both parties agree; the start PIN is now required.' : 'Waiting for the other party…'}
                 </Text>
               </View>
             ) : (
               <TouchableOpacity
-                style={[styles.confirmBtn, !allChecked && styles.confirmBtnDisabled]}
+                style={[styles.confirmBtn, (!allChecked || booking._offline) && styles.confirmBtnDisabled]}
                 onPress={handleConfirm}
-                disabled={confirming || !allChecked}
+                disabled={confirming || !allChecked || booking._offline}
               >
                 {confirming
                   ? <ActivityIndicator color={colors.primary} />
-                  : <Text style={styles.confirmBtnText}>✅  Confirm & Start Job</Text>
+                  : <Text style={styles.confirmBtnText}>Confirm agreed scope</Text>
                 }
               </TouchableOpacity>
             )}
@@ -254,20 +298,68 @@ export default function ScopeConfirmScreen({ route, navigation }) {
 
           <View style={{ height: 32 }} />
         </ScrollView>
+
+        <Modal
+          visible={changeModal}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setChangeModal(false)}
+        >
+          <View style={styles.modalBackdrop}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>Request a scope change</Text>
+              <Text style={styles.modalText}>
+                Describe the change clearly. It will open in chat for the other person to review.
+              </Text>
+              <TextInput
+                style={styles.changeInput}
+                value={changeText}
+                onChangeText={setChangeText}
+                placeholder="What needs to change?"
+                placeholderTextColor="#7B827E"
+                multiline
+                autoFocus
+              />
+              <View style={styles.modalActions}>
+                <TouchableOpacity style={styles.modalCancel} onPress={() => setChangeModal(false)}>
+                  <Text style={styles.modalCancelText}>Keep current scope</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalSubmit, !changeText.trim() && styles.confirmBtnDisabled]}
+                  onPress={submitScopeChange}
+                  disabled={!changeText.trim()}
+                >
+                  <Text style={styles.modalSubmitText}>Open in chat</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </SafeAreaView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f3f4f6' },
+  container: { flex: 1, backgroundColor: '#F7F4EF' },
   loading: { flex: 1, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+  loadErrorContainer: {
+    flex: 1,
+    backgroundColor: '#F7F4EF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.xl,
+  },
+  loadErrorTitle: { color: '#0F1F1B', fontSize: typography.xl, fontWeight: '900' },
+  loadErrorText: { color: '#64706B', fontSize: typography.sm, lineHeight: 20, textAlign: 'center', marginTop: spacing.sm },
+  retryBtn: { backgroundColor: '#12844E', borderRadius: borderRadius.md, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm + 4, marginTop: spacing.lg },
+  retryBtnText: { color: '#FFFFFF', fontSize: typography.sm, fontWeight: '800' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
-    backgroundColor: colors.primary,
+    backgroundColor: '#0F1F1B',
     gap: spacing.sm,
   },
   backBtn: {
@@ -282,12 +374,23 @@ const styles = StyleSheet.create({
   scroll: { padding: spacing.md },
 
   statusBanner: {
-    backgroundColor: colors.primary,
+    backgroundColor: '#0F1F1B',
     borderRadius: borderRadius.md,
     padding: spacing.md,
     marginBottom: spacing.sm,
     gap: spacing.sm,
   },
+  startCard: {
+    backgroundColor: '#FFF3D5',
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+    borderWidth: 1,
+    borderColor: '#E9CF8F',
+  },
+  startCardEyebrow: { color: '#12844E', fontSize: typography.xs, fontWeight: '900', letterSpacing: 1.2 },
+  startPin: { color: '#0F1F1B', fontSize: 34, fontWeight: '900', letterSpacing: 8, marginVertical: spacing.sm },
+  startCardText: { color: '#495650', fontSize: typography.sm, lineHeight: 20 },
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -301,9 +404,19 @@ const styles = StyleSheet.create({
   statusDotDone: { backgroundColor: colors.success },
   statusLabel: { flex: 1, color: '#fff', fontSize: typography.sm },
   statusValue: { fontSize: typography.md },
+  offlineBanner: {
+    backgroundColor: '#FFF3D5',
+    borderRadius: borderRadius.md,
+    padding: spacing.sm,
+    borderWidth: 1,
+    borderColor: '#E9CF8F',
+    marginBottom: spacing.sm,
+  },
+  offlineTitle: { color: '#0F1F1B', fontSize: typography.sm, fontWeight: '800' },
+  offlineText: { color: '#64706B', fontSize: typography.xs, marginTop: 2 },
 
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFCF7',
     borderRadius: borderRadius.md,
     padding: spacing.md,
     marginBottom: spacing.sm,
@@ -357,14 +470,14 @@ const styles = StyleSheet.create({
 
   actions: { gap: spacing.sm, marginTop: spacing.sm },
   confirmBtn: {
-    backgroundColor: colors.accent,
+    backgroundColor: '#12844E',
     borderRadius: borderRadius.lg,
     paddingVertical: spacing.md,
     alignItems: 'center',
     ...shadows.card,
   },
   confirmBtnDisabled: { backgroundColor: colors.border },
-  confirmBtnText: { color: colors.primary, fontWeight: '800', fontSize: typography.lg },
+  confirmBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: typography.lg },
   confirmedBanner: {
     backgroundColor: colors.successLight,
     borderRadius: borderRadius.md,
@@ -380,4 +493,40 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   changeBtnText: { color: colors.textSecondary, fontWeight: '600', fontSize: typography.sm },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15,31,27,0.55)',
+    justifyContent: 'center',
+    padding: spacing.lg,
+  },
+  modalCard: {
+    backgroundColor: '#FFFCF7',
+    borderRadius: borderRadius.lg,
+    padding: spacing.lg,
+    ...shadows.heavy,
+  },
+  modalTitle: { color: '#0F1F1B', fontSize: typography.lg, fontWeight: '900' },
+  modalText: { color: '#64706B', fontSize: typography.sm, lineHeight: 20, marginTop: spacing.xs },
+  changeInput: {
+    minHeight: 112,
+    backgroundColor: '#F7F4EF',
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: '#DDD8CF',
+    color: '#0F1F1B',
+    padding: spacing.md,
+    marginTop: spacing.md,
+    textAlignVertical: 'top',
+  },
+  modalActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
+  modalCancel: { flex: 1, paddingVertical: spacing.sm + 4, alignItems: 'center' },
+  modalCancelText: { color: '#64706B', fontSize: typography.sm, fontWeight: '700' },
+  modalSubmit: {
+    flex: 1,
+    backgroundColor: '#12844E',
+    borderRadius: borderRadius.md,
+    paddingVertical: spacing.sm + 4,
+    alignItems: 'center',
+  },
+  modalSubmitText: { color: '#FFFFFF', fontSize: typography.sm, fontWeight: '800' },
 });

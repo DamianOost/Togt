@@ -5,7 +5,7 @@ const { authMiddleware } = require('../middleware/auth');
 const router = express.Router();
 
 // POST /api/safety/sos
-// Logs SOS event; returns emergency contact info
+// Records a safety event. This is not an operated emergency-dispatch service.
 router.post('/sos', authMiddleware, async (req, res, next) => {
   try {
     const { lat, lng, booking_id } = req.body;
@@ -24,7 +24,10 @@ router.post('/sos', authMiddleware, async (req, res, next) => {
     const user = userResult.rows[0];
 
     res.json({
-      message: 'SOS logged',
+      message: 'Safety event recorded. TOGT did not dispatch emergency services.',
+      received: true,
+      operations_alerted: false,
+      emergency_services_dispatched: false,
       emergencyContact: user?.emergency_contact || null,
       saNumber: '10111',
     });

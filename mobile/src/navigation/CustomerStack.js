@@ -1,7 +1,7 @@
 import React from 'react';
+import { Text } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { Text } from 'react-native';
 
 import HomeMapScreen from '../screens/customer/HomeMapScreen';
 import RequestMatchScreen from '../screens/customer/RequestMatchScreen';
@@ -19,79 +19,86 @@ import ScopeConfirmScreen from '../screens/shared/ScopeConfirmScreen';
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
-const screenOptions = {
-  headerStyle: { backgroundColor: '#1a1a2e' },
-  headerTintColor: '#fff',
-  headerTitleStyle: { fontWeight: 'bold' },
+const stackScreenOptions = {
+  headerStyle: { backgroundColor: '#F7F4EF' },
+  headerTintColor: '#0F1F1B',
+  headerTitleStyle: { fontWeight: '700' },
+  headerShadowVisible: false,
+  contentStyle: { backgroundColor: '#F7F4EF' },
 };
 
-// Home stack (Map + Labourer Profile + Booking + Active + Payment + Rate + Chat)
-function HomeStack() {
+// A one-screen stack preserves the existing tab navigation hierarchy while
+// transactional routes live once, above the tabs.
+function HomeTabStack() {
   return (
-    <Stack.Navigator screenOptions={screenOptions}>
-      <Stack.Screen name="HomeMap" component={HomeMapScreen} options={{ headerShown: false }} />
-      <Stack.Screen name="RequestMatch" component={RequestMatchScreen} options={{ headerShown: false }} />
-      <Stack.Screen name="LabourerProfile" component={LabourerProfileScreen} options={{ title: 'Labourer Profile' }} />
-      <Stack.Screen name="BookingForm" component={BookingFormScreen} options={{ title: 'Book Now' }} />
-      <Stack.Screen name="ActiveBooking" component={ActiveBookingScreen} options={{ title: 'Active Booking' }} />
-      <Stack.Screen name="Payment" component={PaymentScreen} options={{ title: 'Payment' }} />
-      <Stack.Screen name="Rate" component={RateScreen} options={{ title: 'Leave a Rating' }} />
-      <Stack.Screen name="Chat" component={ChatScreen} options={{ title: 'Chat', headerShown: false }} />
-      <Stack.Screen name="KYC" component={KYCScreen} options={{ title: 'Verify Identity', headerShown: false }} />
-      <Stack.Screen name="ScopeConfirm" component={ScopeConfirmScreen} options={{ title: 'Confirm Scope', headerShown: false }} />
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="HomeMap" component={HomeMapScreen} />
     </Stack.Navigator>
   );
 }
 
-// Bookings stack
-function BookingsStack() {
+function BookingsTabStack() {
   return (
-    <Stack.Navigator screenOptions={screenOptions}>
+    <Stack.Navigator screenOptions={stackScreenOptions}>
       <Stack.Screen name="MyBookingsMain" component={MyBookingsScreen} options={{ title: 'My Bookings' }} />
-      <Stack.Screen name="ActiveBooking" component={ActiveBookingScreen} options={{ title: 'Active Booking' }} />
-      <Stack.Screen name="Rate" component={RateScreen} options={{ title: 'Leave a Rating' }} />
-      <Stack.Screen name="Chat" component={ChatScreen} options={{ title: 'Chat', headerShown: false }} />
     </Stack.Navigator>
   );
 }
 
-// Discover stack
-function DiscoverStack() {
+function DiscoverTabStack() {
   return (
-    <Stack.Navigator screenOptions={screenOptions}>
-      <Stack.Screen name="DiscoverMain" component={DiscoverScreen} options={{ headerShown: false }} />
-      <Stack.Screen name="LabourerProfile" component={LabourerProfileScreen} options={{ title: 'Labourer Profile' }} />
-      <Stack.Screen name="BookingForm" component={BookingFormScreen} options={{ title: 'Book Now' }} />
-      <Stack.Screen name="ActiveBooking" component={ActiveBookingScreen} options={{ title: 'Active Booking' }} />
-      <Stack.Screen name="Payment" component={PaymentScreen} options={{ title: 'Payment' }} />
-      <Stack.Screen name="Rate" component={RateScreen} options={{ title: 'Leave a Rating' }} />
-      <Stack.Screen name="Chat" component={ChatScreen} options={{ title: 'Chat', headerShown: false }} />
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="DiscoverMain" component={DiscoverScreen} />
     </Stack.Navigator>
   );
 }
 
-export default function CustomerStack() {
+function CustomerTabs() {
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
-        tabBarActiveTintColor: '#f59e0b',
-        tabBarInactiveTintColor: '#9CA3AF',
-        tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
-        tabBarStyle: { paddingBottom: 6, paddingTop: 4, height: 58, backgroundColor: '#1a1a2e', borderTopColor: '#374151' },
-        tabBarIcon: ({ focused }) => {
+        tabBarHideOnKeyboard: true,
+        tabBarActiveTintColor: '#12844E',
+        tabBarInactiveTintColor: '#4E5C57',
+        tabBarLabelStyle: { fontSize: 12, fontWeight: '700' },
+        tabBarStyle: {
+          paddingBottom: 6,
+          paddingTop: 5,
+          minHeight: 62,
+          backgroundColor: '#FFFFFF',
+          borderTopColor: '#D6DED9',
+        },
+        tabBarIcon: () => {
           const icons = {
             Search: '🗺️',
             Discover: '🔍',
             Bookings: '📋',
           };
-          return <Text style={{ fontSize: 22 }}>{icons[route.name] || '•'}</Text>;
+          return <Text style={{ fontSize: 21 }}>{icons[route.name] || '•'}</Text>;
         },
       })}
     >
-      <Tab.Screen name="Search" component={HomeStack} options={{ tabBarLabel: 'Map' }} />
-      <Tab.Screen name="Discover" component={DiscoverStack} />
-      <Tab.Screen name="Bookings" component={BookingsStack} />
+      <Tab.Screen name="Search" component={HomeTabStack} options={{ tabBarLabel: 'Map' }} />
+      <Tab.Screen name="Discover" component={DiscoverTabStack} />
+      <Tab.Screen name="Bookings" component={BookingsTabStack} />
     </Tab.Navigator>
+  );
+}
+
+export default function CustomerStack() {
+  return (
+    <Stack.Navigator screenOptions={stackScreenOptions}>
+      <Stack.Screen name="CustomerTabs" component={CustomerTabs} options={{ headerShown: false }} />
+      <Stack.Screen name="RequestMatch" component={RequestMatchScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="LabourerProfile" component={LabourerProfileScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="BookingForm" component={BookingFormScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="ActiveBooking" component={ActiveBookingScreen} options={{ title: 'Active Booking' }} />
+      <Stack.Screen name="Payment" component={PaymentScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="Rate" component={RateScreen} options={{ title: 'Leave a Rating' }} />
+      <Stack.Screen name="Chat" component={ChatScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="KYC" component={KYCScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="ScopeConfirm" component={ScopeConfirmScreen} options={{ headerShown: false }} />
+    </Stack.Navigator>
   );
 }

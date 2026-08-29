@@ -1,6 +1,4 @@
-import Constants from 'expo-constants';
-
-const BASE_URL = Constants.expoConfig?.extra?.apiUrl || 'http://localhost:3000';
+import { apiUrl } from '../config/apiConfig';
 
 /**
  * Upload a local image URI to Cloudinary via the Togt backend.
@@ -23,7 +21,7 @@ export async function uploadProfileImage(localUri, token) {
     type: mimeType,
   });
 
-  const response = await fetch(`${BASE_URL}/upload/profile-image`, {
+  const response = await fetch(apiUrl('/upload/profile-image'), {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,

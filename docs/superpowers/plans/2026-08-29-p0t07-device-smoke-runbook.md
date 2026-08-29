@@ -1,34 +1,63 @@
-# Togt P0T-07 — Physical-device and paired-smoke runbook
+# Togt P0T-07 — Remaining physical-device and paired-smoke runbook
 
-**Candidate source commit:** `c90742361216035fe8531df7720acc0f449b1546`
+**Candidate source commit:** `31c41eb2fbcbb52762bf3d01b22259dcf4de3f94`
 
 **Candidate configuration:** `development-lan`
 
 **Embedded API origin:** `http://192.168.10.126:3003`
 
-This runbook finishes the gates that cannot be proved by repository automation.
-It is for synthetic internal testing only. It does not authorize a merge,
-deployment, public beta, provider activation, real identity data or money
-movement.
+This runbook finishes the physical-only gates left after the local Android 15
+x86_64 emulator acceptance. It is for synthetic internal testing only. It does
+not authorize a merge, deployment, public beta, provider activation, real
+identity data or money movement.
+
+The local virtual-device gate ran exact source `31c41eb` against an isolated API
+on `127.0.0.1:3003` and PostgreSQL on `127.0.0.1:55432`. It proved registration
+and database persistence; Map, Discover and Bookings navigation; truthful KYC
+unavailability; online session restore; bounded offline locked-shell behavior
+and retry recovery; logout/login; and zero fatal or missing-map-key failures.
+The supporting mobile runner passed 64/64 tests and Metro exported 951 modules.
+
+That gate caught and closed two release-blocking defects: `a935506` binds
+runtime traffic to packaged app configuration and rejects stale bundled origins;
+`31c41eb` keeps all native map mounts behind a fail-closed provider wrapper.
 
 ## Locked artifacts
 
 ```text
 %LOCALAPPDATA%\TOGT-Android-Build\artifacts\TOGT-LAN-Test-1.0.0-2026-08-23-arm64.apk
-%LOCALAPPDATA%\TOGT-Android-Build\artifacts\TOGT-development-lan-1.0.1-vc2-c90742361216-arm64-v8a.apk
-%LOCALAPPDATA%\TOGT-Android-Build\artifacts\TOGT-development-lan-1.0.1-vc2-c90742361216-arm64-v8a.manifest.json
+%LOCALAPPDATA%\TOGT-Android-Build\artifacts\TOGT-development-lan-1.0.1-vc2-31c41eb2fbcb-arm64-v8a.apk
+%LOCALAPPDATA%\TOGT-Android-Build\artifacts\TOGT-development-lan-1.0.1-vc2-31c41eb2fbcb-arm64-v8a.manifest.json
 ```
 
 ```text
 v1 SHA-256: 604E6F1F7E6518F5F430745E2ED63260FD70E2716EA0D8FFB70CB4E28B8228E2
-v2 SHA-256: 791EDBCA952C6A2D398706238EB36664606B0FA5D317D963E7FBFEF919B8DD97
+corrected ARM64 v2 SHA-256: E58DF96691D5558E80C9B60A5F16F23C8C9A304D1F570381A39BADBA5CEED1C2
 signer SHA-256: FAC61745DC0903786FB9EDE62A962B399F7348F0BB6F899B8332667591033B9C
 ```
 
-Do not rebuild merely to perform the device gate. Use the exact published APK
-above so the tested bytes match the manifest. If the reviewed Windows Wi-Fi
-address is no longer `192.168.10.126`, this APK cannot reach its API; produce a
-new labelled candidate and manifest rather than silently redirecting it.
+The corrected ARM64 candidate completed the clean local Gradle pipeline. Its
+package, version, ABI, packaged configuration, alignment, signature, expected
+signer and SHA-256 were verified before the APK and manifest were copied into
+the Development artifact store without overwrite.
+
+The emulator evidence artifact is retained separately and is not a phone APK:
+
+```text
+APK:     %LOCALAPPDATA%\TOGT-Android-Build\artifacts\TOGT-development-local-1.0.1-vc2-31c41eb2fbcb-x86_64.apk
+SHA-256: 44198B8A39DC3273C712DC52D3B54724F1208A7997E77D80B27B089525F204D2
+```
+
+The older
+`TOGT-development-lan-1.0.1-vc2-c90742361216-arm64-v8a.apk` is **superseded
+and non-distributable**. Maps-disabled navigation in that build can mount the
+native Google Maps view and crash because no key is packaged. Do not install,
+share or use it for any gate.
+
+Use those exact published bytes so the device evidence matches the manifest. If
+the reviewed Windows Wi-Fi address is no longer `192.168.10.126`, the candidate
+cannot reach its API; produce a new labelled candidate and manifest rather than
+silently redirecting it.
 
 The retained v1 embeds the legacy origin `http://192.168.10.69:3002`, which is
 currently degraded. The exact-v1 path below proves Android package/signer
@@ -57,10 +86,10 @@ validated target variables are retained.
 $buildRoot = "$env:LOCALAPPDATA\TOGT-Android-Build"
 $adb = "$buildRoot\android-sdk\platform-tools\adb.exe"
 $v1 = "$buildRoot\artifacts\TOGT-LAN-Test-1.0.0-2026-08-23-arm64.apk"
-$v2 = "$buildRoot\artifacts\TOGT-development-lan-1.0.1-vc2-c90742361216-arm64-v8a.apk"
-$manifestPath = "$buildRoot\artifacts\TOGT-development-lan-1.0.1-vc2-c90742361216-arm64-v8a.manifest.json"
+$v2 = "$buildRoot\artifacts\TOGT-development-lan-1.0.1-vc2-31c41eb2fbcb-arm64-v8a.apk"
+$manifestPath = "$buildRoot\artifacts\TOGT-development-lan-1.0.1-vc2-31c41eb2fbcb-arm64-v8a.manifest.json"
 $expectedV1Hash = '604E6F1F7E6518F5F430745E2ED63260FD70E2716EA0D8FFB70CB4E28B8228E2'
-$expectedV2Hash = '791EDBCA952C6A2D398706238EB36664606B0FA5D317D963E7FBFEF919B8DD97'
+$expectedV2Hash = 'E58DF96691D5558E80C9B60A5F16F23C8C9A304D1F570381A39BADBA5CEED1C2'
 $expectedSigner = 'FAC61745DC0903786FB9EDE62A962B399F7348F0BB6F899B8332667591033B9C'
 
 foreach ($artifact in $v1,$v2,$manifestPath) {
@@ -82,7 +111,7 @@ $manifestChecks = [ordered]@{
   packageName = $manifest.packageName -eq 'za.togt.app'
   versionName = $manifest.versionName -eq '1.0.1'
   versionCode = $manifest.versionCode -eq 2
-  sourceCommit = $manifest.sourceCommit -eq 'c90742361216035fe8531df7720acc0f449b1546'
+  sourceCommit = $manifest.sourceCommit -eq '31c41eb2fbcbb52762bf3d01b22259dcf4de3f94'
   configClass = $manifest.configClass -eq 'development-lan'
   signerSha256 = $manifest.signerSha256 -eq $expectedSigner
   expectedSignerSha256 = $manifest.expectedSignerSha256 -eq $expectedSigner
@@ -166,7 +195,7 @@ staging or prior evidence database.
 ```powershell
 $repo = 'C:\Users\PadelZone\Documents\GitHub\_worktrees\Togt-grounded-momentum-p0-2026-08-29'
 $backend = Join-Path $repo 'backend'
-$expectedSourceCommit = 'c90742361216035fe8531df7720acc0f449b1546'
+$expectedSourceCommit = '31c41eb2fbcbb52762bf3d01b22259dcf4de3f94'
 $pgBin = 'C:\Users\PadelZone\Documents\GitHub\_tooling\Togt-postgres-17.11\pgsql\bin'
 $pgData = 'C:\Users\PadelZone\Documents\GitHub\_runtime\Togt-postgres-test-17.11\data'
 $pgPort = 55432
@@ -631,6 +660,12 @@ Invoke-SelectedAdb shell pidof za.togt.app
 
 Use one synthetic customer and one synthetic worker concurrently. Capture only
 sanitized result evidence.
+
+Do not repeat the single-client x86_64 cases merely for exploratory coverage.
+This physical pass is specifically for exact corrected ARM64 execution, OEM
+permission/background behavior, exact v1 ARM64-to-v2 replacement, the paired
+customer/worker lifecycle, deliberately enabled provider paths when approved,
+and representative-device performance.
 
 Before the lifecycle cases, select and retain one explicit authorized serial
 for each client, verify both ABI lists include `arm64-v8a`, and use `-s` on every

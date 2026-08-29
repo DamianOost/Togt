@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   BASELINE_SIGNER_SHA256,
+  assertRuntimeAssetMetadata,
   createArtifactBaseName,
   normalizeFingerprint,
   parseAaptBadging,
@@ -11,6 +12,35 @@ const {
   parseAndroidCleartextPolicy,
   parseSignerFingerprint,
 } = require('../../scripts/android-build.cjs');
+
+function runtimeAssetFixture(overrides = {}) {
+  const runtime = {
+    androidCleartextAllowed: true,
+    apiBaseUrl: 'http://127.0.0.1:3003',
+    appEnvironment: 'development',
+    buildProvider: 'local_gradle',
+    configClass: 'development-local',
+    mapsProvider: 'disabled',
+    peachAllowed: false,
+    pushProvider: 'disabled',
+    ...overrides,
+  };
+  const appConfig = JSON.stringify({
+    extra: {
+      apiUrl: runtime.apiBaseUrl,
+      appEnvironment: runtime.appEnvironment,
+      androidCleartextAllowed: runtime.androidCleartextAllowed,
+      buildProvider: runtime.buildProvider,
+      configClass: runtime.configClass,
+      providers: {
+        maps: runtime.mapsProvider,
+        peach: runtime.peachAllowed,
+        push: runtime.pushProvider,
+      },
+    },
+  });
+  return { appConfig, runtime };
+}
 
 test('P0 release identity keeps the recorded package, version code, and ABI', () => {
   const app = require('../../app.json').expo;
@@ -95,5 +125,43 @@ test('prebuild cleartext parser requires an explicit application policy', () => 
   assert.throws(
     () => parseAndroidCleartextPolicy('<manifest></manifest>'),
     /missing its application element/
+  );
+});
+
+test('runtime asset guard accepts matching metadata and the expected bundled origin', () => {
+  const { appConfig, runtime } = runtimeAssetFixture();
+  assert.doesNotThrow(() =>
+    assertRuntimeAssetMetadata(
+      appConfig,
+      'const endpoint = "http://127.0.0.1:3003";',
+      runtime
+    )
+  );
+});
+
+test('runtime asset guard rejects stale bundled API origins', () => {
+  const { appConfig, runtime } = runtimeAssetFixture();
+  assert.throws(
+    () => assertRuntimeAssetMetadata(
+      appConfig,
+      'const endpoint = "http://192.168.10.126:3003";',
+      runtime
+    ),
+    /stale API origin.*192\.168\.10\.126:3003.*127\.0\.0\.1:3003/
+  );
+});
+
+test('runtime asset guard rejects mismatched generated app configuration', () => {
+  const { appConfig, runtime } = runtimeAssetFixture({
+    apiBaseUrl: 'http://192.168.10.20:3003',
+    configClass: 'development-lan',
+  });
+  assert.throws(
+    () => assertRuntimeAssetMetadata(appConfig, 'bundle', {
+      ...runtime,
+      apiBaseUrl: 'http://127.0.0.1:3003',
+      configClass: 'development-local',
+    }),
+    /Generated app\.config API URL mismatch/
   );
 });

@@ -417,6 +417,93 @@ function assertSameValues(actual, expected, label) {
   }
 }
 
+function assertRuntimeAssetMetadata(appConfigSource, bundleSource, runtime) {
+  let appConfig;
+  try {
+    appConfig = JSON.parse(appConfigSource);
+  } catch (error) {
+    throw new Error(`Generated app.config is not valid JSON: ${error.message}`);
+  }
+
+  const extra = appConfig?.extra || {};
+  const claims = [
+    ['API URL', extra.apiUrl, runtime.apiBaseUrl],
+    ['app environment', extra.appEnvironment, runtime.appEnvironment],
+    ['configuration class', extra.configClass, runtime.configClass],
+    ['build provider', extra.buildProvider, runtime.buildProvider],
+    ['Android cleartext policy', extra.androidCleartextAllowed, runtime.androidCleartextAllowed],
+    ['maps provider', extra.providers?.maps, runtime.mapsProvider],
+    ['Peach provider', extra.providers?.peach, runtime.peachAllowed],
+    ['push provider', extra.providers?.push, runtime.pushProvider],
+  ];
+  for (const [label, actual, expected] of claims) {
+    if (actual !== expected) {
+      throw new Error(
+        `Generated app.config ${label} mismatch: expected ${JSON.stringify(expected)}; ` +
+        `found ${JSON.stringify(actual)}.`
+      );
+    }
+  }
+
+  if (typeof bundleSource !== 'string' || !bundleSource.trim()) {
+    throw new Error('Generated Android JavaScript bundle is empty.');
+  }
+  const expectedOrigin = new URL(runtime.apiBaseUrl).origin;
+  const expectedPort = new URL(expectedOrigin).port;
+  if (!expectedPort) return;
+
+  const embeddedOrigins = [
+    ...new Set(
+      [...bundleSource.matchAll(
+        /\bhttps?:\/\/(?:\[[0-9a-f:]+\]|[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)(?::\d{1,5})?/gi
+      )].map((match) => new URL(match[0]).origin)
+    ),
+  ];
+  const staleOrigins = embeddedOrigins.filter((origin) => {
+    const candidate = new URL(origin);
+    return candidate.port === expectedPort && candidate.origin !== expectedOrigin;
+  });
+  if (staleOrigins.length > 0) {
+    throw new Error(
+      `Android bundle contains a stale API origin for port ${expectedPort}: ` +
+      `${staleOrigins.join(', ')}; expected ${expectedOrigin}.`
+    );
+  }
+}
+
+function assertGeneratedRuntimeAssets(context, androidRoot) {
+  const appConfigPath = requireFile(
+    path.join(
+      androidRoot,
+      'app',
+      'build',
+      'intermediates',
+      'assets',
+      'release',
+      'mergeReleaseAssets',
+      'app.config'
+    ),
+    'Gradle did not merge the generated Expo app.config asset.'
+  );
+  const bundlePath = requireFile(
+    path.join(
+      androidRoot,
+      'app',
+      'build',
+      'generated',
+      'assets',
+      'createBundleReleaseJsAndAssets',
+      'index.android.bundle'
+    ),
+    'Gradle did not generate the Android JavaScript bundle.'
+  );
+  assertRuntimeAssetMetadata(
+    fs.readFileSync(appConfigPath, 'utf8'),
+    fs.readFileSync(bundlePath, 'utf8'),
+    context.runtime
+  );
+}
+
 function buildApk(context, sourceCommit) {
   const androidRoot = path.join(mobileRoot, 'android');
   const gradleWrapper = requireFile(
@@ -434,6 +521,7 @@ function buildApk(context, sourceCommit) {
     env: context.environment,
     shell: process.platform === 'win32',
   });
+  assertGeneratedRuntimeAssets(context, androidRoot);
 
   const gradleApk = requireFile(
     path.join(androidRoot, 'app', 'build', 'outputs', 'apk', 'release', 'app-release.apk'),
@@ -586,6 +674,7 @@ if (require.main === module) {
 
 module.exports = {
   BASELINE_SIGNER_SHA256,
+  assertRuntimeAssetMetadata,
   createArtifactBaseName,
   normalizeFingerprint,
   parseAaptBadging,

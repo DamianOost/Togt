@@ -28,6 +28,14 @@ test('all network transports use the shared API configuration', () => {
   }
 });
 
+test('runtime API configuration comes only from the generated Expo manifest', () => {
+  const source = read('src/config/apiConfig.js');
+  assert.match(source, /Constants\.expoConfig\?\.extra/);
+  assert.match(source, /configuredUrl:\s*extra\.apiUrl/);
+  assert.match(source, /extra\.appEnvironment/);
+  assert.doesNotMatch(source, /process\.env\.EXPO_PUBLIC_/);
+});
+
 test('booking subscriptions use the socket service API rather than private state', () => {
   const source = read('src/screens/customer/ActiveBookingScreen.js');
   assert.doesNotMatch(source, /socketService\.socket/);

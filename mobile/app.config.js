@@ -31,11 +31,19 @@ module.exports = ({ config }) => {
     ...config,
     name: isDevelopmentBuild ? 'Togt Development' : config.name,
     android,
+    plugins: [
+      ...(config.plugins || []),
+      [
+        './plugins/withAndroidCleartextPolicy.cjs',
+        { configClass: runtime.configClass },
+      ],
+    ],
     extra: {
       ...(config.extra || {}),
       ...easExtra,
       apiUrl: runtime.apiBaseUrl,
       appEnvironment: runtime.appEnvironment,
+      androidCleartextAllowed: runtime.androidCleartextAllowed,
       buildProfile: process.env.EAS_BUILD_PROFILE?.trim() || runtime.buildProvider,
       buildProvider: runtime.buildProvider,
       configClass: runtime.configClass,

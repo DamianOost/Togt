@@ -93,6 +93,42 @@ function parseSignerFingerprint(output) {
   return normalizeFingerprint(match[1], 'APK signer fingerprint');
 }
 
+function parseAndroidCleartextPolicy(manifestXml) {
+  if (typeof manifestXml !== 'string' || !manifestXml.trim()) {
+    throw new Error('Generated AndroidManifest.xml is empty.');
+  }
+
+  const applicationTag = manifestXml.match(/<application\b[^>]*>/i)?.[0];
+  if (!applicationTag) {
+    throw new Error('Generated AndroidManifest.xml is missing its application element.');
+  }
+
+  const cleartextMatch = applicationTag.match(
+    /android:usesCleartextTraffic=(["'])(true|false)\1/i
+  );
+  if (!cleartextMatch) {
+    throw new Error(
+      'Generated AndroidManifest.xml must explicitly set android:usesCleartextTraffic.'
+    );
+  }
+  return cleartextMatch[2].toLowerCase() === 'true';
+}
+
+function assertAndroidCleartextPolicy(context) {
+  const manifestPath = requireFile(
+    path.join(mobileRoot, 'android', 'app', 'src', 'main', 'AndroidManifest.xml'),
+    'Expo prebuild did not create the main AndroidManifest.xml.'
+  );
+  const actual = parseAndroidCleartextPolicy(fs.readFileSync(manifestPath, 'utf8'));
+  const expected = context.runtime.androidCleartextAllowed;
+  if (actual !== expected) {
+    throw new Error(
+      `Android cleartext policy mismatch for ${context.runtime.configClass}: ` +
+      `expected ${expected}; found ${actual}.`
+    );
+  }
+}
+
 function isPathInside(parent, candidate) {
   const relative = path.relative(path.resolve(parent), path.resolve(candidate));
   return relative !== '' && !relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative);
@@ -335,6 +371,7 @@ function runPrebuild(context) {
   run(process.execPath, [expoCli, 'prebuild', '--platform', 'android', '--clean', '--no-install'], {
     env: context.environment,
   });
+  assertAndroidCleartextPolicy(context);
   return {
     ...context,
     signing: resolveSigningConfiguration(context.environment, context.runtime, {
@@ -490,6 +527,7 @@ function buildApk(context, sourceCommit) {
     versionCode: badging.versionCode,
     sourceCommit,
     appEnvironment: context.runtime.appEnvironment,
+    androidCleartextAllowed: context.runtime.androidCleartextAllowed,
     configClass: context.runtime.configClass,
     buildProvider: context.runtime.buildProvider,
     abis: badging.abis,
@@ -552,5 +590,6 @@ module.exports = {
   normalizeFingerprint,
   parseAaptBadging,
   parseAbiList,
+  parseAndroidCleartextPolicy,
   parseSignerFingerprint,
 };

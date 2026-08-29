@@ -24,6 +24,13 @@ The URL must be an origin with no path, query, fragment, or credentials.
 - `EXPO_PUBLIC_APP_ENV=development` may use explicit HTTP only for localhost or
   a private-LAN host. A physical device needs the development machine's reachable
   LAN address; there is no embedded localhost fallback.
+- The generated release manifest permits cleartext traffic only for the labelled
+  `development-local` and `development-lan` configuration classes. This narrow
+  exception supports internal LAN testing; use it only on a trusted network with
+  synthetic data.
+- `development-secure`, `preview`, and `production` generated release manifests
+  explicitly disable cleartext traffic. Their HTTPS requirement remains fail
+  closed even if a later Android or Expo default changes.
 - `preview` and `production` require HTTPS and reject localhost/private-LAN
   origins, including explicit values.
 - Development builds are labelled `Togt Development` and recorded as
@@ -81,8 +88,10 @@ npm run build:apk:local
 
 `prebuild:android:local` is available when the generated native project alone
 is needed for inspection. It runs a clean Expo Android prebuild and leaves the
-ignored `mobile/android` directory in place. `build:apk:local` performs the same
-preflight/prebuild and then:
+ignored `mobile/android` directory in place. After every prebuild, the repository
+asserts that the generated main `AndroidManifest.xml` explicitly matches the
+configuration's cleartext policy; a missing or mismatched value fails before
+Gradle. `build:apk:local` performs the same preflight/prebuild and then:
 
 1. builds `:app:assembleRelease` with the selected ABI set;
 2. applies 16 KiB-compatible zip alignment;
@@ -100,10 +109,11 @@ TOGT-<config-class>-1.0.1-vc2-<12-char-commit>-arm64-v8a.apk
 ```
 
 The adjacent manifest records the package, version name/code, source commit,
-configuration class, build provider, ABI set, SDKs, signer SHA-256, artifact
-SHA-256, size, alignment, and signature-verification result. `dist` and the
-generated native project remain ignored; copy only a verified artifact and
-manifest to the approved Development artifact store without overwriting v1.
+configuration class, Android cleartext policy, build provider, ABI set, SDKs,
+signer SHA-256, artifact SHA-256, size, alignment, and signature-verification
+result. `dist` and the generated native project remain ignored; copy only a
+verified artifact and manifest to the approved Development artifact store
+without overwriting v1.
 
 The build command refuses a dirty source tree so the recorded commit is
 authoritative. Commit reviewed source changes before producing a distributable

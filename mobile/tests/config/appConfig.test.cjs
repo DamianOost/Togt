@@ -5,6 +5,9 @@ const assert = require('node:assert/strict');
 const createConfig = require('../../app.config.js');
 const base = require('../../app.json');
 const eas = require('../../eas.json');
+const {
+  applyAndroidCleartextPolicy,
+} = require('../../plugins/withAndroidCleartextPolicy.cjs');
 
 const CONFIG_ENVIRONMENT_NAMES = [
   'ANDROID_BUILD_PROVIDER',
@@ -43,6 +46,13 @@ function configFor(values) {
   return withEnvironment(values, () => createConfig({ config: base.expo }));
 }
 
+function cleartextPluginFor(config) {
+  return config.plugins.find(
+    (entry) => Array.isArray(entry) &&
+      entry[0] === './plugins/withAndroidCleartextPolicy.cjs'
+  );
+}
+
 test('local Gradle development config is labelled and locks release identity', () => {
   const config = configFor({
     ANDROID_BUILD_PROVIDER: 'local_gradle',
@@ -55,6 +65,11 @@ test('local Gradle development config is labelled and locks release identity', (
   assert.equal(config.extra.appEnvironment, 'development');
   assert.equal(config.extra.buildProvider, 'local_gradle');
   assert.equal(config.extra.configClass, 'development-lan');
+  assert.equal(config.extra.androidCleartextAllowed, true);
+  assert.deepEqual(cleartextPluginFor(config), [
+    './plugins/withAndroidCleartextPolicy.cjs',
+    { configClass: 'development-lan' },
+  ]);
   assert.deepEqual(config.extra.providers, {
     maps: 'disabled',
     peach: false,
@@ -62,8 +77,101 @@ test('local Gradle development config is labelled and locks release identity', (
   });
   assert.equal(config.android.package, 'za.togt.app');
   assert.equal(config.android.versionCode, 2);
+  assert.doesNotMatch(
+    config.android.permissions.join(','),
+    /ACCESS_BACKGROUND_LOCATION/
+  );
   assert.equal(config.version, '1.0.1');
   assert.equal(config.extra.eas, undefined);
+});
+
+test('Android release cleartext is limited to local and LAN development configs', () => {
+  const cases = [
+    {
+      expected: true,
+      expectedClass: 'development-local',
+      values: {
+        ANDROID_BUILD_PROVIDER: 'local_gradle',
+        EXPO_PUBLIC_API_BASE_URL: 'http://localhost:3000',
+        EXPO_PUBLIC_APP_ENV: 'development',
+      },
+    },
+    {
+      expected: true,
+      expectedClass: 'development-lan',
+      values: {
+        ANDROID_BUILD_PROVIDER: 'local_gradle',
+        EXPO_PUBLIC_API_BASE_URL: 'http://192.168.10.20:3000',
+        EXPO_PUBLIC_APP_ENV: 'development',
+      },
+    },
+    {
+      expected: false,
+      expectedClass: 'development-secure',
+      values: {
+        ANDROID_BUILD_PROVIDER: 'local_gradle',
+        EXPO_PUBLIC_API_BASE_URL: 'https://dev.example.test',
+        EXPO_PUBLIC_APP_ENV: 'development',
+      },
+    },
+    {
+      expected: false,
+      expectedClass: 'preview',
+      values: {
+        ANDROID_BUILD_PROVIDER: 'local_gradle',
+        EXPO_PUBLIC_API_BASE_URL: 'https://preview.example.test',
+        EXPO_PUBLIC_APP_ENV: 'preview',
+      },
+    },
+    {
+      expected: false,
+      expectedClass: 'production',
+      values: {
+        ANDROID_BUILD_PROVIDER: 'local_gradle',
+        EXPO_PUBLIC_API_BASE_URL: 'https://api.example.test',
+        EXPO_PUBLIC_APP_ENV: 'production',
+      },
+    },
+  ];
+
+  for (const { expected, expectedClass, values } of cases) {
+    const config = configFor(values);
+    assert.equal(config.extra.configClass, expectedClass);
+    assert.equal(config.extra.androidCleartextAllowed, expected);
+    assert.equal(cleartextPluginFor(config)[1].configClass, expectedClass);
+  }
+});
+
+test('Android manifest plugin writes the explicit policy for every config class', () => {
+  const createManifest = () => ({
+    manifest: {
+      application: [{ $: { 'android:name': '.MainApplication' } }],
+    },
+  });
+
+  const cases = [
+    ['development-local', 'true'],
+    ['development-lan', 'true'],
+    ['development-secure', 'false'],
+    ['preview', 'false'],
+    ['production', 'false'],
+  ];
+
+  for (const [configClass, expected] of cases) {
+    const manifest = applyAndroidCleartextPolicy(createManifest(), configClass);
+    assert.equal(
+      manifest.manifest.application[0].$['android:usesCleartextTraffic'],
+      expected
+    );
+  }
+  assert.throws(
+    () => applyAndroidCleartextPolicy(createManifest(), 'future-config'),
+    /Unsupported Android cleartext configuration class/
+  );
+  assert.throws(
+    () => applyAndroidCleartextPolicy(createManifest()),
+    /Unsupported Android cleartext configuration class/
+  );
 });
 
 test('preview config fails closed without a public HTTPS endpoint', () => {

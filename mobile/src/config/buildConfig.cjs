@@ -12,6 +12,16 @@ const ANDROID_PACKAGE_NAME = 'za.togt.app';
 const BUILD_PROVIDERS = new Set(['local_gradle', 'eas']);
 const PUSH_PROVIDERS = new Set(['disabled', 'expo', 'fcm']);
 const MAPS_PROVIDERS = new Set(['disabled', 'google']);
+const ANDROID_CLEARTEXT_CONFIG_CLASSES = new Set([
+  'development-local',
+  'development-lan',
+]);
+const ANDROID_CONFIG_CLASSES = new Set([
+  ...ANDROID_CLEARTEXT_CONFIG_CLASSES,
+  'development-secure',
+  'preview',
+  'production',
+]);
 
 function readChoice(environment, name, allowed, fallback) {
   const value = environment[name]?.trim().toLowerCase() || fallback;
@@ -43,6 +53,15 @@ function resolveAppEnvironment(environment) {
   const easProfile = environment.EAS_BUILD_PROFILE?.trim().toLowerCase();
   if (easProfile === 'preview' || easProfile === 'production') return easProfile;
   return 'development';
+}
+
+function allowsAndroidCleartext(configClass) {
+  if (!ANDROID_CONFIG_CLASSES.has(configClass)) {
+    throw new Error(
+      `Unsupported Android cleartext configuration class: ${configClass || 'missing'}.`
+    );
+  }
+  return ANDROID_CLEARTEXT_CONFIG_CLASSES.has(configClass);
 }
 
 function resolveBuildConfiguration(environment = process.env) {
@@ -110,6 +129,7 @@ function resolveBuildConfiguration(environment = process.env) {
   }
 
   return Object.freeze({
+    androidCleartextAllowed: allowsAndroidCleartext(configClass),
     apiBaseUrl,
     appEnvironment,
     buildProvider,
@@ -125,10 +145,13 @@ function resolveBuildConfiguration(environment = process.env) {
 }
 
 module.exports = {
+  ANDROID_CLEARTEXT_CONFIG_CLASSES,
+  ANDROID_CONFIG_CLASSES,
   ANDROID_PACKAGE_NAME,
   BUILD_PROVIDERS,
   MAPS_PROVIDERS,
   PUSH_PROVIDERS,
+  allowsAndroidCleartext,
   readBoolean,
   resolveAppEnvironment,
   resolveBuildConfiguration,

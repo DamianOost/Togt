@@ -8,6 +8,7 @@ const {
   normalizeFingerprint,
   parseAaptBadging,
   parseAbiList,
+  parseAndroidCleartextPolicy,
   parseSignerFingerprint,
 } = require('../../scripts/android-build.cjs');
 
@@ -78,4 +79,21 @@ test('signer parser normalizes apksigner output and rejects missing evidence', (
   );
   assert.throws(() => parseSignerFingerprint('Verified'), /did not report a signer/);
   assert.throws(() => normalizeFingerprint('1234'), /64-character SHA-256/);
+});
+
+test('prebuild cleartext parser requires an explicit application policy', () => {
+  const manifest = (value) =>
+    `<manifest>\n  <application\n    android:name=".MainApplication"\n` +
+    `    android:usesCleartextTraffic="${value}">\n  </application>\n</manifest>`;
+
+  assert.equal(parseAndroidCleartextPolicy(manifest('true')), true);
+  assert.equal(parseAndroidCleartextPolicy(manifest('false')), false);
+  assert.throws(
+    () => parseAndroidCleartextPolicy('<manifest><application></application></manifest>'),
+    /must explicitly set android:usesCleartextTraffic/
+  );
+  assert.throws(
+    () => parseAndroidCleartextPolicy('<manifest></manifest>'),
+    /missing its application element/
+  );
 });

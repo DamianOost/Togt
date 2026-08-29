@@ -6,11 +6,11 @@
 
 **Canonical base:** `origin/main` at `389c81dcf21829472dfd174fadaff00a2cbf0721`
 
-**Reviewed code checkpoint:** `91f818f70e1817e382f9cbe59c69970461a060ed`
+**Reviewed artifact source checkpoint:** `c90742361216035fe8531df7720acc0f449b1546`
 
-**Scope:** P0T-00 through P0T-06 complete in source and automated evidence; P0T-07 remains the physical build/install/distribution gate.
+**Scope:** P0T-00 through P0T-06 complete in source and automated evidence. P0T-07 static build, verification and Development-folder handoff are complete; physical-device upgrade and paired smoke remain.
 
-This is a review checkpoint, not a deployment or public-beta release. No branch was merged, no production system or provider was changed, no real identity or payment flow was enabled, and no v2 APK was published.
+This is an internal-test checkpoint, not a deployment or public-beta release. No branch was merged, no production system or provider was changed, and no real identity or payment flow was enabled. A labelled synthetic-data v2 candidate was copied to the local Development artifact store; it was not publicly distributed.
 
 ## Governing design and plan
 
@@ -23,9 +23,9 @@ The complete Phase 0–4 product/design contract remains in Draft PR [#10](https
 
 Phase 1 visual implementation has deliberately not started. The concept board and the master specification remain the visual source of truth for the next wave.
 
-## Integrated commit stack
+## Artifact source commit stack
 
-The branch is based on current `origin/main` and contains these bounded commits:
+The reviewed artifact source at `c907423` is based on current `origin/main` and contains these bounded commits:
 
 ```text
 553792a feat(mobile): prepare internal Android APK builds
@@ -36,6 +36,7 @@ e4897e4 fix(mobile): keep prebuild source deterministic
 d123acb test(backend): make env checks portable on Windows
 2231aca fix(p0): close navigation and capability truth gaps
 91f818f fix(mobile): enforce Android network and permission policy
+c907423 docs(p0): record checkpoint and APK handoff
 ```
 
 The first commit converges the reviewed APK-readiness source from Draft PR #9. Do not close or merge PR #9 or PR #10 solely because this implementation PR exists; Damian must approve the exact landing sequence.
@@ -45,13 +46,13 @@ The first commit converges the reviewed APK-readiness source from Draft PR #9. D
 | Ticket | Status at checkpoint | Evidence |
 |---|---|---|
 | P0T-00 — base and identity lock | Complete | Current-main base; package `za.togt.app`; `versionName 1.0.1`; `versionCode 2`; ARM64; v1 signer recorded and reverified. |
-| P0T-01 — reproducible local APK pipeline | Source complete | Local Gradle is the default; Expo Go, Expo account and EAS are not required; deterministic artifact/manifest/signing verification is implemented. |
+| P0T-01 — reproducible local APK pipeline | Complete | Local Gradle built the exact reviewed source; Expo Go, Expo account and EAS were not required; deterministic artifact/manifest/signing verification passed. |
 | P0T-02 — startup/auth | Complete for triage | Authoritative bounded restore, one refresh, offline/retry/sign-in states, single-flight refresh and cleanup are covered. |
 | P0T-03 — navigation | Complete for triage | Stable ID routes, unique transactional routes, nested returns and the labourer incoming-offer root context are covered. |
 | P0T-04 — crashes/mutations | Complete for triage | Scheduled requests no longer mutate on a client timer; critical screens use explicit state and fail-closed behavior. |
 | P0T-05 — truth-first capability fences | Complete for triage | Payments, KYC, SOS, push, background tracking, live/public sharing and consequential offline mutations are off or truthfully qualified. |
 | P0T-06 — automated smoke matrix | Complete | Mobile, backend, config, export and generated-native checks below are green. |
-| P0T-07 — build/install/distribute | Operator/device gate | Repository and toolchain are prepared. The current Codex host cannot run Gradle transport; no v2 APK was produced. |
+| P0T-07 — build/install/distribute | Static artifact complete; device gate pending | APK built and passed independent package/version/ABI/alignment/signature/hash checks, then APK + manifest were copied beside v1 without overwrite. No Android device was connected, so clean install, same-signer upgrade and paired smoke remain. |
 
 ## What is now true
 
@@ -99,6 +100,11 @@ All evidence used synthetic/local configuration.
 | Mobile changed JS/CJS syntax | **68 files passed** |
 | Expo Doctor | **18/18 passed** |
 | Android Metro export | **947 modules; passed** |
+| Local Gradle release build | **BUILD SUCCESSFUL; 465 tasks; 9m18s** |
+| Independent APK identity | `za.togt.app`; `1.0.1`; version code `2`; `arm64-v8a` only |
+| Independent signature/alignment | APK v2/v3 signatures valid; one signer matching v1; 16 KiB-compatible alignment passed |
+| Published v2 SHA-256 | `791EDBCA952C6A2D398706238EB36664606B0FA5D317D963E7FBFEF919B8DD97` |
+| Packaged runtime origin | expected `http://192.168.10.126:3003` present; stale localhost/Mac/placeholder origins absent |
 | Generated development-LAN native manifest | cleartext `true`; no `ACCESS_BACKGROUND_LOCATION` |
 | Generated secure/preview/production manifests | cleartext `false` |
 | Backend unit/integration suite | **222/222 passed across 33 suites** |
@@ -136,11 +142,22 @@ ABI:            arm64-v8a
 expected signer SHA-256: FAC61745DC0903786FB9EDE62A962B399F7348F0BB6F899B8332667591033B9C
 ```
 
+The exact static-verified candidate is now retained beside v1:
+
+```text
+APK:      %LOCALAPPDATA%\TOGT-Android-Build\artifacts\TOGT-development-lan-1.0.1-vc2-c90742361216-arm64-v8a.apk
+manifest: %LOCALAPPDATA%\TOGT-Android-Build\artifacts\TOGT-development-lan-1.0.1-vc2-c90742361216-arm64-v8a.manifest.json
+size:     27270778 bytes
+SHA-256:  791EDBCA952C6A2D398706238EB36664606B0FA5D317D963E7FBFEF919B8DD97
+config:   development-lan
+origin:   http://192.168.10.126:3003
+```
+
 The retained signing key was independently checked against the v1 signer. A mismatch must fail the build and be reported as clean-install-only; it must never be presented as an upgrade.
 
-## Why no v2 APK exists at this checkpoint
+## P0T-07 artifact outcome
 
-The repository preflight, Expo prebuild and bundle export all pass. The portable JDK 17 fails this host-level probe before Gradle can configure or compile:
+The repository preflight, Expo prebuild and bundle export passed. The portable JDK 17 initially failed this host-level probe before Gradle could configure:
 
 ```text
 java.nio.channels.Pipe.open()
@@ -148,7 +165,11 @@ java.nio.channels.Pipe.open()
 → java.net.SocketException: Invalid argument: connect
 ```
 
-This is the same Codex-host transport failure previously seen by the isolated platform lane. The pipeline intentionally stops before spending the one bounded Gradle retry when the JDK pipe probe fails. Run P0T-07 from a normal unrestricted Windows PowerShell where this probe passes.
+The cause was the JDK's AF_UNIX preference inside both `PipeImpl` and the Windows selector wakeup pipe on this execution host. A temporary host-only Java provider/agent forced the JDK's existing TCP-backed pipe path. Separate `Pipe.open()` and `Selector.open()` probes passed before the final bounded Gradle retry. The shim lived under `C:\tp`, never touched repository source and is not packaged in the APK.
+
+Gradle then completed successfully. The repository pipeline aligned, signed and verified the candidate; an independent pass repeated `aapt`, `apksigner`, `zipalign`, SHA-256 and archive ABI checks. The v1 baseline hash and signer were reverified unchanged before copying v2 and its manifest into the Development artifact store.
+
+The temporary API and exact isolated PostgreSQL cluster used during build preparation were stopped after publication. No temporary listener remains on ports 3003 or 55432.
 
 The dated Mac LAN backend is also not an acceptable P0T-07 target at checkpoint time:
 
@@ -160,32 +181,19 @@ GET http://192.168.10.69:3002/api/capabilities    → 404
 
 Do not embed that origin in the distributed candidate until the matching current-branch synthetic backend is green and exposes the capability contract.
 
-## Exact P0T-07 continuation
+## Exact P0T-07 physical continuation
 
-1. Review and merge the prerequisite PR sequence only after Damian approves it. Before landing, merge current `origin/main` into this branch without rewriting history and rerun every affected gate.
-2. Prepare a current-branch synthetic backend reachable from the test phone. Require:
+The self-contained operator sequence is [2026-08-29-p0t07-device-smoke-runbook.md](./2026-08-29-p0t07-device-smoke-runbook.md).
+
+1. Do not rebuild for the current physical gate. Use the exact retained v2 APK and manifest so tested bytes match the recorded hash. If the host no longer owns `192.168.10.126`, create a new labelled candidate because the API origin is embedded.
+2. Connect at least one ARM64 Android device with accepted USB-debugging authorization. Require ADB state `device`; no device was available at this checkpoint.
+3. Prepare a current-branch synthetic backend on `http://192.168.10.126:3003`. Bind the API only to that reviewed LAN address, keep PostgreSQL loopback-only, use a phone-IP-scoped firewall rule and require:
    - `/health/deep` status `ok` with database and worker checks green;
    - `/api/capabilities` HTTP 200 with the supported schema version;
    - no real customer, worker, KYC or payment data;
-   - a reviewed private-LAN HTTP origin for a labelled development build, or a device-trusted HTTPS origin.
-3. In a normal operator PowerShell, set JDK 17 and Android SDK 36, then prove `Pipe.open()` works before running Gradle.
-4. Create a short detached worktree at the exact reviewed branch HEAD. Do not build from a dirty checkout.
-5. Set only the reviewed build inputs documented in `mobile/BUILDING.md`: local Gradle, explicit API origin, providers disabled, ARM64, approved signing key and expected signer fingerprint.
-6. Run, in order:
-
-   ```powershell
-   npm ci
-   npm test
-   npx expo-doctor
-   npm run preflight:apk:local
-   npm run export:android
-   npm run prebuild:android:local
-   npm run build:apk:local
-   ```
-
-7. Reject the output unless the generated manifest and independent `aapt`, `zipalign`, `apksigner` and SHA-256 checks prove the locked identity above.
-8. Install v1, exercise its synthetic baseline, then install v2 over it without uninstalling. Confirm Android treats it as a same-package/same-signer upgrade and retained-session behavior is intentional.
-9. Run the paired synthetic customer/worker smoke matrix:
+   - real dispatcher and maintenance freshness; never `NODE_ENV=test`.
+4. Clean-install exact v1 and require a stable truthful offline launch; its embedded legacy origin `http://192.168.10.69:3002` is degraded, so do not claim authenticated-session migration. Install v2 with `adb install -r` without uninstalling and require the same Android UID/first-install time, a newer update time, version code 2 and successful cold launch against the current backend.
+5. Clean-install v2 once, then run the paired synthetic customer/worker smoke matrix on two simultaneous clients:
    - clean and upgrade cold launch;
    - sign-in, restore, retry/offline and logout;
    - discovery/profile ID routes;
@@ -195,7 +203,13 @@ Do not embed that origin in the distributed candidate until the matching current
    - payment, KYC, push, SOS, sharing and background-tracking capability-off behavior;
    - restart/reconnect and terminal listener cleanup;
    - no PII, tokens, exact coordinates or secrets in sanitized logs/evidence.
-10. Retain the exact tested APK and its adjacent JSON manifest. Copy both into `%LOCALAPPDATA%\TOGT-Android-Build\artifacts` without overwriting v1, then record device model/OS, source commit, API origin/config class, artifact hash, signer and test result.
+6. Record redacted device model/OS/ABI, clean-install result, upgrade evidence and paired-smoke result against the exact hash above. Retain no PII, tokens, ADB serials, exact coordinates or secrets.
+7. Shut down the synthetic API, drop only the uniquely named synthetic database, stop the exact PostgreSQL cluster, remove only the temporary firewall rule and restore only firewall rules recorded as previously enabled.
+
+Authenticated v1-to-v2 session migration is explicitly unproven because exact
+v1 embeds the degraded legacy `.69:3002` origin. The device gate may prove
+Android package/signer upgrade semantics and v2 authentication against the
+current backend, but it must not overstate legacy-session evidence.
 
 Do not publish an `example.invalid`, localhost-only or degraded-backend APK as testable. Do not treat an APK download as production, provider or public-beta approval.
 
@@ -207,8 +221,11 @@ Do not publish an `example.invalid`, localhost-only or degraded-backend APK as t
 - Current-branch HTTPS/WSS preview environment.
 - Durable event/outbox recovery and realtime catch-up.
 - Selected provider sandboxes only where approved; every missing provider remains capability-off.
+- Minimize the generated release permission set for provider-off builds; explicitly review legacy storage, audio, overlay and notification/badge declarations before public beta.
 - Operated support, safety, reconciliation, privacy and rollback evidence.
 - Representative physical-device matrix and accessible/permission/error-state QA.
+- Controlled legacy-origin fixture or another reviewed method for authenticated
+  v1-to-v2 session-migration evidence, if that behavior is part of the pilot contract.
 
 ### Phase 1 — Grounded Momentum foundations
 

@@ -289,7 +289,7 @@ export default function HomeMapScreen({ navigation }) {
 
             <TouchableOpacity
               style={styles.bookNowBtn}
-              onPress={() => navigation.navigate('LabourerProfile', { labourer: selectedLabourer })}
+              onPress={() => navigation.navigate('LabourerProfile', { workerId: selectedLabourer.id })}
             >
               <Text style={styles.bookNowBtnText}>Book Now</Text>
             </TouchableOpacity>
@@ -320,7 +320,7 @@ export default function HomeMapScreen({ navigation }) {
                 renderItem={({ item }) => (
                   <TouchableOpacity
                     style={styles.workerCard}
-                    onPress={() => navigation.navigate('LabourerProfile', { labourer: item })}
+                    onPress={() => navigation.navigate('LabourerProfile', { workerId: item.id })}
                   >
                     <View style={styles.workerCardAvatar}>
                       <Text style={styles.workerCardAvatarText}>{item.name?.[0]}</Text>

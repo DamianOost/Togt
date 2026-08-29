@@ -1,7 +1,7 @@
 import React from 'react';
+import { Text } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { Text } from 'react-native';
 
 import DashboardScreen from '../screens/labourer/DashboardScreen';
 import ProfileSetupScreen from '../screens/labourer/ProfileSetupScreen';
@@ -16,46 +16,47 @@ import ScopeConfirmScreen from '../screens/shared/ScopeConfirmScreen';
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
-const screenOptions = {
-  headerStyle: { backgroundColor: '#1a1a2e' },
-  headerTintColor: '#fff',
-  headerTitleStyle: { fontWeight: 'bold' },
+const stackScreenOptions = {
+  headerStyle: { backgroundColor: '#F7F4EF' },
+  headerTintColor: '#0F1F1B',
+  headerTitleStyle: { fontWeight: '700' },
+  headerShadowVisible: false,
+  contentStyle: { backgroundColor: '#F7F4EF' },
 };
 
-// Dashboard stack (Dashboard + ActiveJob + Chat)
-function DashboardStack() {
+function DashboardTabStack() {
   return (
-    <Stack.Navigator screenOptions={screenOptions}>
+    <Stack.Navigator screenOptions={stackScreenOptions}>
       <Stack.Screen name="DashboardMain" component={DashboardScreen} options={{ title: 'Dashboard' }} />
-      <Stack.Screen name="ActiveJob" component={ActiveJobScreen} options={{ title: 'Active Job' }} />
-      <Stack.Screen name="Chat" component={ChatScreen} options={{ title: 'Chat', headerShown: false }} />
-      <Stack.Screen name="KYC" component={KYCScreen} options={{ title: 'Verify Identity', headerShown: false }} />
-      <Stack.Screen name="ScopeConfirm" component={ScopeConfirmScreen} options={{ title: 'Confirm Scope', headerShown: false }} />
     </Stack.Navigator>
   );
 }
 
-// Jobs stack
-function JobsStack() {
+function JobsTabStack() {
   return (
-    <Stack.Navigator screenOptions={screenOptions}>
+    <Stack.Navigator screenOptions={stackScreenOptions}>
       <Stack.Screen name="JobRequestsMain" component={JobRequestsScreen} options={{ title: 'Job Requests' }} />
-      <Stack.Screen name="ActiveJob" component={ActiveJobScreen} options={{ title: 'Active Job' }} />
-      <Stack.Screen name="Chat" component={ChatScreen} options={{ title: 'Chat', headerShown: false }} />
     </Stack.Navigator>
   );
 }
 
-export default function LabourerStack() {
+function LabourerTabs() {
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
-        tabBarActiveTintColor: '#f59e0b',
-        tabBarInactiveTintColor: '#9CA3AF',
-        tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
-        tabBarStyle: { paddingBottom: 6, paddingTop: 4, height: 58, backgroundColor: '#1a1a2e', borderTopColor: '#374151' },
-        tabBarIcon: ({ focused }) => {
+        tabBarHideOnKeyboard: true,
+        tabBarActiveTintColor: '#12844E',
+        tabBarInactiveTintColor: '#4E5C57',
+        tabBarLabelStyle: { fontSize: 11, fontWeight: '700' },
+        tabBarStyle: {
+          paddingBottom: 6,
+          paddingTop: 5,
+          minHeight: 62,
+          backgroundColor: '#FFFFFF',
+          borderTopColor: '#D6DED9',
+        },
+        tabBarIcon: () => {
           const icons = {
             Home: '🏠',
             Jobs: '📋',
@@ -63,17 +64,17 @@ export default function LabourerStack() {
             Profile: '👤',
             Earnings: '💰',
           };
-          return <Text style={{ fontSize: 22 }}>{icons[route.name] || '•'}</Text>;
+          return <Text style={{ fontSize: 20 }}>{icons[route.name] || '•'}</Text>;
         },
       })}
     >
-      <Tab.Screen name="Home" component={DashboardStack} />
-      <Tab.Screen name="Jobs" component={JobsStack} />
+      <Tab.Screen name="Home" component={DashboardTabStack} />
+      <Tab.Screen name="Jobs" component={JobsTabStack} />
       <Tab.Screen
         name="Services"
         component={ServicesScreen}
         options={{
-          ...screenOptions,
+          ...stackScreenOptions,
           headerShown: true,
           title: 'My Services',
         }}
@@ -82,7 +83,7 @@ export default function LabourerStack() {
         name="Profile"
         component={ProfileSetupScreen}
         options={{
-          ...screenOptions,
+          ...stackScreenOptions,
           headerShown: true,
           title: 'My Profile',
         }}
@@ -91,11 +92,23 @@ export default function LabourerStack() {
         name="Earnings"
         component={EarningsScreen}
         options={{
-          ...screenOptions,
+          ...stackScreenOptions,
           headerShown: true,
           title: 'Earnings',
         }}
       />
     </Tab.Navigator>
+  );
+}
+
+export default function LabourerStack() {
+  return (
+    <Stack.Navigator screenOptions={stackScreenOptions}>
+      <Stack.Screen name="LabourerTabs" component={LabourerTabs} options={{ headerShown: false }} />
+      <Stack.Screen name="ActiveJob" component={ActiveJobScreen} options={{ title: 'Active Job' }} />
+      <Stack.Screen name="Chat" component={ChatScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="KYC" component={KYCScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="ScopeConfirm" component={ScopeConfirmScreen} options={{ headerShown: false }} />
+    </Stack.Navigator>
   );
 }

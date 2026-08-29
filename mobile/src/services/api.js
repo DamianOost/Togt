@@ -1,6 +1,8 @@
 import axios from 'axios';
 import { API_BASE_URL } from '../config/apiConfig';
 
+const { createSingleFlight } = require('../auth/sessionRestore');
+
 const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 15000,
@@ -32,15 +34,15 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// On 401, try one silent refresh + retry. Multiple in-flight 401s share the
-// same refresh promise so we never fire parallel /auth/refresh calls.
-let refreshPromise = null;
+// On 401, try one silent refresh + retry. Multiple in-flight 401s share both
+// the refresh request and its failure cleanup effect.
+const refreshFlight = createSingleFlight();
 
 api.interceptors.response.use(
   (r) => r,
   async (error) => {
     const original = error.config;
-    if (!original || error.response?.status !== 401 || original._retried) {
+    if (!original || error.response?.status !== 401 || original._retried || original.skipAuthRefresh) {
       return Promise.reject(error);
     }
     // Don't intercept the auth endpoints themselves — that would loop or
@@ -60,18 +62,21 @@ api.interceptors.response.use(
     original._retried = true;
 
     try {
-      if (!refreshPromise) {
-        refreshPromise = handlers.refreshAndStore()
-          .finally(() => { refreshPromise = null; });
-      }
-      const tokens = await refreshPromise;
+      const tokens = await refreshFlight.run(async () => {
+        try {
+          return await handlers.refreshAndStore();
+        } catch (refreshError) {
+          await handlers.onLogout?.();
+          throw refreshError;
+        }
+      });
+      original.headers = original.headers || {};
       original.headers.Authorization = `Bearer ${tokens.accessToken}`;
       return api(original);
-    } catch (refreshErr) {
+    } catch {
       // Refresh itself failed (revoked / expired refresh token) — log the
       // user out cleanly. Reject with the ORIGINAL 401 so callers see the
       // real reason rather than the refresh failure.
-      handlers.onLogout?.();
       return Promise.reject(error);
     }
   }

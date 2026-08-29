@@ -13,6 +13,15 @@ export const authService = {
     const res = await api.post('/auth/refresh', { refreshToken });
     return res.data;
   },
+  async getCurrentUser(accessToken) {
+    const res = await api.get('/api/auth/me', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      // Session bootstrap owns its refresh decision because Redux has not yet
+      // accepted any cached token or identity as authoritative.
+      skipAuthRefresh: true,
+    });
+    return res.data.user;
+  },
   async forgotPassword(email) {
     const res = await api.post('/auth/forgot-password', { email });
     return res.data;
@@ -25,14 +34,17 @@ export const authService = {
     });
     return res.data;
   },
-    async logout({ accessToken, refreshToken }) {
+  async logout({ accessToken, refreshToken }) {
     // Best-effort — the user wants out now, so never throw.
     // On success the server revokes the refresh jti and clears push_token.
     try {
       await api.post(
         '/auth/logout',
         { refreshToken },
-        { headers: { Authorization: `Bearer ${accessToken}` } }
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          skipAuthRefresh: true,
+        }
       );
     } catch {
       // Swallowed — local state will still be cleared.

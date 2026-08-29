@@ -13,6 +13,8 @@ import {
 import api from '../../services/api';
 import { colors, typography, spacing, borderRadius, shadows } from '../../theme';
 
+const { createRouteParams } = require('../../navigation/routeContracts');
+
 const SKILL_FILTERS = [
   { label: 'All', value: '' },
   { label: 'Plumbing', value: 'Plumbing' },
@@ -185,7 +187,10 @@ export default function DiscoverScreen({ navigation }) {
   }
 
   function handleCardPress(service) {
-    navigation.navigate('LabourerProfile', { labourerId: service.labourer_id });
+    navigation.navigate('LabourerProfile', createRouteParams('LabourerProfile', {
+      workerId: service.labourer_id,
+      serviceId: service.id,
+    }));
   }
 
   const filteredServices = searchText.trim()

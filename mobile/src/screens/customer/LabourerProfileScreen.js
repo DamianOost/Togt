@@ -8,6 +8,8 @@ import { formatZAR, formatDate } from '../../utils/formatters';
 import api from '../../services/api';
 import { colors, typography, spacing, borderRadius, shadows } from '../../theme';
 
+const { createCustomerHomeIntent, createRouteParams } = require('../../navigation/routeContracts');
+
 function StarRow({ rating, size = 16 }) {
   const filled = Math.round(rating || 0);
   return (
@@ -22,38 +24,108 @@ function StarRow({ rating, size = 16 }) {
 }
 
 export default function LabourerProfileScreen({ route, navigation }) {
-  const { labourer: initialLabourer } = route.params;
-  const [labourer, setLabourer] = useState(initialLabourer);
+  let parsedParams = null;
+  let routeIssue = null;
+  try {
+    parsedParams = createRouteParams('LabourerProfile', route.params);
+  } catch {
+    routeIssue = {
+      title: 'Profile unavailable',
+      detail: 'This worker link is incomplete. Return to discovery and choose the worker again.',
+    };
+  }
+
+  const workerId = parsedParams?.workerId;
+  const serviceId = parsedParams?.serviceId;
+  const [labourer, setLabourer] = useState(null);
   const [reviews, setReviews] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(Boolean(workerId));
+  const [loadIssue, setLoadIssue] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  function goBackSafely() {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    const intent = createCustomerHomeIntent();
+    navigation.navigate(intent.name, intent.params);
+  }
 
   useEffect(() => {
+    if (!workerId) {
+      setLoading(false);
+      return undefined;
+    }
+
+    let active = true;
     async function load() {
+      setLoading(true);
+      setLabourer(null);
+      setReviews([]);
+      setLoadIssue(null);
       try {
-        const res = await api.get(`/labourers/${initialLabourer.id}`);
+        const res = await api.get(`/api/labourers/${encodeURIComponent(workerId)}`);
+        if (!active) return;
         setLabourer(res.data.labourer);
         setReviews(res.data.reviews || []);
-      } catch {
-        // Use initial data if fetch fails
+      } catch (error) {
+        if (!active) return;
+        const missing = error.response?.status === 404;
+        setLabourer(null);
+        setReviews([]);
+        setLoadIssue({
+          title: 'Profile unavailable',
+          detail: missing
+            ? 'This worker profile is no longer available.'
+            : 'We could not load this worker profile. Check your connection and try again.',
+        });
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     }
     load();
-  }, []);
+    return () => {
+      active = false;
+    };
+  }, [workerId, reloadKey]);
 
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator color={colors.accent} size="large" />
+        <ActivityIndicator color="#12844E" size="large" accessibilityLabel="Loading worker profile" />
+        <Text style={styles.loadingText}>Loading worker profile…</Text>
       </View>
     );
   }
 
-  if (!labourer) {
+  const issue = routeIssue || loadIssue;
+  if (issue || !labourer) {
     return (
-      <View style={styles.loadingContainer}>
-        <Text style={{ color: colors.textSecondary }}>Profile not available.</Text>
+      <View style={styles.profileStateContainer}>
+        <View style={styles.profileStateCard} accessibilityLiveRegion="assertive">
+          <Text style={styles.profileStateLabel}>WORKER PROFILE</Text>
+          <Text style={styles.profileStateTitle}>{issue?.title || 'Profile unavailable'}</Text>
+          <Text style={styles.profileStateDetail}>
+            {issue?.detail || 'Return to discovery and choose another worker.'}
+          </Text>
+          {!routeIssue && (
+            <TouchableOpacity
+              style={styles.retryButton}
+              onPress={() => setReloadKey((value) => value + 1)}
+              accessibilityRole="button"
+            >
+              <Text style={styles.retryButtonText}>Try again</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            style={styles.backToResultsButton}
+            onPress={goBackSafely}
+            accessibilityRole="button"
+          >
+            <Text style={styles.backToResultsText}>Back to results</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   }
@@ -67,7 +139,12 @@ export default function LabourerProfileScreen({ route, navigation }) {
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {/* Hero section */}
         <View style={styles.hero}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={goBackSafely}
+            accessibilityRole="button"
+            accessibilityLabel="Back to worker results"
+          >
             <Text style={styles.backBtnText}>←</Text>
           </TouchableOpacity>
 
@@ -180,7 +257,10 @@ export default function LabourerProfileScreen({ route, navigation }) {
         <View style={styles.footer}>
           <TouchableOpacity
             style={styles.bookBtn}
-            onPress={() => navigation.navigate('BookingForm', { labourer })}
+            onPress={() => navigation.navigate('BookingForm', createRouteParams('BookingForm', {
+              workerId: labourer.id,
+              serviceId,
+            }))}
           >
             <Text style={styles.bookBtnText}>
               Book {labourer.name.split(' ')[0]}
@@ -193,13 +273,72 @@ export default function LabourerProfileScreen({ route, navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f3f4f6' },
+  container: { flex: 1, backgroundColor: '#F7F4EF' },
   loadingContainer: {
     flex: 1,
-    backgroundColor: colors.primary,
+    backgroundColor: '#F7F4EF',
     alignItems: 'center',
     justifyContent: 'center',
+    padding: 24,
   },
+  loadingText: { color: '#4E5C57', fontSize: 14, lineHeight: 20, marginTop: 12 },
+  profileStateContainer: {
+    flex: 1,
+    backgroundColor: '#F7F4EF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  profileStateCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D6DED9',
+    borderRadius: 24,
+    padding: 24,
+  },
+  profileStateLabel: {
+    color: '#12844E',
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  profileStateTitle: {
+    color: '#0F1F1B',
+    fontSize: 24,
+    lineHeight: 30,
+    fontWeight: '800',
+    marginTop: 8,
+  },
+  profileStateDetail: {
+    color: '#4E5C57',
+    fontSize: 16,
+    lineHeight: 24,
+    marginTop: 12,
+    marginBottom: 24,
+  },
+  retryButton: {
+    minHeight: 48,
+    borderRadius: 12,
+    backgroundColor: '#12844E',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  retryButtonText: { color: '#FFFFFF', fontSize: 16, lineHeight: 24, fontWeight: '700' },
+  backToResultsButton: {
+    minHeight: 48,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D6DED9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    marginTop: 12,
+  },
+  backToResultsText: { color: '#0F1F1B', fontSize: 16, lineHeight: 24, fontWeight: '700' },
   scroll: { paddingBottom: 32 },
 
   // Hero

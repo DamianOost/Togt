@@ -11,6 +11,8 @@ import { formatZAR, formatDateTime } from '../../utils/formatters';
 import { colors, typography, spacing, borderRadius, shadows } from '../../theme';
 import api from '../../services/api';
 
+const { createCustomerHomeIntent, createRouteParams } = require('../../navigation/routeContracts');
+
 const RECURRENCE_OPTIONS = [
   { label: 'Weekly', value: 'weekly', days: 7 },
   { label: 'Fortnightly', value: 'fortnightly', days: 14 },
@@ -25,12 +27,24 @@ const DURATION_OPTIONS = [
 ];
 
 export default function BookingFormScreen({ route, navigation }) {
-  const { labourer } = route.params;
+  let parsedParams = null;
+  let routeIssue = null;
+  try {
+    parsedParams = createRouteParams('BookingForm', route.params);
+  } catch {
+    routeIssue = 'This booking link is incomplete. Return to the worker profile and try again.';
+  }
+
+  const workerId = parsedParams?.workerId;
   const dispatch = useDispatch();
   const { loading, error } = useSelector((s) => s.booking);
+  const [labourer, setLabourer] = useState(null);
+  const [profileLoading, setProfileLoading] = useState(Boolean(workerId));
+  const [profileIssue, setProfileIssue] = useState(routeIssue);
+  const [profileReloadKey, setProfileReloadKey] = useState(0);
 
   const [form, setForm] = useState({
-    skill_needed: labourer.skills?.[0] || '',
+    skill_needed: '',
     address: '',
     location_lat: null,
     location_lng: null,
@@ -45,11 +59,96 @@ export default function BookingFormScreen({ route, navigation }) {
   const [recurPattern, setRecurPattern] = useState(null); // null | 'weekly' | 'fortnightly' | 'monthly'
   const [recurLoading, setRecurLoading] = useState(false);
 
+  function goBackSafely() {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    const intent = createCustomerHomeIntent();
+    navigation.navigate(intent.name, intent.params);
+  }
+
+  useEffect(() => {
+    if (!workerId) {
+      setProfileLoading(false);
+      return undefined;
+    }
+
+    let active = true;
+    async function loadWorker() {
+      setProfileLoading(true);
+      setLabourer(null);
+      setProfileIssue(null);
+      try {
+        const response = await api.get(`/api/labourers/${encodeURIComponent(workerId)}`);
+        if (!active) return;
+        const worker = response.data.labourer;
+        if (!worker) throw new Error('Worker profile missing');
+        setLabourer(worker);
+        setForm((current) => ({
+          ...current,
+          skill_needed: current.skill_needed || worker.skills?.[0] || '',
+        }));
+      } catch (loadError) {
+        if (!active) return;
+        setLabourer(null);
+        setProfileIssue(loadError.response?.status === 404
+          ? 'This worker profile is no longer available.'
+          : 'We could not load this worker profile. Check your connection and try again.');
+      } finally {
+        if (active) setProfileLoading(false);
+      }
+    }
+    loadWorker();
+    return () => {
+      active = false;
+    };
+  }, [workerId, profileReloadKey]);
+
   useEffect(() => {
     locationService.getCurrentPosition().then((pos) => {
       setForm((f) => ({ ...f, location_lat: pos.lat, location_lng: pos.lng }));
     }).catch(() => {});
   }, []);
+
+  if (profileLoading) {
+    return (
+      <View style={styles.profileStateContainer}>
+        <ActivityIndicator color="#12844E" size="large" accessibilityLabel="Loading worker booking details" />
+        <Text style={styles.profileLoadingText}>Preparing booking details…</Text>
+      </View>
+    );
+  }
+
+  if (profileIssue || !labourer) {
+    return (
+      <View style={styles.profileStateContainer}>
+        <View style={styles.profileStateCard} accessibilityLiveRegion="assertive">
+          <Text style={styles.profileStateLabel}>BOOKING</Text>
+          <Text style={styles.profileStateTitle}>Profile unavailable</Text>
+          <Text style={styles.profileStateDetail}>
+            {profileIssue || 'Return to the worker profile and try again.'}
+          </Text>
+          {!routeIssue && (
+            <TouchableOpacity
+              style={styles.profileRetryButton}
+              onPress={() => setProfileReloadKey((value) => value + 1)}
+              accessibilityRole="button"
+            >
+              <Text style={styles.profileRetryButtonText}>Try again</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            style={styles.profileBackButton}
+            onPress={goBackSafely}
+            accessibilityRole="button"
+          >
+            <Text style={styles.profileBackButtonText}>Back to worker</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
 
   function set(key) {
     return (val) => setForm((f) => ({ ...f, [key]: val }));
@@ -136,7 +235,12 @@ export default function BookingFormScreen({ route, navigation }) {
       <SafeAreaView style={{ flex: 1 }}>
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+          <TouchableOpacity
+            onPress={goBackSafely}
+            style={styles.backBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Back to worker profile"
+          >
             <Text style={styles.backBtnText}>←</Text>
           </TouchableOpacity>
           <View style={{ flex: 1 }}>
@@ -343,6 +447,64 @@ export default function BookingFormScreen({ route, navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f3f4f6' },
+  profileStateContainer: {
+    flex: 1,
+    backgroundColor: '#F7F4EF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  profileLoadingText: { color: '#4E5C57', fontSize: 14, lineHeight: 20, marginTop: 12 },
+  profileStateCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D6DED9',
+    borderRadius: 24,
+    padding: 24,
+  },
+  profileStateLabel: {
+    color: '#12844E',
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  profileStateTitle: {
+    color: '#0F1F1B',
+    fontSize: 24,
+    lineHeight: 30,
+    fontWeight: '800',
+    marginTop: 8,
+  },
+  profileStateDetail: {
+    color: '#4E5C57',
+    fontSize: 16,
+    lineHeight: 24,
+    marginTop: 12,
+    marginBottom: 24,
+  },
+  profileRetryButton: {
+    minHeight: 48,
+    borderRadius: 12,
+    backgroundColor: '#12844E',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  profileRetryButtonText: { color: '#FFFFFF', fontSize: 16, lineHeight: 24, fontWeight: '700' },
+  profileBackButton: {
+    minHeight: 48,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D6DED9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    marginTop: 12,
+  },
+  profileBackButtonText: { color: '#0F1F1B', fontSize: 16, lineHeight: 24, fontWeight: '700' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

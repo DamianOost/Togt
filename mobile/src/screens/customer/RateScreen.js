@@ -6,11 +6,18 @@ import {
 import StarRating from '../../components/StarRating';
 import api from '../../services/api';
 
+const { createCustomerHomeIntent } = require('../../navigation/routeContracts');
+
 export default function RateScreen({ route, navigation }) {
   const { booking } = route.params;
   const [score, setScore] = useState(0);
   const [comment, setComment] = useState('');
   const [loading, setLoading] = useState(false);
+
+  function returnToCustomerHome() {
+    const intent = createCustomerHomeIntent();
+    navigation.navigate(intent.name, intent.params);
+  }
 
   async function handleSubmit() {
     if (score === 0) {
@@ -25,7 +32,7 @@ export default function RateScreen({ route, navigation }) {
         comment: comment.trim() || undefined,
       });
       Alert.alert('Thank you!', 'Your review has been submitted.', [
-        { text: 'OK', onPress: () => navigation.navigate('HomeMap') },
+        { text: 'OK', onPress: returnToCustomerHome },
       ]);
     } catch (err) {
       Alert.alert('Error', err.response?.data?.error || 'Could not submit review.');
@@ -64,7 +71,7 @@ export default function RateScreen({ route, navigation }) {
           {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Submit Review</Text>}
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.skipBtn} onPress={() => navigation.navigate('HomeMap')}>
+        <TouchableOpacity style={styles.skipBtn} onPress={returnToCustomerHome}>
           <Text style={styles.skipText}>Skip for now</Text>
         </TouchableOpacity>
       </View>

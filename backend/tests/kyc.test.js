@@ -1,3 +1,17 @@
+jest.mock('../src/config/capabilities', () => {
+  const actual = jest.requireActual('../src/config/capabilities');
+  return {
+    ...actual,
+    FEATURES: {
+      ...actual.FEATURES,
+      identity_verification: {
+        ...actual.FEATURES.identity_verification,
+        available: true,
+      },
+    },
+  };
+});
+
 const { request, app, db, truncateAll, registerUser, authHeader } = require('./helpers');
 
 // Valid SA ID fixtures (structurally valid, pass Luhn checksum)
@@ -13,23 +27,24 @@ afterAll(async () => {
 });
 
 describe('POST /api/kyc/verify-id (POC structural validation)', () => {
-  test('valid adult SA ID -> verified, kyc_status updated, row persisted with provider=poc_structural', async () => {
+  test('valid adult SA ID -> pending only, with no verified identity claim', async () => {
     const u = await registerUser({ role: 'labourer' });
     const res = await request(app)
       .post('/api/kyc/verify-id')
       .set(authHeader(u.accessToken))
       .send({ idNumber: VALID_ADULT_ID, firstName: 'Test', lastName: 'Labourer' });
 
-    expect(res.status).toBe(200);
-    expect(res.body.verified).toBe(true);
-    expect(res.body.poc_mode).toBe(true);
-    expect(res.body.name).toBe('Test Labourer');
+    expect(res.status).toBe(202);
+    expect(res.body.verified).toBe(false);
+    expect(res.body.status).toBe('pending_review');
+    expect(res.body.assurance).toBe('structural_only');
+    expect(res.body.name).toBeUndefined();
     expect(res.body.id_last4).toBe('8080');
     expect(res.body.dob).toBeUndefined();
     expect(res.body.parsed_is_citizen).toBeUndefined();
 
     const userRow = await db.query('SELECT kyc_status FROM users WHERE id = $1', [u.user.id]);
-    expect(userRow.rows[0].kyc_status).toBe('verified');
+    expect(userRow.rows[0].kyc_status).toBe('pending');
 
     const kycRow = await db.query(
       `SELECT id_number, status, provider, verified_name, parsed_dob, parsed_sex,
@@ -38,9 +53,9 @@ describe('POST /api/kyc/verify-id (POC structural validation)', () => {
       [u.user.id]
     );
     expect(kycRow.rows).toHaveLength(1);
-    expect(kycRow.rows[0].status).toBe('verified');
+    expect(kycRow.rows[0].status).toBe('pending');
     expect(kycRow.rows[0].provider).toBe('poc_structural');
-    expect(kycRow.rows[0].verified_name).toBe('Test Labourer');
+    expect(kycRow.rows[0].verified_name).toBeNull();
     expect(kycRow.rows[0].id_number).toBeNull();
     expect(kycRow.rows[0].parsed_dob).toBeNull();
     expect(kycRow.rows[0].parsed_sex).toBeNull();
@@ -111,9 +126,10 @@ describe('POST /api/kyc/verify-id (POC structural validation)', () => {
       .set(authHeader(u.accessToken))
       .send({ idNumber: VALID_ADULT_ID, firstName: 'Second', lastName: 'Try' });
 
-    const rows = await db.query('SELECT verified_name FROM kyc_verifications WHERE user_id = $1', [u.user.id]);
+    const rows = await db.query('SELECT verified_name, id_last4 FROM kyc_verifications WHERE user_id = $1', [u.user.id]);
     expect(rows.rows).toHaveLength(1);
-    expect(rows.rows[0].verified_name).toBe('Second Try');
+    expect(rows.rows[0].verified_name).toBeNull();
+    expect(rows.rows[0].id_last4).toBe('8080');
   });
 });
 
@@ -126,7 +142,7 @@ describe('GET /api/kyc/status', () => {
     expect(res.body.verification).toBeNull();
   });
 
-  test('after successful verify: returns verified', async () => {
+  test('after structural validation: remains pending', async () => {
     const u = await registerUser({ role: 'customer' });
     await request(app)
       .post('/api/kyc/verify-id')
@@ -135,16 +151,16 @@ describe('GET /api/kyc/status', () => {
 
     const res = await request(app).get('/api/kyc/status').set(authHeader(u.accessToken));
     expect(res.status).toBe(200);
-    expect(res.body.kyc_status).toBe('verified');
+    expect(res.body.kyc_status).toBe('pending');
     expect(res.body.verification).toBeDefined();
-    expect(res.body.verification.status).toBe('verified');
+    expect(res.body.verification.status).toBe('pending');
     expect(res.body.verification.id_last4).toBe('8080');
     expect(res.body.verification.id_number).toBeUndefined();
   });
 });
 
-describe('POST /api/kyc/selfie-enroll (POC no-op)', () => {
-  test('accepts a selfie submission and returns enrolled=true without changing status', async () => {
+describe('POST /api/kyc/selfie-enroll', () => {
+  test('fails closed instead of minting a selfie success claim', async () => {
     const u = await registerUser({ role: 'customer' });
     await request(app)
       .post('/api/kyc/verify-id')
@@ -155,9 +171,8 @@ describe('POST /api/kyc/selfie-enroll (POC no-op)', () => {
       .post('/api/kyc/selfie-enroll')
       .set(authHeader(u.accessToken))
       .send({ selfieBase64: 'iVBORw0KGgoA...' });
-    expect(res.status).toBe(200);
-    expect(res.body.enrolled).toBe(true);
-    expect(res.body.poc_mode).toBe(true);
-    expect(res.body.manual_review).toBe(true);
+    expect(res.status).toBe(503);
+    expect(res.body.enrolled).toBe(false);
+    expect(res.body.error).toBe('capability_unavailable');
   });
 });

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ActivityIndicator,
-  Alert, ScrollView, StatusBar, Linking, Share, Animated, TextInput, Modal,
+  Alert, ScrollView, StatusBar, Linking, Share, TextInput, Modal,
 } from 'react-native';
 import MapView, { Marker } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -12,6 +12,11 @@ import { socketService } from '../../services/socketService';
 import { formatDateTime, formatZAR } from '../../utils/formatters';
 import { colors, typography, spacing, borderRadius, shadows, darkMapStyle } from '../../theme';
 import api from '../../services/api';
+import {
+  capabilityEnabled,
+  failClosedCapabilities,
+  getEffectiveCapabilities,
+} from '../../services/capabilityService';
 
 const STATUS_STEPS = [
   { key: 'accepted', label: 'Accepted', icon: '✅' },
@@ -81,39 +86,14 @@ const timelineStyles = StyleSheet.create({
   labelActive: { color: colors.accent, fontWeight: '700', fontSize: 10 },
 });
 
-// SOS hold-button (3-second press)
-function SOSButton({ onSOS }) {
-  const progress = useRef(new Animated.Value(0)).current;
-  const anim = useRef(null);
-  const fired = useRef(false);
-
-  function onPressIn() {
-    fired.current = false;
-    anim.current = Animated.timing(progress, {
-      toValue: 1, duration: 3000, useNativeDriver: false,
-    });
-    anim.current.start(({ finished }) => {
-      if (finished && !fired.current) {
-        fired.current = true;
-        onSOS();
-        progress.setValue(0);
-      }
-    });
-  }
-  function onPressOut() {
-    anim.current?.stop();
-    progress.setValue(0);
-  }
-  const width = progress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
+function EmergencyHelpButton({ onPress }) {
   return (
     <TouchableOpacity
       style={sosStyles.btn}
-      onPressIn={onPressIn}
-      onPressOut={onPressOut}
-      activeOpacity={0.9}
+      onPress={onPress}
     >
-      <Animated.View style={[sosStyles.fill, { width }]} />
-      <Text style={sosStyles.text}>🆘 SOS  (hold 3s)</Text>
+      <Text style={sosStyles.text}>Emergency help</Text>
+      <Text style={sosStyles.subtext}>Direct call only — TOGT does not dispatch emergencies</Text>
     </TouchableOpacity>
   );
 }
@@ -121,69 +101,65 @@ const sosStyles = StyleSheet.create({
   btn: {
     backgroundColor: colors.dangerLight, borderRadius: borderRadius.sm,
     paddingVertical: spacing.sm, alignItems: 'center', overflow: 'hidden',
-    position: 'relative', borderWidth: 1.5, borderColor: colors.danger,
-  },
-  fill: {
-    position: 'absolute', top: 0, left: 0, bottom: 0,
-    backgroundColor: colors.danger, opacity: 0.3,
+    borderWidth: 1.5, borderColor: colors.danger,
   },
   text: { color: colors.danger, fontWeight: '800', fontSize: typography.sm },
+  subtext: { color: colors.dangerDark, fontSize: typography.xs, marginTop: 2, textAlign: 'center' },
 });
-
-// Change Order modal (simplified inline)
-function ChangeOrderRequest({ bookingId, onDone }) {
-  const [desc, setDesc] = useState('');
-  const [hours, setHours] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-
-  async function submit() {
-    if (!desc.trim()) {
-      Alert.alert('Describe the change', 'Please describe what extra work is needed.');
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const extra_hours = parseFloat(hours) || null;
-      // Approximate price: show to customer based on booking rate
-      await api.post(`/api/bookings/${bookingId}/change-order`, {
-        description: desc,
-        extra_hours,
-        extra_amount: null, // customer and labourer can negotiate
-      });
-      Alert.alert('✅ Sent', 'Change request sent to the customer.');
-      onDone();
-    } catch (err) {
-      Alert.alert('Error', err.response?.data?.error || 'Could not send change order.');
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return null; // Triggers Alert.prompt below in parent — see handleChangeOrder
-}
 
 export default function ActiveJobScreen({ route, navigation }) {
   const { bookingId } = route.params;
-  const { accessToken, user } = useSelector((s) => s.auth);
+  const { accessToken } = useSelector((s) => s.auth);
   const [booking, setBooking] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [myLocation, setMyLocation] = useState(null);
+  const [capabilities, setCapabilities] = useState(
+    failClosedCapabilities('capability_check_pending')
+  );
+  const [changeOrderText, setChangeOrderText] = useState('');
+  const [changeOrderHours, setChangeOrderHours] = useState('');
+  const [changeOrderModal, setChangeOrderModal] = useState(false);
+  const [changeOrderSubmitting, setChangeOrderSubmitting] = useState(false);
+  const [startPin, setStartPin] = useState('');
+  const [startPinModal, setStartPinModal] = useState(false);
+  const [starting, setStarting] = useState(false);
   const watchRef = useRef(null);
 
   useEffect(() => {
     loadBooking();
-    startLocationSharing();
     const poll = setInterval(loadBooking, 15000);
     return () => {
-      stopLocationSharing();
       clearInterval(poll);
     };
   }, [bookingId]);
+
+  useEffect(() => {
+    let active = true;
+    getEffectiveCapabilities().then((result) => {
+      if (active) setCapabilities(result);
+    });
+    return () => { active = false; };
+  }, []);
+
+  const canShareForegroundLocation = capabilityEnabled(capabilities, 'foreground_location_updates');
+
+  useEffect(() => {
+    if (!canShareForegroundLocation || !accessToken) {
+      stopLocationSharing();
+      return undefined;
+    }
+    startLocationSharing();
+    return stopLocationSharing;
+  }, [bookingId, accessToken, canShareForegroundLocation]);
 
   async function loadBooking() {
     try {
       const res = await bookingService.getBooking(bookingId);
       setBooking(res.booking);
+      setLoadError('');
+    } catch (err) {
+      if (!booking) setLoadError(err.message || 'Could not load this job.');
     } finally {
       setLoading(false);
     }
@@ -203,15 +179,25 @@ export default function ActiveJobScreen({ route, navigation }) {
 
   function stopLocationSharing() {
     watchRef.current?.remove?.();
+    watchRef.current = null;
     socketService.disconnect();
   }
 
   async function handleStart() {
+    if (!/^\d{6}$/.test(startPin)) {
+      Alert.alert('Start PIN required', 'Enter the 6-digit PIN shown to the customer.');
+      return;
+    }
+    setStarting(true);
     try {
-      const res = await bookingService.start(bookingId);
+      const res = await bookingService.start(bookingId, startPin);
       setBooking(res.booking);
+      setStartPin('');
+      setStartPinModal(false);
     } catch (err) {
-      Alert.alert('Error', err.response?.data?.error || 'Could not start job.');
+      Alert.alert('Could not start job', err.response?.data?.detail || err.message || 'Please try again.');
+    } finally {
+      setStarting(false);
     }
   }
 
@@ -233,6 +219,7 @@ export default function ActiveJobScreen({ route, navigation }) {
   }
 
   async function handleShareTrip() {
+    if (!capabilityEnabled(capabilities, 'booking_details_share')) return;
     try {
       const res = await api.post(`/api/bookings/${bookingId}/share-trip`);
       await Share.share({ message: res.data.shareText });
@@ -241,36 +228,38 @@ export default function ActiveJobScreen({ route, navigation }) {
     }
   }
 
-  async function handleSOS() {
+  function handleEmergencyHelp() {
     Alert.alert(
-      '🆘 SOS Triggered',
-      'Your location is being shared. Do you need emergency services?',
+      'Emergency help',
+      'TOGT does not monitor or dispatch emergencies in this build. Call emergency services directly if you are in danger.',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: '📞 Call 10111', onPress: () => Linking.openURL('tel:10111') },
+        { text: 'Call 112', onPress: () => Linking.openURL('tel:112') },
+        { text: 'Call SAPS 10111', onPress: () => Linking.openURL('tel:10111') },
       ]
     );
-    try {
-      const loc = myLocation || {};
-      await api.post('/api/safety/sos', { booking_id: bookingId, lat: loc.lat, lng: loc.lng });
-    } catch {}
   }
 
   function handleChangeOrder() {
     setChangeOrderText('');
+    setChangeOrderHours('');
     setChangeOrderModal(true);
   }
 
   async function submitChangeOrder() {
     if (!changeOrderText.trim()) return;
+    setChangeOrderSubmitting(true);
     try {
       await api.post(`/api/bookings/${bookingId}/change-order`, {
         description: changeOrderText.trim(),
+        extra_hours: parseFloat(changeOrderHours) || null,
       });
       setChangeOrderModal(false);
-      Alert.alert('✅ Sent', 'Change request sent to the customer.');
+      Alert.alert('Change requested', 'The customer can now review the additional work.');
     } catch (err) {
       Alert.alert('Error', err.response?.data?.error || 'Could not send request.');
+    } finally {
+      setChangeOrderSubmitting(false);
     }
   }
 
@@ -282,7 +271,7 @@ export default function ActiveJobScreen({ route, navigation }) {
     }
   }
 
-  if (loading || !booking) {
+  if (loading) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator color={colors.accent} size="large" />
@@ -290,9 +279,26 @@ export default function ActiveJobScreen({ route, navigation }) {
     );
   }
 
+  if (!booking) {
+    return (
+      <View style={styles.loadErrorContainer}>
+        <Text style={styles.loadErrorTitle}>Job details unavailable</Text>
+        <Text style={styles.loadErrorText}>{loadError || 'Reconnect and try again.'}</Text>
+        <TouchableOpacity style={styles.retryBtn} onPress={loadBooking}>
+          <Text style={styles.retryBtnText}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   const mapLat = myLocation?.lat || booking.location_lat;
   const mapLng = myLocation?.lng || booking.location_lng;
   const locationText = booking.address || formatApproxArea(booking) || 'Location hidden until accepted';
+  const isOffline = booking._offline === true;
+  const bothScopeConfirmed = booking.scope_confirmed_by_customer
+    && booking.scope_confirmed_by_labourer;
+  const canShareDetails = capabilityEnabled(capabilities, 'booking_details_share');
+  const canCallEmergency = capabilityEnabled(capabilities, 'emergency_call');
 
   return (
     <View style={styles.container}>
@@ -357,6 +363,15 @@ export default function ActiveJobScreen({ route, navigation }) {
 
           <StatusTimeline currentStatus={booking.status} />
 
+          {isOffline && (
+            <View style={styles.offlineBanner}>
+              <Text style={styles.offlineTitle}>Cached job details</Text>
+              <Text style={styles.offlineText}>
+                Reconnect and refresh before accepting, starting, changing, or completing work.
+              </Text>
+            </View>
+          )}
+
           <View style={styles.detailsRow}>
             <View style={styles.detailChip}>
               <Text style={styles.detailChipIcon}>📅</Text>
@@ -391,33 +406,45 @@ export default function ActiveJobScreen({ route, navigation }) {
               </View>
             )}
 
-            {booking.status === 'accepted' && !booking.scope_confirmed_by_labourer && (
-              <TouchableOpacity style={styles.startBtn} onPress={handleStart}>
-                <Text style={styles.startBtnText}>🚀  Start Job (skip scope)</Text>
+            {booking.status === 'accepted' && bothScopeConfirmed && (
+              <TouchableOpacity
+                style={[styles.startBtn, isOffline && styles.actionDisabled]}
+                onPress={() => setStartPinModal(true)}
+                disabled={isOffline}
+              >
+                <Text style={styles.startBtnText}>Enter start PIN</Text>
               </TouchableOpacity>
             )}
 
             {booking.status === 'in_progress' && (
               <>
-                <TouchableOpacity style={styles.changeOrderBtn} onPress={handleChangeOrder}>
-                  <Text style={styles.changeOrderBtnText}>➕  Request Extra Work</Text>
+                <TouchableOpacity
+                  style={[styles.changeOrderBtn, isOffline && styles.actionDisabled]}
+                  onPress={handleChangeOrder}
+                  disabled={isOffline}
+                >
+                  <Text style={styles.changeOrderBtnText}>Request additional work</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.completeBtn} onPress={handleComplete}>
-                  <Text style={styles.completeBtnText}>✅  Mark as Complete</Text>
+                <TouchableOpacity
+                  style={[styles.completeBtn, isOffline && styles.actionDisabled]}
+                  onPress={handleComplete}
+                  disabled={isOffline}
+                >
+                  <Text style={styles.completeBtnText}>Mark work complete</Text>
                 </TouchableOpacity>
               </>
             )}
 
             {/* Share trip */}
-            {['accepted', 'in_progress'].includes(booking.status) && (
+            {canShareDetails && ['accepted', 'in_progress'].includes(booking.status) && (
               <TouchableOpacity style={styles.shareBtn} onPress={handleShareTrip}>
-                <Text style={styles.shareBtnText}>🔗  Share Trip</Text>
+                <Text style={styles.shareBtnText}>Share booking details</Text>
               </TouchableOpacity>
             )}
 
-            {/* SOS */}
-            {['accepted', 'in_progress'].includes(booking.status) && (
-              <SOSButton onSOS={handleSOS} />
+            {/* Direct emergency-call fallback; no dispatch claim. */}
+            {canCallEmergency && ['accepted', 'in_progress'].includes(booking.status) && (
+              <EmergencyHelpButton onPress={handleEmergencyHelp} />
             )}
 
             {booking.status === 'completed' && (
@@ -429,13 +456,113 @@ export default function ActiveJobScreen({ route, navigation }) {
           </View>
         </ScrollView>
       </View>
+
+      <Modal
+        visible={startPinModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setStartPinModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Start with the customer's PIN</Text>
+            <Text style={styles.modalText}>
+              Both parties have confirmed scope. Ask the customer for the 6-digit code before work begins.
+            </Text>
+            <TextInput
+              style={styles.pinInput}
+              value={startPin}
+              onChangeText={(value) => setStartPin(value.replace(/\D/g, '').slice(0, 6))}
+              keyboardType="number-pad"
+              maxLength={6}
+              placeholder="000000"
+              placeholderTextColor="#8A928E"
+              autoFocus
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={styles.modalCancel} onPress={() => setStartPinModal(false)}>
+                <Text style={styles.modalCancelText}>Not yet</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalSubmit, (!/^\d{6}$/.test(startPin) || starting) && styles.actionDisabled]}
+                onPress={handleStart}
+                disabled={!/^\d{6}$/.test(startPin) || starting}
+              >
+                {starting
+                  ? <ActivityIndicator color="#FFFFFF" />
+                  : <Text style={styles.modalSubmitText}>Start job</Text>
+                }
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={changeOrderModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setChangeOrderModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Request additional work</Text>
+            <Text style={styles.modalText}>
+              Describe only work outside the agreed scope. The customer must approve it before you continue.
+            </Text>
+            <TextInput
+              style={styles.descriptionInput}
+              value={changeOrderText}
+              onChangeText={setChangeOrderText}
+              placeholder="Describe the additional work"
+              placeholderTextColor="#8A928E"
+              multiline
+              autoFocus
+            />
+            <TextInput
+              style={styles.hoursInput}
+              value={changeOrderHours}
+              onChangeText={setChangeOrderHours}
+              placeholder="Extra hours (optional)"
+              placeholderTextColor="#8A928E"
+              keyboardType="decimal-pad"
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={styles.modalCancel} onPress={() => setChangeOrderModal(false)}>
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalSubmit, (!changeOrderText.trim() || changeOrderSubmitting) && styles.actionDisabled]}
+                onPress={submitChangeOrder}
+                disabled={!changeOrderText.trim() || changeOrderSubmitting}
+              >
+                {changeOrderSubmitting
+                  ? <ActivityIndicator color="#FFFFFF" />
+                  : <Text style={styles.modalSubmitText}>Send request</Text>
+                }
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
+  container: { flex: 1, backgroundColor: '#F7F4EF' },
   loadingContainer: { flex: 1, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+  loadErrorContainer: {
+    flex: 1,
+    backgroundColor: '#F7F4EF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.xl,
+  },
+  loadErrorTitle: { color: '#0F1F1B', fontSize: typography.xl, fontWeight: '900', textAlign: 'center' },
+  loadErrorText: { color: '#64706B', fontSize: typography.sm, lineHeight: 20, textAlign: 'center', marginTop: spacing.sm },
+  retryBtn: { backgroundColor: '#12844E', borderRadius: borderRadius.md, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm + 4, marginTop: spacing.lg },
+  retryBtnText: { color: '#FFFFFF', fontSize: typography.sm, fontWeight: '800' },
   map: { flex: 1 },
   mapPlaceholder: { flex: 1, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
   mapPlaceholderText: { color: colors.textMuted, fontSize: typography.md },
@@ -446,7 +573,7 @@ const styles = StyleSheet.create({
   },
   meMarkerText: { color: colors.primary, fontSize: 10, fontWeight: '900' },
   card: {
-    backgroundColor: '#fff', borderTopLeftRadius: borderRadius.lg,
+    backgroundColor: '#FFFCF7', borderTopLeftRadius: borderRadius.lg,
     borderTopRightRadius: borderRadius.lg, paddingHorizontal: spacing.md,
     paddingTop: spacing.md, maxHeight: '60%', ...shadows.upward,
   },
@@ -472,6 +599,16 @@ const styles = StyleSheet.create({
   detailChipGreen: { backgroundColor: colors.successLight },
   detailChipIcon: { fontSize: 12 },
   detailChipText: { fontSize: typography.xs, color: colors.textSecondary, fontWeight: '500' },
+  offlineBanner: {
+    backgroundColor: '#FFF3D5',
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: '#E9CF8F',
+    padding: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  offlineTitle: { color: '#0F1F1B', fontSize: typography.sm, fontWeight: '800' },
+  offlineText: { color: '#64706B', fontSize: typography.xs, lineHeight: 18, marginTop: 2 },
   actions: { paddingBottom: spacing.lg, gap: spacing.sm },
   scopeBtn: {
     backgroundColor: colors.infoLight, borderRadius: borderRadius.md,
@@ -485,12 +622,12 @@ const styles = StyleSheet.create({
   },
   waitingText: { color: colors.accentDark, fontSize: typography.sm, fontWeight: '600' },
   startBtn: {
-    backgroundColor: colors.info, borderRadius: borderRadius.lg,
+    backgroundColor: '#12844E', borderRadius: borderRadius.lg,
     paddingVertical: spacing.md, alignItems: 'center', ...shadows.card,
   },
   startBtnText: { color: '#fff', fontWeight: '800', fontSize: typography.lg },
   completeBtn: {
-    backgroundColor: colors.success, borderRadius: borderRadius.lg,
+    backgroundColor: '#12844E', borderRadius: borderRadius.lg,
     paddingVertical: spacing.md + 4, alignItems: 'center', ...shadows.heavy,
   },
   completeBtnText: { color: '#fff', fontWeight: '800', fontSize: typography.xl },
@@ -513,4 +650,63 @@ const styles = StyleSheet.create({
   },
   completedIcon: { fontSize: 24 },
   completedText: { color: colors.successDark, fontWeight: '700', fontSize: typography.md },
+  actionDisabled: { opacity: 0.45 },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15,31,27,0.58)',
+    justifyContent: 'center',
+    padding: spacing.lg,
+  },
+  modalCard: {
+    backgroundColor: '#FFFCF7',
+    borderRadius: borderRadius.lg,
+    padding: spacing.lg,
+    ...shadows.heavy,
+  },
+  modalTitle: { color: '#0F1F1B', fontSize: typography.lg, fontWeight: '900' },
+  modalText: { color: '#64706B', fontSize: typography.sm, lineHeight: 20, marginTop: spacing.xs },
+  pinInput: {
+    backgroundColor: '#F7F4EF',
+    color: '#0F1F1B',
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: '#DDD8CF',
+    padding: spacing.md,
+    marginTop: spacing.md,
+    fontSize: 30,
+    fontWeight: '900',
+    letterSpacing: 8,
+    textAlign: 'center',
+  },
+  descriptionInput: {
+    minHeight: 110,
+    backgroundColor: '#F7F4EF',
+    color: '#0F1F1B',
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: '#DDD8CF',
+    padding: spacing.md,
+    marginTop: spacing.md,
+    textAlignVertical: 'top',
+  },
+  hoursInput: {
+    backgroundColor: '#F7F4EF',
+    color: '#0F1F1B',
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: '#DDD8CF',
+    padding: spacing.md,
+    marginTop: spacing.sm,
+  },
+  modalActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
+  modalCancel: { flex: 1, paddingVertical: spacing.sm + 4, alignItems: 'center' },
+  modalCancelText: { color: '#64706B', fontSize: typography.sm, fontWeight: '700' },
+  modalSubmit: {
+    flex: 1,
+    backgroundColor: '#12844E',
+    borderRadius: borderRadius.md,
+    paddingVertical: spacing.sm + 4,
+    alignItems: 'center',
+  },
+  modalSubmitText: { color: '#FFFFFF', fontSize: typography.sm, fontWeight: '800' },
 });

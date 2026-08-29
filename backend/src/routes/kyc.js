@@ -7,9 +7,9 @@
  *   2. If structural passes AND verifynow is configured, hit VerifyNow's
  *      said_verification endpoint (1 credit, R2.99). On success, mark
  *      provider=verifynow and store the HANIS-returned name/surname.
- *   3. If verifynow is configured but the call FAILS (network / 5xx / quota),
- *      fall back to structural-only verification with provider=poc_structural
- *      and log the failure. The user is not penalised for a vendor outage.
+ *   3. Structural validity is never identity assurance. If VerifyNow is not
+ *      configured or its call fails, retain a truthful pending state without
+ *      exposing a production "verified" claim.
  *
  * Records carry the `provider` column so we can later batch-reverify any
  * `poc_structural` rows once we want a stricter posture.
@@ -23,10 +23,24 @@ const { authMiddleware } = require('../middleware/auth');
 const { blindIndex, idLast4, normalizeSouthAfricanId, serializeKycStatus } = require('../lib/privacy');
 const { recordPrivacyAudit } = require('../lib/privacyAudit');
 const verifynow = require('../services/verifynow');
+const { FEATURES } = require('../config/capabilities');
 
 const router = express.Router();
 
 const MIN_AGE = 18;
+
+function requireIdentityCapability(req, res, next) {
+  if (!FEATURES.identity_verification.available) {
+    return res.status(503).json({
+      verified: false,
+      error: 'capability_unavailable',
+      capability: 'identity_verification',
+      reason_code: FEATURES.identity_verification.reason_code,
+      detail: 'Identity verification is not enabled. No identity decision was made.',
+    });
+  }
+  return next();
+}
 
 function yearsBetween(from, to) {
   return (to - from) / (1000 * 60 * 60 * 24 * 365.25);
@@ -102,12 +116,17 @@ async function setUserKycStatus(userId, status) {
       `UPDATE users SET kyc_status = 'failed' WHERE id = $1 AND kyc_status != 'verified'`,
       [userId]
     );
+  } else if (status === 'pending') {
+    await db.query(
+      `UPDATE users SET kyc_status = 'pending' WHERE id = $1 AND kyc_status != 'verified'`,
+      [userId]
+    );
   }
 }
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
 
-router.post('/verify-id', authMiddleware, async (req, res, next) => {
+router.post('/verify-id', authMiddleware, requireIdentityCapability, async (req, res, next) => {
   try {
     const { idNumber, firstName, lastName } = req.body || {};
     if (!idNumber || !firstName || !lastName) {
@@ -138,11 +157,12 @@ router.post('/verify-id', authMiddleware, async (req, res, next) => {
       return res.status(400).json({ error: v.error });
     }
 
-    // 2. Real DHA check via VerifyNow if configured. Failures fall back to
-    //    structural-only so a vendor outage doesn't block onboarding.
+    // 2. Real DHA check via VerifyNow if configured. Structural validity on
+    //    its own remains pending and never receives a Verified badge.
     let provider = 'poc_structural';
     let verifiedName = submittedFullName;
     let vendorPayload = null;
+    let providerUnavailable = !verifynow.isConfigured();
 
     if (verifynow.isConfigured()) {
       try {
@@ -178,9 +198,44 @@ router.post('/verify-id', authMiddleware, async (req, res, next) => {
           });
         }
       } catch (err) {
-        console.warn('[kyc] VerifyNow call failed, falling back to structural-only:', err.message);
+        console.warn('[kyc] VerifyNow call failed; identity remains pending:', err.message);
         provider = 'poc_structural';
+        providerUnavailable = true;
       }
+    }
+
+    if (provider !== 'verifynow' || providerUnavailable) {
+      await upsertKyc({
+        userId: req.user.id,
+        idNumber: normalizedId,
+        status: 'pending',
+        fullName: submittedFullName,
+        provider: 'poc_structural',
+      });
+      await setUserKycStatus(req.user.id, 'pending');
+      recordPrivacyAudit(req, {
+        action: 'privacy.kyc.verify_attempt',
+        resource: { type: 'user', id: req.user.id },
+        statusCode: providerUnavailable && verifynow.isConfigured() ? 503 : 202,
+        metadata: {
+          status: 'pending',
+          provider: 'poc_structural',
+          reason: 'authoritative_provider_unavailable',
+          id_last4: idLast4(normalizedId),
+        },
+        errorCode: 'identity_verification_unavailable',
+      });
+      const responseStatus = providerUnavailable && verifynow.isConfigured() ? 503 : 202;
+      return res.status(responseStatus).json({
+        verified: false,
+        status: 'pending_review',
+        assurance: 'structural_only',
+        provider: 'poc_structural',
+        id_last4: idLast4(normalizedId),
+        retryable: responseStatus === 503,
+        error: 'identity_verification_unavailable',
+        detail: 'The ID format passed validation, but identity verification is not available.',
+      });
     }
 
     await upsertKyc({
@@ -215,15 +270,13 @@ router.post('/verify-id', authMiddleware, async (req, res, next) => {
 });
 
 router.post('/selfie-enroll', authMiddleware, async (req, res, next) => {
-  try {
-    const { selfieBase64 } = req.body || {};
-    if (!selfieBase64) {
-      return res.status(400).json({ error: 'selfieBase64 is required' });
-    }
-    return res.json({ enrolled: true, poc_mode: true, manual_review: true });
-  } catch (err) {
-    next(err);
-  }
+  return res.status(503).json({
+    enrolled: false,
+    error: 'capability_unavailable',
+    capability: 'selfie_identity_verification',
+    reason_code: FEATURES.selfie_identity_verification.reason_code,
+    detail: 'Selfie identity matching is not available. No biometric verification was performed.',
+  });
 });
 
 router.get('/status', authMiddleware, async (req, res, next) => {

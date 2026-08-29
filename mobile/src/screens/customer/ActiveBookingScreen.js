@@ -12,6 +12,11 @@ import BookingStatusBadge from '../../components/BookingStatusBadge';
 import { formatZAR, formatDateTime } from '../../utils/formatters';
 import { colors, typography, spacing, borderRadius, shadows, darkMapStyle } from '../../theme';
 import api from '../../services/api';
+import {
+  capabilityEnabled,
+  failClosedCapabilities,
+  getEffectiveCapabilities,
+} from '../../services/capabilityService';
 
 const STATUS_STEPS = [
   { key: 'pending', label: 'Requested', icon: '📋' },
@@ -102,41 +107,11 @@ const pulseStyles = StyleSheet.create({
   },
 });
 
-// SOS hold-button (3-second press)
-function SOSButton({ onSOS }) {
-  const progress = useRef(new Animated.Value(0)).current;
-  const anim = useRef(null);
-  const fired = useRef(false);
-
-  function onPressIn() {
-    fired.current = false;
-    anim.current = Animated.timing(progress, {
-      toValue: 1, duration: 3000, useNativeDriver: false,
-    });
-    anim.current.start(({ finished }) => {
-      if (finished && !fired.current) {
-        fired.current = true;
-        onSOS();
-        progress.setValue(0);
-      }
-    });
-  }
-  function onPressOut() {
-    anim.current?.stop();
-    progress.setValue(0);
-  }
-
-  const width = progress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
-
+function EmergencyHelpButton({ onPress }) {
   return (
-    <TouchableOpacity
-      style={sosStyles.btn}
-      onPressIn={onPressIn}
-      onPressOut={onPressOut}
-      activeOpacity={0.9}
-    >
-      <Animated.View style={[sosStyles.fill, { width }]} />
-      <Text style={sosStyles.text}>🆘 SOS  (hold 3s)</Text>
+    <TouchableOpacity style={sosStyles.btn} onPress={onPress}>
+      <Text style={sosStyles.text}>Emergency help</Text>
+      <Text style={sosStyles.subtext}>Direct call only — TOGT does not dispatch emergencies</Text>
     </TouchableOpacity>
   );
 }
@@ -146,40 +121,60 @@ const sosStyles = StyleSheet.create({
     borderRadius: borderRadius.sm,
     paddingVertical: spacing.sm,
     alignItems: 'center',
-    overflow: 'hidden',
-    position: 'relative',
     borderWidth: 1.5,
     borderColor: colors.danger,
   },
-  fill: {
-    position: 'absolute', top: 0, left: 0, bottom: 0,
-    backgroundColor: colors.danger, opacity: 0.3,
-  },
   text: { color: colors.danger, fontWeight: '800', fontSize: typography.sm },
+  subtext: { color: colors.dangerDark, fontSize: typography.xs, marginTop: 2, textAlign: 'center' },
 });
 
 export default function ActiveBookingScreen({ route, navigation }) {
   const { bookingId } = route.params;
   const dispatch = useDispatch();
-  const { accessToken, user } = useSelector((s) => s.auth);
+  const { accessToken } = useSelector((s) => s.auth);
   const labourerLocation = useSelector((s) => s.booking.labourerLocation);
 
   const [booking, setBooking] = useState(null);
   const [loading, setLoading] = useState(true);
   const [workerEta, setWorkerEta] = useState(null);
   const [workerArrived, setWorkerArrived] = useState(false);
+  const [locationUpdatedAt, setLocationUpdatedAt] = useState(null);
+  const [capabilities, setCapabilities] = useState(
+    failClosedCapabilities('capability_check_pending')
+  );
 
   useEffect(() => {
     loadBooking();
+    const interval = setInterval(loadBooking, 15000);
+    return () => clearInterval(interval);
+  }, [bookingId]);
+
+  useEffect(() => {
+    let active = true;
+    getEffectiveCapabilities().then((result) => {
+      if (active) setCapabilities(result);
+    });
+    return () => { active = false; };
+  }, []);
+
+  const canReceiveForegroundLocation = capabilityEnabled(
+    capabilities,
+    'foreground_location_updates'
+  );
+
+  useEffect(() => {
+    if (!canReceiveForegroundLocation || !accessToken) return undefined;
     socketService.connect(accessToken);
     socketService.joinBooking(bookingId);
 
     const handleWorkerLocation = (data) => {
       dispatch(updateLabourerLocation({ lat: data.lat, lng: data.lng }));
       setWorkerEta(data.etaMinutes);
+      setLocationUpdatedAt(new Date());
     };
     const handleLegacyLocation = (data) => {
       dispatch(updateLabourerLocation({ lat: data.lat, lng: data.lng }));
+      setLocationUpdatedAt(new Date());
     };
     const handleWorkerArrived = () => {
       setWorkerArrived(true);
@@ -195,14 +190,13 @@ export default function ActiveBookingScreen({ route, navigation }) {
     // Worker arrived
     socketService.on('worker_arrived', handleWorkerArrived);
 
-    const interval = setInterval(loadBooking, 15000);
     return () => {
       socketService.offLocationUpdate(handleLegacyLocation);
       socketService.off('worker_location', handleWorkerLocation);
       socketService.off('worker_arrived', handleWorkerArrived);
-      clearInterval(interval);
+      socketService.disconnect();
     };
-  }, [bookingId]);
+  }, [bookingId, accessToken, canReceiveForegroundLocation, dispatch]);
 
   async function loadBooking() {
     try {
@@ -229,6 +223,7 @@ export default function ActiveBookingScreen({ route, navigation }) {
   }
 
   async function handleShareTrip() {
+    if (!capabilityEnabled(capabilities, 'booking_details_share')) return;
     try {
       const res = await api.post(`/api/bookings/${bookingId}/share-trip`);
       await Share.share({ message: res.data.shareText });
@@ -237,21 +232,16 @@ export default function ActiveBookingScreen({ route, navigation }) {
     }
   }
 
-  async function handleSOS() {
+  function handleEmergencyHelp() {
     Alert.alert(
-      '🆘 SOS Triggered',
-      'Your location is being shared. Do you need emergency services?',
+      'Emergency help',
+      'TOGT does not monitor or dispatch emergencies in this build. Call emergency services directly if you are in danger.',
       [
         { text: 'Cancel', style: 'cancel' },
-        {
-          text: '📞 Call 10111',
-          onPress: () => Linking.openURL('tel:10111'),
-        },
+        { text: 'Call 112', onPress: () => Linking.openURL('tel:112') },
+        { text: 'Call SAPS 10111', onPress: () => Linking.openURL('tel:10111') },
       ]
     );
-    try {
-      await api.post('/api/safety/sos', { booking_id: bookingId });
-    } catch {}
   }
 
   function callLabourer() {
@@ -270,12 +260,15 @@ export default function ActiveBookingScreen({ route, navigation }) {
     );
   }
 
-  const mapCenter = labourerLocation || { lat: booking.location_lat, lng: booking.location_lng };
+  const visibleLabourerLocation = canReceiveForegroundLocation ? labourerLocation : null;
+  const mapCenter = visibleLabourerLocation || { lat: booking.location_lat, lng: booking.location_lng };
   const isCompleted = booking.status === 'completed';
   const isCancellable = ['pending', 'accepted'].includes(booking.status);
   const isPaid = booking.payment_status === 'paid';
-  const isEnRoute = booking.status === 'accepted' && !!labourerLocation;
+  const isEnRoute = booking.status === 'accepted' && !!visibleLabourerLocation;
   const locationText = booking.address || formatApproxArea(booking);
+  const canShareDetails = capabilityEnabled(capabilities, 'booking_details_share');
+  const canCallEmergency = capabilityEnabled(capabilities, 'emergency_call');
 
   return (
     <View style={styles.container}>
@@ -300,9 +293,9 @@ export default function ActiveBookingScreen({ route, navigation }) {
               <View><Text style={{ fontSize: 24 }}>📍</Text></View>
             </Marker>
           )}
-          {labourerLocation && (
+          {visibleLabourerLocation && (
             <Marker
-              coordinate={{ latitude: labourerLocation.lat, longitude: labourerLocation.lng }}
+              coordinate={{ latitude: visibleLabourerLocation.lat, longitude: visibleLabourerLocation.lng }}
               title={booking.labourer_name}
             >
               {workerArrived ? (
@@ -333,8 +326,12 @@ export default function ActiveBookingScreen({ route, navigation }) {
           ) : workerEta !== null ? (
             <Text style={styles.etaText}>🚶 Worker is ~{workerEta} min away</Text>
           ) : (
-            <Text style={styles.etaText}>🔄 Tracking worker…</Text>
+            <Text style={styles.etaText}>Waiting for an in-app location update…</Text>
           )}
+          <Text style={styles.etaSubtext}>
+            Updates only while the worker has TOGT open
+            {locationUpdatedAt ? ` • ${locationUpdatedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}
+          </Text>
         </View>
       )}
 
@@ -366,6 +363,14 @@ export default function ActiveBookingScreen({ route, navigation }) {
           </View>
 
           <StatusTimeline currentStatus={booking.status} />
+
+          {booking.status === 'accepted' && booking.start_pin ? (
+            <View style={styles.startPinCard}>
+              <Text style={styles.startPinLabel}>JOB START PIN</Text>
+              <Text style={styles.startPin}>{booking.start_pin}</Text>
+              <Text style={styles.startPinHint}>Share this only after both of you confirm the scope.</Text>
+            </View>
+          ) : null}
 
           {/* Details */}
           <View style={styles.detailsRow}>
@@ -404,9 +409,9 @@ export default function ActiveBookingScreen({ route, navigation }) {
             )}
 
             {/* Share trip */}
-            {['accepted', 'in_progress'].includes(booking.status) && (
+            {canShareDetails && ['accepted', 'in_progress'].includes(booking.status) && (
               <TouchableOpacity style={styles.shareBtn} onPress={handleShareTrip}>
-                <Text style={styles.shareBtnText}>🔗  Share Trip</Text>
+                <Text style={styles.shareBtnText}>Share booking details</Text>
               </TouchableOpacity>
             )}
 
@@ -426,9 +431,8 @@ export default function ActiveBookingScreen({ route, navigation }) {
               </TouchableOpacity>
             )}
 
-            {/* SOS */}
-            {['accepted', 'in_progress'].includes(booking.status) && (
-              <SOSButton onSOS={handleSOS} />
+            {canCallEmergency && ['accepted', 'in_progress'].includes(booking.status) && (
+              <EmergencyHelpButton onPress={handleEmergencyHelp} />
             )}
           </View>
         </ScrollView>
@@ -457,6 +461,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   etaText: { color: colors.accent, fontSize: typography.sm, fontWeight: '700' },
+  etaSubtext: { color: colors.textInverse, opacity: 0.78, fontSize: typography.xs, marginTop: 2 },
   card: {
     backgroundColor: '#fff',
     borderTopLeftRadius: borderRadius.lg,
@@ -495,6 +500,13 @@ const styles = StyleSheet.create({
   addressRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.xs, marginBottom: spacing.md },
   addressIcon: { fontSize: 14 },
   addressText: { flex: 1, fontSize: typography.sm, color: colors.textMuted, lineHeight: 20 },
+  startPinCard: {
+    backgroundColor: '#F7F4EF', borderRadius: borderRadius.md, padding: spacing.md,
+    borderWidth: 1, borderColor: '#D8D2C7', alignItems: 'center', marginBottom: spacing.md,
+  },
+  startPinLabel: { color: '#12844E', fontSize: typography.xs, fontWeight: '800', letterSpacing: 1.3 },
+  startPin: { color: '#0F1F1B', fontSize: 30, fontWeight: '900', letterSpacing: 8, marginVertical: 5 },
+  startPinHint: { color: colors.textMuted, fontSize: typography.xs, textAlign: 'center' },
   actions: { paddingBottom: spacing.lg, gap: spacing.sm },
   scopeBtn: {
     backgroundColor: colors.infoLight, borderRadius: borderRadius.md,

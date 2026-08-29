@@ -7,6 +7,7 @@ const { notifyUser } = require('../services/notifications');
 const { emitEvent } = require('../services/events');
 const { serializeBookingForUser } = require('../lib/privacy');
 const { recordPrivacyAudit } = require('../lib/privacyAudit');
+const { verifyStartPin, withStartContext } = require('../lib/startPin');
 
 const STATUS_TO_EVENT = {
   accepted: 'booking.accepted',
@@ -84,7 +85,7 @@ router.post('/', authMiddleware, idempotencyMiddleware(), async (req, res, next)
       { bookingId: booking.id, screen: 'JobRequests' }
     );
 
-    res.status(201).json({ booking: serializeBookingForUser(booking, req.user) });
+    res.status(201).json({ booking: withStartContext(serializeBookingForUser(booking, req.user), booking, req.user) });
   } catch (err) {
     next(err);
   }
@@ -107,7 +108,7 @@ router.get('/', authMiddleware, async (req, res, next) => {
        ORDER BY b.created_at DESC`,
       [req.user.id]
     );
-    const bookings = result.rows.map((row) => serializeBookingForUser(row, req.user));
+    const bookings = result.rows.map((row) => withStartContext(serializeBookingForUser(row, req.user), row, req.user));
     for (const b of bookings) {
       if (b.customer_phone || b.labourer_phone) {
         recordPrivacyAudit(req, {
@@ -143,7 +144,7 @@ router.get('/my', authMiddleware, async (req, res, next) => {
       [req.user.id]
     );
 
-    const bookings = result.rows.map((row) => serializeBookingForUser(row, req.user));
+    const bookings = result.rows.map((row) => withStartContext(serializeBookingForUser(row, req.user), row, req.user));
     for (const b of bookings) {
       if (b.customer_phone || b.labourer_phone) {
         recordPrivacyAudit(req, {
@@ -187,7 +188,7 @@ router.get('/:id', authMiddleware, async (req, res, next) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    const safeBooking = serializeBookingForUser(booking, req.user);
+    const safeBooking = withStartContext(serializeBookingForUser(booking, req.user), booking, req.user);
     if (safeBooking.customer_phone || safeBooking.labourer_phone) {
       recordPrivacyAudit(req, {
         action: 'privacy.contact.phone_revealed',
@@ -238,6 +239,28 @@ async function transition(req, res, next, allowedRoles, fromStatuses, toStatus) 
       return res.status(400).json({ error: `Cannot transition from '${booking.status}' to '${toStatus}'` });
     }
 
+    if (toStatus === 'in_progress') {
+      if (!booking.scope_confirmed_by_customer || !booking.scope_confirmed_by_labourer) {
+        return res.status(409).json({
+          error: 'scope_confirmation_required',
+          detail: 'Both customer and worker must confirm the agreed scope before the job can start.',
+        });
+      }
+      const suppliedPin = req.body?.start_pin;
+      if (typeof suppliedPin !== 'string' || !/^\d{6}$/.test(suppliedPin)) {
+        return res.status(400).json({
+          error: 'start_pin_required',
+          detail: 'Enter the 6-digit start PIN shown to the customer.',
+        });
+      }
+      if (!verifyStartPin(booking.id, suppliedPin)) {
+        return res.status(403).json({
+          error: 'start_pin_invalid',
+          detail: 'That start PIN is not correct. Ask the customer to check the code.',
+        });
+      }
+    }
+
     // Set completed_at when marking completed, cancelled_by when cancelling
     let updateQuery = 'UPDATE bookings SET status = $1';
     const updateParams = [toStatus, req.params.id];
@@ -285,7 +308,7 @@ async function transition(req, res, next, allowedRoles, fromStatuses, toStatus) 
         { bookingId: booking.id, screen: 'Dashboard' });
     } else if (toStatus === 'in_progress') {
       notifyUser(booking.customer_id, '🚀 Job Started',
-        `${name} has started the job. Track them live.`,
+        `${name} has started the job. Follow progress in TOGT.`,
         { bookingId: booking.id, screen: 'ActiveBooking' });
     } else if (toStatus === 'completed') {
       notifyUser(booking.customer_id, '🎉 Job Complete!',
@@ -293,7 +316,13 @@ async function transition(req, res, next, allowedRoles, fromStatuses, toStatus) 
         { bookingId: booking.id, screen: 'Rate' });
     }
 
-    res.json({ booking: serializeBookingForUser(updated.rows[0], req.user) });
+    res.json({
+      booking: withStartContext(
+        serializeBookingForUser(updated.rows[0], req.user),
+        updated.rows[0],
+        req.user
+      ),
+    });
   } catch (err) {
     next(err);
   }

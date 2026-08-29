@@ -63,9 +63,22 @@ describe('booking lifecycle emits webhook events', () => {
       .set(authHeader(labourer.accessToken));
     expect(accept.status).toBe(200);
 
+    const customerScope = await request(app)
+      .patch(`/api/bookings/${bookingId}/confirm-scope`)
+      .set(authHeader(customer.accessToken));
+    expect(customerScope.status).toBe(200);
+    const workerScope = await request(app)
+      .patch(`/api/bookings/${bookingId}/confirm-scope`)
+      .set(authHeader(labourer.accessToken));
+    expect(workerScope.status).toBe(200);
+    const customerView = await request(app)
+      .get(`/api/bookings/${bookingId}`)
+      .set(authHeader(customer.accessToken));
+
     const start = await request(app)
       .put(`/api/bookings/${bookingId}/start`)
-      .set(authHeader(labourer.accessToken));
+      .set(authHeader(labourer.accessToken))
+      .send({ start_pin: customerView.body.booking.start_pin });
     expect(start.status).toBe(200);
 
     const complete = await request(app)

@@ -3,6 +3,7 @@ import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import api from './api';
+import { capabilityEnabled, getEffectiveCapabilities } from './capabilityService';
 
 // Configure how notifications appear when app is foregrounded
 Notifications.setNotificationHandler({
@@ -19,6 +20,12 @@ Notifications.setNotificationHandler({
  * Call this once after the user logs in.
  */
 export async function registerForPushNotifications() {
+  const capabilities = await getEffectiveCapabilities();
+  if (!capabilityEnabled(capabilities, 'remote_push')) {
+    console.info('[notifications] Remote push is unavailable in this build');
+    return null;
+  }
+
   if (!Device.isDevice) {
     console.log('[notifications] Push not available on simulator');
     return null;

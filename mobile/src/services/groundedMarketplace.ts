@@ -2,6 +2,8 @@ import type { AxiosError, AxiosRequestConfig } from 'axios';
 import api from './api';
 import { adaptCatalogueServiceV1 } from '../data/grounded';
 import type { GroundedCatalogueService } from '../data/grounded';
+import { isValidCoordinates } from '../features/customer/intake/model';
+import { getCapabilityStateAtAction } from './capabilityService';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -40,6 +42,7 @@ export type QuoteRequestCreateInput = Readonly<{
     address: string;
     latitude: number;
     longitude: number;
+    coordinateSource: 'map_pin';
     accessInstructions?: string;
   }>;
   schedule: Readonly<{
@@ -246,6 +249,29 @@ export async function createGroundedQuoteRequest(
   key: string,
 ): Promise<unknown> {
   resourceId(input.serviceId, 'serviceId');
+  if (input.privateLocation.coordinateSource !== 'map_pin') {
+    throw new TypeError('Grounded quote requests require map_pin coordinate provenance');
+  }
+  if (!isValidCoordinates({
+    latitude: input.privateLocation.latitude,
+    longitude: input.privateLocation.longitude,
+  })) {
+    throw new TypeError('Grounded quote request coordinates are invalid');
+  }
+  const provenanceCapability = await getCapabilityStateAtAction(
+    'address_provenance_recording',
+    { forceRefresh: true },
+  );
+  if (provenanceCapability.status !== 'available') {
+    throw new GroundedMarketplaceError(Object.freeze({
+      status: null,
+      type: 'address_provenance_contract_unavailable',
+      title: 'Service update required',
+      detail: provenanceCapability.explanation,
+      correlationId: null,
+      retryable: true,
+    }));
+  }
   return request({
     method: 'POST',
     url: '/api/quote-requests',

@@ -5,6 +5,8 @@ const assert = require('node:assert/strict');
 const {
   BUILD_ALLOW_LIST,
   buildAllowListForPackagedFlags,
+  capabilityExpiryDelayMs,
+  evaluateCapabilityAtAction,
   evaluateCapabilities,
 } = require('../../src/config/capabilityPolicy.cjs');
 
@@ -19,6 +21,10 @@ function snapshot(overrides = {}) {
     features: {
       peach_checkout: { available: true },
       foreground_location_updates: { available: true },
+      maps_display: { available: true },
+      address_search: { available: false, reason_code: 'address_search_release_disabled' },
+      address_resolution: { available: false, reason_code: 'address_provider_not_configured' },
+      address_provenance_recording: { available: true },
       ai_assisted_intake: { available: true },
       explainable_recommendations: { available: true },
       android_live_updates: { available: true },
@@ -106,4 +112,95 @@ test('expired, malformed and incompatible capability data fails closed', () => {
   });
   assert.equal(incompatible.valid, false);
   assert.equal(incompatible.update_required, true);
+});
+
+test('location capabilities require both the packaged path and fresh server approval', () => {
+  const packaged = {
+    mapsDisplay: true,
+    addressSearch: false,
+    addressResolution: false,
+    addressProvenanceRecording: true,
+  };
+  const packageOff = evaluateCapabilities(snapshot(), {
+    nowMs: NOW,
+    appVersion: '1.0.0',
+    allowList: buildAllowListForPackagedFlags({ ...packaged, mapsDisplay: false }),
+  });
+  assert.equal(packageOff.features.maps_display.available, false);
+  assert.equal(packageOff.features.maps_display.reason_code, 'disabled_in_this_build');
+
+  const serverOff = evaluateCapabilities(snapshot({
+    features: {
+      ...snapshot().features,
+      maps_display: { available: false, reason_code: 'maps_display_release_disabled' },
+    },
+  }), {
+    nowMs: NOW,
+    appVersion: '1.0.0',
+    allowList: buildAllowListForPackagedFlags(packaged),
+  });
+  assert.equal(serverOff.features.maps_display.available, false);
+  assert.equal(serverOff.features.maps_display.reason_code, 'maps_display_release_disabled');
+
+  const enabled = evaluateCapabilities(snapshot(), {
+    nowMs: NOW,
+    appVersion: '1.0.0',
+    allowList: buildAllowListForPackagedFlags(packaged),
+  });
+  assert.equal(enabled.features.maps_display.available, true);
+  assert.equal(enabled.features.address_provenance_recording.available, true);
+  assert.equal(enabled.features.address_search.available, false);
+  assert.equal(enabled.features.address_search.reason_code, 'disabled_in_this_build');
+  assert.equal(enabled.features.address_resolution.available, false);
+  assert.equal(enabled.features.address_resolution.reason_code, 'disabled_in_this_build');
+
+  const { address_provenance_recording: _missing, ...legacyFeatures } = snapshot().features;
+  const legacyBackend = evaluateCapabilities(snapshot({ features: legacyFeatures }), {
+    nowMs: NOW,
+    appVersion: '1.0.0',
+    allowList: buildAllowListForPackagedFlags(packaged),
+  });
+  assert.equal(legacyBackend.features.address_provenance_recording.available, false);
+  assert.equal(
+    legacyBackend.features.address_provenance_recording.reason_code,
+    'address_provenance_contract_unavailable',
+  );
+});
+
+test('expired capability data disables provenance recording even when both static gates are on', () => {
+  const expired = evaluateCapabilities(snapshot({ generated_at: '2026-08-29T09:00:00.000Z' }), {
+    nowMs: NOW,
+    appVersion: '1.0.0',
+    allowList: buildAllowListForPackagedFlags({ addressProvenanceRecording: true }),
+  });
+  assert.equal(expired.valid, false);
+  assert.equal(expired.features.address_provenance_recording.available, false);
+  assert.equal(expired.features.address_provenance_recording.reason_code, 'capability_data_expired');
+});
+
+test('action-time evidence expires even when an earlier effective snapshot was available', () => {
+  const effective = evaluateCapabilities(snapshot(), {
+    nowMs: NOW,
+    appVersion: '1.0.0',
+    allowList: buildAllowListForPackagedFlags({
+      mapsDisplay: true,
+      addressProvenanceRecording: true,
+    }),
+  });
+  assert.deepEqual(evaluateCapabilityAtAction(
+    effective,
+    'maps_display',
+    Date.parse(effective.expires_at) - 1,
+  ), { available: true, reason_code: 'capability_available' });
+  assert.deepEqual(evaluateCapabilityAtAction(
+    effective,
+    'address_provenance_recording',
+    Date.parse(effective.expires_at),
+  ), { available: false, reason_code: 'capability_data_expired' });
+  assert.deepEqual(evaluateCapabilityAtAction(effective, 'not_a_feature', NOW), {
+    available: false,
+    reason_code: 'unsupported_capability_name',
+  });
+  assert.equal(capabilityExpiryDelayMs(effective, Date.parse(effective.expires_at) - 25), 25);
+  assert.equal(capabilityExpiryDelayMs(effective, Date.parse(effective.expires_at)), 0);
 });

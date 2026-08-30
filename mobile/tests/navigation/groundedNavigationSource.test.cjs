@@ -77,6 +77,9 @@ test('Grounded role shells use the approved tab information architecture once', 
   assert.match(customer, /name="LabourerProfile" component=\{GroundedWorkerProfileRoute\}/);
   assert.match(customer, /name="Chat" component=\{GroundedProjectChatRoute\}/);
   assert.match(customer, /name="QuoteRequests" component=\{CustomerOpenQuoteRequestsRoute\}/);
+  assert.match(customer, /name="ExactPinPicker"[\s\S]*component=\{CustomerExactPinPickerRoute\}/);
+  assert.doesNotMatch(customer, /name=["'](?:RequestMatch|BookingForm)["']/);
+  assert.doesNotMatch(customer, /RequestMatchScreen|BookingFormScreen/);
   assert.match(worker, /name="Chat" component=\{GroundedProjectChatRoute\}/);
   assert.doesNotMatch(customer, /import LabourerProfileScreen/);
   assert.doesNotMatch(customer + worker, /import ChatScreen/);

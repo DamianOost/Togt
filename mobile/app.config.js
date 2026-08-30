@@ -60,6 +60,7 @@ module.exports = ({ config }) => {
         schemaVersion: 1,
         flags: runtime.featureFlags,
       },
+      locationCapabilities: runtime.locationCapabilities,
     },
   };
 };

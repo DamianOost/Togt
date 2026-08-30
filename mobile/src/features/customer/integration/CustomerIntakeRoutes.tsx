@@ -1,7 +1,7 @@
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useFocusEffect } from '@react-navigation/native';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, StyleSheet, Text, View } from 'react-native';
 import { packagedFeatureEnabled } from '../../../app/runtimeFeatureFlags';
 import { useTogtTheme } from '../../../design';
 import {
@@ -24,6 +24,12 @@ import {
 import { loadGroundedFavourites } from '../../../services/groundedTrust';
 import { loadIntelligenceCapability } from '../../../services/groundedIntelligence';
 import {
+  capabilityStateAtAction,
+  getCapabilityStateAtAction,
+  getEffectiveCapabilities,
+} from '../../../services/capabilityService';
+import { locationService } from '../../../services/locationService';
+import {
   AppScaffold,
   Button,
   EmptyState,
@@ -37,17 +43,24 @@ import {
 import {
   AddressPinConfirmationScreen,
   CustomerHomeScreen,
+  ExactLocationMapPreview,
+  ExactPinPickerScreen,
   GuidedJobBriefScreen,
   ReviewEstimateScreen,
   ScheduleFulfilmentScreen,
+  addressDisplayLabel,
+  captureAddressPickerCommitGuard,
   createResolvedJobAddress,
   isAddressResolutionDispatchSafe,
+  isValidCoordinates,
 } from '../intake';
 import type {
   AddressDetails,
+  AddressPickerCommitGuard,
   BriefAnswerValue,
   BriefStep,
   CapabilityState,
+  ForegroundLocationResult,
   FulfilmentMode,
   JobAddress,
   ScheduleSelection,
@@ -105,16 +118,29 @@ const AVAILABLE_RELATIONSHIPS: CapabilityState = Object.freeze({
   reasonCode: 'relationship_evidence_verified',
   explanation: 'Recent Workers come from verified favourites and their completed source Projects.',
 });
-const UNAVAILABLE_PROVIDER: CapabilityState = Object.freeze({
-  status: 'unavailable',
-  reasonCode: 'provider_not_configured',
-  explanation: 'This provider is not configured in this build.',
+const UNVERIFIED_LOCATION_CAPABILITY: CapabilityState = Object.freeze({
+  status: 'unknown',
+  reasonCode: 'capability_data_unavailable',
+  explanation: 'Checking current map availability.',
 });
-const UNAVAILABLE_CURRENT_LOCATION: CapabilityState = Object.freeze({
-  status: 'unavailable',
-  reasonCode: 'reverse_geocoding_not_configured',
-  explanation: 'Current location stays off until device coordinates can be verified against a canonical displayed address.',
-});
+
+type LocationCapabilityBundle = Readonly<{
+  map: CapabilityState;
+  search: CapabilityState;
+  foregroundLocation: CapabilityState;
+  expiresAt: string | null;
+}>;
+
+async function loadLocationCapabilities(forceRefresh = true): Promise<LocationCapabilityBundle> {
+  const snapshot = await getEffectiveCapabilities({ forceRefresh });
+  const expiresAt = typeof snapshot?.expires_at === 'string' ? snapshot.expires_at : null;
+  return Object.freeze({
+    map: capabilityStateAtAction(snapshot, 'maps_display') as CapabilityState,
+    search: capabilityStateAtAction(snapshot, 'address_search') as CapabilityState,
+    foregroundLocation: capabilityStateAtAction(snapshot, 'foreground_location_updates') as CapabilityState,
+    expiresAt,
+  });
+}
 
 function addressLabel(address: JobAddress): string | null {
   const parts = [
@@ -522,22 +548,91 @@ export function CustomerJobBriefRoute({ navigation, route }: { navigation: any; 
 
 export function CustomerAddressRoute({ navigation }: { navigation: any }) {
   const { connectionState, draft, reviseDraft, saveDraft } = useCustomerExperience();
+  const refreshSequence = useRef(0);
+  const routeActive = useRef(true);
+  const [mapCapability, setMapCapability] = useState<CapabilityState>(UNVERIFIED_LOCATION_CAPABILITY);
+  const [searchCapability, setSearchCapability] = useState<CapabilityState>(UNVERIFIED_LOCATION_CAPABILITY);
+  const [capabilitiesExpireAt, setCapabilitiesExpireAt] = useState<string | null>(null);
+  const [pinActionPending, setPinActionPending] = useState(false);
+  const [actionProblem, setActionProblem] = useState<string | null>(null);
+
+  const refreshCapabilities = useCallback(async () => {
+    const sequence = ++refreshSequence.current;
+    const bundle = await loadLocationCapabilities(true);
+    if (sequence === refreshSequence.current) {
+      setMapCapability(bundle.map);
+      setSearchCapability(bundle.search);
+      setCapabilitiesExpireAt(bundle.expiresAt);
+    }
+    return bundle;
+  }, []);
+
+  useFocusEffect(useCallback(() => {
+    routeActive.current = true;
+    setPinActionPending(false);
+    setActionProblem(null);
+    void refreshCapabilities();
+    return () => {
+      routeActive.current = false;
+      refreshSequence.current += 1;
+    };
+  }, [refreshCapabilities]));
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void refreshCapabilities();
+    });
+    return () => subscription.remove();
+  }, [refreshCapabilities]);
+
+  useEffect(() => {
+    if (!capabilitiesExpireAt) return undefined;
+    const delay = Math.max(0, Date.parse(capabilitiesExpireAt) - Date.now());
+    const timer = setTimeout(() => { void refreshCapabilities(); }, Math.min(delay, 2_147_000_000));
+    return () => clearTimeout(timer);
+  }, [capabilitiesExpireAt, refreshCapabilities]);
+
+  const openPinPicker = async () => {
+    if (pinActionPending) return;
+    setPinActionPending(true);
+    setActionProblem(null);
+    const bundle = await refreshCapabilities();
+    if (!routeActive.current) return;
+    setPinActionPending(false);
+    if (bundle.map.status !== 'available') return;
+    const guard = captureAddressPickerCommitGuard(draft);
+    navigation.navigate('ExactPinPicker', {
+      guard,
+      initialMapCapability: bundle.map,
+      initialMapCapabilityExpiresAt: bundle.expiresAt,
+      currentLocationCapability: bundle.foregroundLocation,
+    });
+  };
+
+  const mapPreview = isAddressResolutionDispatchSafe(draft.address)
+    ? <ExactLocationMapPreview coordinates={draft.address.resolution.coordinates} />
+    : null;
 
   return (
     <AddressPinConfirmationScreen
         address={draft.address}
-        addressResolutionCapability={UNAVAILABLE_PROVIDER}
-        addressSearchCapability={UNAVAILABLE_PROVIDER}
+        actionProblem={actionProblem}
+        addressSearchCapability={searchCapability}
         addressSearchQuery=""
         addressSuggestions={[]}
         connectionState={connectionState}
-        currentLocationCapability={UNAVAILABLE_CURRENT_LOCATION}
-        mapCapability={UNAVAILABLE_PROVIDER}
-        mapPreview={null}
+        mapCapability={mapCapability}
+        mapPreview={mapPreview}
         onAddressSearchChange={() => {}}
-        onBack={() => navigation.goBack()}
+        onBack={() => {
+          void saveDraft();
+          navigation.goBack();
+        }}
         onConfirmAddress={() => {
-          if (!isAddressResolutionDispatchSafe(draft.address)) return;
+          if (!isAddressResolutionDispatchSafe(draft.address)) {
+            setActionProblem('The address changed—set the pin again.');
+            return;
+          }
           reviseDraft({
             address: createResolvedJobAddress({
               entryMode: draft.address.entryMode,
@@ -549,28 +644,159 @@ export function CustomerAddressRoute({ navigation }: { navigation: any }) {
           });
           navigation.navigate('Schedule');
         }}
-        onCorrectPin={() => reviseDraft({
-          address: {
-            ...draft.address,
-            confirmedAt: null,
-            resolution: {
-              status: 'unresolved',
-              source: null,
-              coordinates: null,
-              reasonCode: 'pin_correction_requested',
-            },
-          },
-        })}
-        onManualAddressChange={(address) => reviseDraft({ address })}
-        onResolveManualAddress={() => {}}
+        onManualAddressChange={(address) => {
+          setActionProblem(null);
+          reviseDraft({ address });
+        }}
+        onOpenPinPicker={() => { void openPinPicker(); }}
         onSaveDraft={() => { void saveDraft(); }}
         onSelectAddressSuggestion={(suggestion) => reviseDraft({ address: suggestion.address })}
         onSelectSavedPlace={(place) => reviseDraft({ address: place.address })}
-        onUseCurrentLocation={() => {}}
-        resolvingAddress={false}
+        pinActionPending={pinActionPending}
         savedPlaces={[]}
         searchingAddresses={false}
       />
+  );
+}
+
+function pickerGuardFromRoute(value: unknown): AddressPickerCommitGuard | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  if (
+    typeof candidate.draftId !== 'string'
+    || !Number.isSafeInteger(candidate.draftRevision)
+    || typeof candidate.detailsFingerprint !== 'string'
+  ) return null;
+  return Object.freeze({
+    draftId: candidate.draftId,
+    draftRevision: candidate.draftRevision as number,
+    detailsFingerprint: candidate.detailsFingerprint,
+  });
+}
+
+export function CustomerExactPinPickerRoute({ navigation, route }: { navigation: any; route: any }) {
+  const { commitAddressPin, draft } = useCustomerExperience();
+  const routeActive = useRef(true);
+  const guard = pickerGuardFromRoute(route.params?.guard);
+  const initialMapCapability = route.params?.initialMapCapability as CapabilityState | undefined;
+  const currentLocationCapability = route.params?.currentLocationCapability as CapabilityState | undefined;
+  const initialCoordinate = draft.address.resolution.status === 'resolved'
+    ? draft.address.resolution.coordinates
+    : null;
+
+  useFocusEffect(useCallback(() => {
+    routeActive.current = true;
+    return () => { routeActive.current = false; };
+  }, []));
+
+  if (!guard) {
+    return (
+      <AppScaffold
+        testID="exact-pin-picker-invalid-state"
+        topBar={<TopAppBar onBack={() => navigation.goBack()} title="Set exact job pin" />}
+      >
+        <ScreenError
+          actionLabel="Return to address"
+          body="The address changed or this pin session is no longer valid. Return to the address screen and open the map again."
+          onAction={() => navigation.goBack()}
+          title="Pin session expired"
+        />
+      </AppScaffold>
+    );
+  }
+
+  const requestCurrentLocation = async (): Promise<ForegroundLocationResult> => {
+    const bundle = await loadLocationCapabilities(true);
+    if (bundle.map.status !== 'available') {
+      return Object.freeze({
+        ok: false,
+        reasonCode: 'location_unavailable',
+        explanation: bundle.map.explanation,
+      });
+    }
+    if (bundle.foregroundLocation.status !== 'available') {
+      return Object.freeze({
+        ok: false,
+        reasonCode: 'location_unavailable',
+        explanation: `${bundle.foregroundLocation.explanation} You can still place the pin manually.`,
+      });
+    }
+    const result = await locationService.requestForegroundPosition();
+    if (result.ok !== true || !isValidCoordinates(result.coordinates)) {
+      return Object.freeze({
+        ok: false,
+        reasonCode: result.reasonCode === 'location_permission_blocked'
+          ? 'location_permission_blocked'
+          : result.reasonCode === 'location_permission_denied'
+            ? 'location_permission_denied'
+            : 'location_unavailable',
+        explanation: result.explanation
+          ?? 'The device could not provide a current position. Move the map and place the pin manually.',
+      });
+    }
+    return Object.freeze({
+      ok: true,
+      coordinates: result.coordinates,
+      permission: result.permission === 'granted_approximate'
+        ? 'granted_approximate'
+        : 'granted_precise',
+    });
+  };
+
+  return (
+    <ExactPinPickerScreen
+      addressLabel={addressDisplayLabel(draft.address.details) || 'Job address'}
+      currentLocationCapability={currentLocationCapability ?? UNVERIFIED_LOCATION_CAPABILITY}
+      initialCoordinate={initialCoordinate}
+      initialMapCapability={initialMapCapability ?? UNVERIFIED_LOCATION_CAPABILITY}
+      initialMapCapabilityExpiresAt={typeof route.params?.initialMapCapabilityExpiresAt === 'string'
+        ? route.params.initialMapCapabilityExpiresAt
+        : null}
+      onCancel={() => {
+        routeActive.current = false;
+        navigation.goBack();
+      }}
+      onCommitSuccess={() => {
+        routeActive.current = false;
+        navigation.goBack();
+      }}
+      onRefreshMapCapability={async () => {
+        const bundle = await loadLocationCapabilities(true);
+        return Object.freeze({
+          capability: bundle.map,
+          expiresAt: bundle.expiresAt,
+          currentLocationCapability: bundle.foregroundLocation,
+        });
+      }}
+      onRequestCurrentLocation={requestCurrentLocation}
+      onUsePin={async (coordinates) => {
+        const mapAtAction = await getCapabilityStateAtAction('maps_display', { forceRefresh: false }) as CapabilityState;
+        if (!routeActive.current) {
+          return Object.freeze({
+            ok: false,
+            reasonCode: 'pin_picker_closed',
+            explanation: 'The pin picker was closed. Your address was not changed.',
+          });
+        }
+        if (mapAtAction.status !== 'available') {
+          return Object.freeze({
+            ok: false,
+            reasonCode: mapAtAction.reasonCode,
+            explanation: mapAtAction.explanation,
+          });
+        }
+        const committed = commitAddressPin(guard, coordinates);
+        if (!committed.ok) {
+          const explanation = committed.reasonCode === 'address_changed_pin_recheck_required'
+            ? 'The address changed—set the pin again.'
+            : committed.reasonCode === 'address_incomplete'
+              ? 'Add the street address, city or town, and province before setting the pin.'
+              : 'This pin position is invalid. Move the map and try again.';
+          return Object.freeze({ ok: false, reasonCode: committed.reasonCode, explanation });
+        }
+        return Object.freeze({ ok: true });
+      }}
+    />
   );
 }
 
@@ -650,6 +876,7 @@ function quoteRequestPayload(intent: SubmissionIntent, service: GroundedCatalogu
     snapshot.schedule.kind !== 'scheduled'
     || !snapshot.schedule.startsAt
     || !isAddressResolutionDispatchSafe(snapshot.address)
+    || snapshot.address.resolution.source !== 'map_pin'
   ) {
     throw new Error('quote_request_requires_scheduled_verified_address');
   }
@@ -679,6 +906,7 @@ function quoteRequestPayload(intent: SubmissionIntent, service: GroundedCatalogu
       address: exactAddress,
       latitude: snapshot.address.resolution.coordinates.latitude,
       longitude: snapshot.address.resolution.coordinates.longitude,
+      coordinateSource: snapshot.address.resolution.source,
       ...(snapshot.address.details.accessInstructions
         ? { accessInstructions: snapshot.address.details.accessInstructions }
         : {}),

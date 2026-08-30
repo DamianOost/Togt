@@ -335,7 +335,7 @@ Disable the affected runtime feature first:
 
 This layer contains provider, data-contract and booking-safety incidents. It cannot restore disliked packaged visuals or navigation; those go directly to a same-signer APK forward rollback.
 
-The capability snapshot advertises a 300-second TTL, but the current mounted-screen implementation does not yet guarantee timer-driven invalidation. Until the address capability-refresh contract is implemented, containment takes effect after the next capability refresh rather than within a guaranteed 300 seconds. Wave 1 must refresh on focus/app foreground, invalidate at expiry, and revalidate `maps_display` immediately before picker open/new pin binding. Confirm revalidates source/revision/fingerprint and any separate address-submission gate; an existing fingerprint-matching `map_pin` is not revoked merely because map display is off. Today a registry change also requires a controlled backend redeploy/restart; a future operated admin kill switch may shorten this while preserving auditability.
+The capability snapshot advertises a 300-second TTL. Wave 1 refreshes on screen focus and app foreground, schedules expiry invalidation, and revalidates `maps_display` immediately before picker open/new pin binding. Confirm revalidates source/revision/fingerprint and any separate address-submission gate; an existing fingerprint-matching `map_pin` is not revoked merely because map display is off. Today a registry change also requires a controlled backend redeploy/restart; a future operated admin kill switch may shorten this while preserving auditability.
 
 This contains feature risk quickly but may truthfully block the affected booking step until a replacement APK is available.
 
@@ -443,21 +443,25 @@ Evidence should be sufficient to answer:
 5. Who approved the exact hash?
 6. How do we disable or recover without losing app data?
 
-## 13. Build-tool follow-up
+## 13. Build-tool status and follow-up
 
-Before the location candidate is promoted, extend the pipeline with:
+Implemented for the location candidate:
 
-- independent `verify existing APK` mode;
 - signer SHA-1 in addition to SHA-256;
 - immutable internal signer-continuity enforcement so an operator override cannot silently redefine the baseline; a different signer starts an explicit clean-install/signing-transition stream;
 - non-secret Maps-key fingerprint in artifact identity;
 - final-manifest Maps metadata assertion;
-- an explicit block on unintended `ACCESS_BACKGROUND_LOCATION`;
+- an explicit post-merge block on unintended `ACCESS_BACKGROUND_LOCATION`; and
+- quarantined signing and inspection before final APK/manifest publication.
+
+Still required before promotion, either as pipeline automation or explicitly gathered immutable evidence:
+
+- independent `verify existing APK` mode;
 - previous-promoted build-manifest/promotion-record diff;
 - append-only gate, approval, rejection and promotion record support; and
 - monotonically increasing physical-candidate version allocation.
 
-These controls automate the runbook; until implemented, the same evidence must be gathered explicitly and recorded.
+The remaining controls automate the runbook; until implemented, the same evidence must be gathered explicitly and recorded.
 
 ## 14. Definition of a promoted build
 

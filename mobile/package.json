@@ -1,6 +1,6 @@
 {
   "name": "togt-mobile",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "main": "index.js",
   "scripts": {
     "start": "expo start",
@@ -12,8 +12,7 @@
     "preflight:apk:local": "node scripts/android-build.cjs preflight",
     "prebuild:android:local": "node scripts/android-build.cjs prebuild",
     "export:android": "node scripts/android-build.cjs export",
-    "build:apk:local": "node scripts/android-build.cjs build",
-    "build:apk:preview": "eas build --platform android --profile preview"
+    "build:apk:local": "node scripts/android-build.cjs build"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",

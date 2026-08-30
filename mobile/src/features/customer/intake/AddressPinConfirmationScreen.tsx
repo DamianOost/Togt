@@ -30,11 +30,10 @@ export type AddressPinConfirmationScreenProps = Readonly<{
   connectionState: 'online' | 'offline';
   mapCapability: CapabilityState;
   addressSearchCapability: CapabilityState;
-  currentLocationCapability: CapabilityState;
-  addressResolutionCapability: CapabilityState;
-  resolvingAddress: boolean;
   searchingAddresses: boolean;
   mapPreview: ReactNode | null;
+  pinActionPending?: boolean;
+  actionProblem?: string | null;
   translate?: CustomerIntakeTranslate;
   onBack: () => void;
   onSaveDraft: () => void;
@@ -42,19 +41,28 @@ export type AddressPinConfirmationScreenProps = Readonly<{
   onSelectAddressSuggestion: (suggestion: AddressSearchSuggestion) => void;
   onManualAddressChange: (address: JobAddress) => void;
   onSelectSavedPlace: (place: SavedPlaceSummary) => void;
-  onUseCurrentLocation: () => void;
-  onResolveManualAddress: (details: AddressDetails) => void;
-  onCorrectPin: () => void;
+  onOpenPinPicker: () => void;
   onConfirmAddress: () => void;
 }>;
 
-function addressReadyForConfirmation(address: JobAddress): boolean {
+function requiredAddressTextPresent(address: JobAddress): boolean {
   return Boolean(
     address.details.line1.trim()
       && address.details.city.trim()
-      && address.details.province.trim()
-      && isAddressResolutionDispatchSafe(address),
+      && address.details.province.trim(),
   );
+}
+
+function confirmationBlocker(address: JobAddress): string | null {
+  if (!requiredAddressTextPresent(address)) {
+    return 'Add the street address, city or town, and province.';
+  }
+  if (!isAddressResolutionDispatchSafe(address)) {
+    return address.resolution.reasonCode === 'address_text_changed'
+      ? 'The address changed—set the pin again.'
+      : 'Set and accept the exact pin before confirming this address.';
+  }
+  return null;
 }
 
 export function AddressPinConfirmationScreen({
@@ -65,11 +73,10 @@ export function AddressPinConfirmationScreen({
   connectionState,
   mapCapability,
   addressSearchCapability,
-  currentLocationCapability,
-  addressResolutionCapability,
-  resolvingAddress,
   searchingAddresses,
   mapPreview,
+  pinActionPending = false,
+  actionProblem = null,
   translate = translateCustomerIntake,
   onBack,
   onSaveDraft,
@@ -77,89 +84,105 @@ export function AddressPinConfirmationScreen({
   onSelectAddressSuggestion,
   onManualAddressChange,
   onSelectSavedPlace,
-  onUseCurrentLocation,
-  onResolveManualAddress,
-  onCorrectPin,
+  onOpenPinPicker,
   onConfirmAddress,
 }: AddressPinConfirmationScreenProps) {
   const theme = useTogtTheme();
   const updateField = (field: keyof AddressDetails, value: string) => {
     onManualAddressChange(updateJobAddressDetail(address, field, value));
   };
-  const coordinatesPresent = address.resolution.status === 'resolved';
   const coordinatesReady = isAddressResolutionDispatchSafe(address);
-  const canResolve = connectionState === 'online' && addressResolutionCapability.status === 'available';
-  const canConfirm = addressReadyForConfirmation(address);
+  const blocker = actionProblem ?? confirmationBlocker(address);
+  const canConfirm = blocker === null;
+  const pinActionLabel = coordinatesReady ? translate('address.adjustPin') : translate('address.setPin');
+  const pinActionHint = !requiredAddressTextPresent(address)
+    ? translate('address.pinNeedsAddress')
+    : coordinatesReady
+      ? translate('address.adjustPinHint')
+      : translate('address.setPinHint');
 
   return (
     <AppScaffold
       bottomAction={(
         <View style={{ rowGap: theme.spacing.sm }}>
-          <Button fullWidth label={translate('address.confirm')} large disabled={!canConfirm} onPress={onConfirmAddress} />
+          {blocker ? (
+            <Text
+              accessibilityLiveRegion="polite"
+              allowFontScaling
+              style={[theme.typography.bodySmall, { color: actionProblem ? theme.colors.error : theme.colors.textSecondary }]}
+              testID="address-confirm-blocker"
+            >
+              {blocker}
+            </Text>
+          ) : null}
+          <Button
+            accessibilityHint={blocker ?? 'Confirms this address and opens scheduling.'}
+            fullWidth
+            label={translate('address.confirm')}
+            large
+            disabled={!canConfirm}
+            onPress={onConfirmAddress}
+          />
           <Button fullWidth label={translate('common.saveDraft')} onPress={onSaveDraft} variant="tertiary" />
         </View>
       )}
       keyboardAware
       scrollable
       testID="address-pin-confirmation-screen"
-      topBar={<TopAppBar onBack={onBack} title={translate('address.title')} />}
+      topBar={<TopAppBar onBack={onBack} title={translate('address.appBar')} />}
     >
       <View style={{ paddingBottom: theme.spacing.xxl, paddingTop: theme.spacing.md, rowGap: theme.spacing.xl }}>
         <ScreenHeading body={translate('address.privacy')} title={translate('address.title')} />
         {connectionState === 'offline' ? <OfflineBanner message={translate('address.offline')} /> : null}
 
-        <View style={{ rowGap: theme.spacing.sm }}>
-          {addressSearchCapability.status === 'available' ? (
-            <>
-              <TextField
-                accessibilityHint={translate('address.searchHint')}
-                label={translate('address.search')}
-                leading={<IntakeIcon name="map-search-outline" tone="secondary" />}
-                onChangeText={onAddressSearchChange}
-                placeholder={translate('address.searchHint')}
-                value={addressSearchQuery}
-              />
-              {searchingAddresses ? (
-                <Surface accessibilityLabel={translate('address.searchResults')} variant="subtle">
-                  <View style={[styles.row, { columnGap: theme.spacing.sm }]}>
-                    <IntakeIcon name="progress-clock" tone="secondary" />
-                    <Text allowFontScaling style={[theme.typography.bodySmall, { color: theme.colors.textSecondary }]}>
-                      {translate('address.searching')}
-                    </Text>
-                  </View>
-                </Surface>
-              ) : null}
-              {addressSuggestions.length > 0 ? (
-                <View accessibilityLabel={translate('address.searchResults')} style={{ rowGap: theme.spacing.xs }}>
-                  {addressSuggestions.map((suggestion) => (
-                    <Surface
-                      accessibilityHint={suggestion.secondaryLabel}
-                      accessibilityLabel={suggestion.primaryLabel}
-                      key={suggestion.suggestionId}
-                      onPress={() => onSelectAddressSuggestion(suggestion)}
-                      style={{ padding: theme.spacing.sm }}
-                    >
-                      <View style={[styles.row, { columnGap: theme.spacing.sm }]}>
-                        <IntakeIcon name="map-marker-outline" />
-                        <View style={styles.flex}>
-                          <Text allowFontScaling style={[theme.typography.label, { color: theme.colors.text }]}>
-                            {suggestion.primaryLabel}
-                          </Text>
-                          <Text allowFontScaling style={[theme.typography.bodySmall, { color: theme.colors.textSecondary }]}>
-                            {suggestion.secondaryLabel}
-                          </Text>
-                        </View>
-                        <IntakeIcon name="chevron-right" tone="secondary" />
-                      </View>
-                    </Surface>
-                  ))}
+        {addressSearchCapability.status === 'available' ? (
+          <View style={{ rowGap: theme.spacing.sm }}>
+            <TextField
+              accessibilityHint={translate('address.searchHint')}
+              label={translate('address.search')}
+              leading={<IntakeIcon name="map-search-outline" tone="secondary" />}
+              onChangeText={onAddressSearchChange}
+              placeholder={translate('address.searchHint')}
+              value={addressSearchQuery}
+            />
+            {searchingAddresses ? (
+              <Surface accessibilityLabel={translate('address.searchResults')} variant="subtle">
+                <View style={[styles.row, { columnGap: theme.spacing.sm }]}>
+                  <IntakeIcon name="progress-clock" tone="secondary" />
+                  <Text allowFontScaling style={[theme.typography.bodySmall, { color: theme.colors.textSecondary }]}>
+                    {translate('address.searching')}
+                  </Text>
                 </View>
-              ) : null}
-            </>
-          ) : (
-            <CapabilityNotice capability={addressSearchCapability} title={translate('address.search')} />
-          )}
-        </View>
+              </Surface>
+            ) : null}
+            {addressSuggestions.length > 0 ? (
+              <View accessibilityLabel={translate('address.searchResults')} style={{ rowGap: theme.spacing.xs }}>
+                {addressSuggestions.map((suggestion) => (
+                  <Surface
+                    accessibilityHint={suggestion.secondaryLabel}
+                    accessibilityLabel={suggestion.primaryLabel}
+                    key={suggestion.suggestionId}
+                    onPress={() => onSelectAddressSuggestion(suggestion)}
+                    style={{ padding: theme.spacing.sm }}
+                  >
+                    <View style={[styles.row, { columnGap: theme.spacing.sm }]}>
+                      <IntakeIcon name="map-marker-outline" />
+                      <View style={styles.flex}>
+                        <Text allowFontScaling style={[theme.typography.label, { color: theme.colors.text }]}>
+                          {suggestion.primaryLabel}
+                        </Text>
+                        <Text allowFontScaling style={[theme.typography.bodySmall, { color: theme.colors.textSecondary }]}>
+                          {suggestion.secondaryLabel}
+                        </Text>
+                      </View>
+                      <IntakeIcon name="chevron-right" tone="secondary" />
+                    </View>
+                  </Surface>
+                ))}
+              </View>
+            ) : null}
+          </View>
+        ) : null}
 
         {savedPlaces.length > 0 ? (
           <View>
@@ -182,46 +205,8 @@ export function AddressPinConfirmationScreen({
           </View>
         ) : null}
 
-        <View style={{ rowGap: theme.spacing.sm }}>
-          {currentLocationCapability.status === 'available' ? (
-            <Button
-              accessibilityHint={translate('address.currentLocationHint')}
-              label={translate('address.currentLocation')}
-              leading={<IntakeIcon name="crosshairs-gps" tone="primary" />}
-              onPress={onUseCurrentLocation}
-              variant="secondary"
-            />
-          ) : (
-            <CapabilityNotice capability={currentLocationCapability} title={translate('address.currentLocation')} />
-          )}
-        </View>
-
-        {mapCapability.status === 'available' && mapPreview ? (
-          <Surface accessibilityLabel={translate('address.coordinatesReady')} style={styles.mapFrame}>
-            {mapPreview}
-            <Button
-              label={translate('address.correctPin')}
-              leading={<IntakeIcon name="map-marker-radius-outline" tone="primary" />}
-              onPress={onCorrectPin}
-              variant="secondary"
-            />
-          </Surface>
-        ) : (
-          <View style={{ rowGap: theme.spacing.sm }}>
-            <Surface variant="subtle">
-              <View style={[styles.row, { columnGap: theme.spacing.sm }]}>
-                <IntakeIcon name="map-marker-off-outline" tone="secondary" />
-                <Text allowFontScaling style={[theme.typography.body, styles.flex, { color: theme.colors.textSecondary }]}>
-                  {translate('address.mapUnavailable')}
-                </Text>
-              </View>
-            </Surface>
-            <CapabilityNotice capability={mapCapability} title={translate('address.map')} />
-          </View>
-        )}
-
         <View style={{ rowGap: theme.spacing.md }}>
-          <SectionHeader title={translate('address.manualTitle')} />
+          <SectionHeader subtitle={translate('address.locationDetailsBody')} title={translate('address.locationDetails')} />
           <TextField
             label={translate('address.line1')}
             onChangeText={(value) => updateField('line1', value)}
@@ -256,6 +241,84 @@ export function AddressPinConfirmationScreen({
             onChangeText={(value) => updateField('postalCode', value)}
             value={address.details.postalCode}
           />
+        </View>
+
+        <Surface
+          accessibilityLabel={coordinatesReady ? translate('address.pinReady') : translate('address.pinMissing')}
+          elevation="card"
+          style={styles.locationCard}
+          testID="exact-location-card"
+          variant={coordinatesReady ? 'positive' : 'default'}
+        >
+          {coordinatesReady && mapCapability.status === 'available' && mapPreview ? (
+            <View style={styles.preview}>{mapPreview}</View>
+          ) : null}
+          <View style={{ padding: theme.spacing.md, rowGap: theme.spacing.sm }}>
+            <View style={[styles.row, { columnGap: theme.spacing.sm }]}>
+              <View
+                style={[
+                  styles.iconWell,
+                  {
+                    backgroundColor: coordinatesReady ? theme.colors.actionPrimary : theme.colors.surfacePositive,
+                    borderRadius: theme.radius.input,
+                    minHeight: theme.sizing.touchTarget,
+                    minWidth: theme.sizing.touchTarget,
+                  },
+                ]}
+              >
+                <IntakeIcon
+                  name={coordinatesReady ? 'map-marker-check-outline' : 'map-marker-radius-outline'}
+                  tone={coordinatesReady ? 'inverse' : 'primary'}
+                />
+              </View>
+              <View style={styles.flex}>
+                <Text accessibilityRole="header" allowFontScaling style={[theme.typography.h3, { color: theme.colors.text }]}>
+                  {coordinatesReady ? translate('address.pinReady') : translate('address.exactLocation')}
+                </Text>
+                <Text allowFontScaling style={[theme.typography.bodySmall, { color: theme.colors.textSecondary }]}>
+                  {coordinatesReady ? translate('address.pinReadyBody') : translate('address.exactLocationBody')}
+                </Text>
+              </View>
+            </View>
+
+            {mapCapability.status === 'available' ? (
+              <>
+                {!requiredAddressTextPresent(address) ? (
+                  <Text allowFontScaling style={[theme.typography.bodySmall, { color: theme.colors.textSecondary }]}>
+                    {translate('address.pinNeedsAddress')}
+                  </Text>
+                ) : null}
+                <Button
+                  accessibilityHint={pinActionHint}
+                  disabled={!requiredAddressTextPresent(address) || pinActionPending}
+                  fullWidth
+                  label={pinActionLabel}
+                  leading={<IntakeIcon name="map-marker-radius-outline" tone="primary" />}
+                  loading={pinActionPending}
+                  onPress={onOpenPinPicker}
+                  testID={coordinatesReady ? 'adjust-exact-pin' : 'set-exact-pin'}
+                  variant="secondary"
+                />
+              </>
+            ) : (
+              <>
+                <CapabilityNotice capability={mapCapability} title={translate('address.map')} />
+                <Button
+                  accessibilityHint="Refreshes current map availability without changing the saved address or pin."
+                  fullWidth
+                  label={translate('common.retry')}
+                  loading={pinActionPending}
+                  onPress={onOpenPinPicker}
+                  testID="retry-exact-pin-map"
+                  variant="secondary"
+                />
+              </>
+            )}
+          </View>
+        </Surface>
+
+        <View style={{ rowGap: theme.spacing.md }}>
+          <SectionHeader subtitle={translate('address.arrivalNotesBody')} title={translate('address.arrivalNotes')} />
           <TextField
             label={translate('address.landmark')}
             onChangeText={(value) => updateField('landmark', value)}
@@ -268,41 +331,7 @@ export function AddressPinConfirmationScreen({
             textAlignVertical="top"
             value={address.details.accessInstructions}
           />
-          <Button
-            disabled={!canResolve || resolvingAddress || !address.details.line1.trim() || !address.details.city.trim()}
-            label={translate('address.resolve')}
-            leading={<IntakeIcon name="map-search-outline" tone="primary" />}
-            loading={resolvingAddress}
-            onPress={() => onResolveManualAddress(address.details)}
-            variant="secondary"
-          />
-          <CapabilityNotice capability={addressResolutionCapability} title={translate('address.resolve')} />
         </View>
-
-        <Surface variant={coordinatesReady ? 'positive' : 'attention'}>
-          <View style={[styles.row, { columnGap: theme.spacing.sm }]}>
-            <IntakeIcon
-              name={coordinatesReady ? 'map-marker-check-outline' : 'map-marker-alert-outline'}
-              tone={coordinatesReady ? 'primary' : 'attention'}
-            />
-            <View style={styles.flex}>
-              <Text allowFontScaling style={[theme.typography.label, { color: theme.colors.text }]}>
-                {translate(coordinatesReady
-                  ? 'address.coordinatesReady'
-                  : coordinatesPresent
-                    ? 'address.coordinatesUnverified'
-                    : 'address.coordinatesMissing')}
-              </Text>
-              {!coordinatesReady ? (
-                <Text allowFontScaling style={[theme.typography.bodySmall, { color: theme.colors.textSecondary }]}>
-                  {translate(coordinatesPresent
-                    ? 'address.coordinatesUnverifiedBody'
-                    : 'address.coordinatesMissingBody')}
-                </Text>
-              ) : null}
-            </View>
-          </View>
-        </Surface>
       </View>
     </AppScaffold>
   );
@@ -311,7 +340,9 @@ export function AddressPinConfirmationScreen({
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   row: { alignItems: 'center', flexDirection: 'row' },
-  mapFrame: { overflow: 'hidden' },
+  locationCard: { padding: 0 },
+  preview: { overflow: 'hidden' },
+  iconWell: { alignItems: 'center', justifyContent: 'center' },
 });
 
 export default AddressPinConfirmationScreen;

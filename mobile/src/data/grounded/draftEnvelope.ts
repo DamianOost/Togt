@@ -1,4 +1,7 @@
-import type { CustomerIntakeDraft } from '../../features/customer/intake';
+import {
+  restoreJobAddress,
+} from '../../features/customer/intake/model.ts';
+import type { CustomerIntakeDraft } from '../../features/customer/intake/model.ts';
 
 export const CUSTOMER_DRAFT_ENVELOPE_VERSION = 1 as const;
 export const CUSTOMER_DRAFT_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
@@ -115,5 +118,10 @@ export function decodeCustomerDraftEnvelope(input: Readonly<{
   if (Date.parse(parsed.savedAt) < Date.parse(parsed.draft.updatedAt)) {
     return Object.freeze({ ok: false, reasonCode: 'invalid' });
   }
-  return Object.freeze({ ok: true, value: parsed.draft });
+  const address = restoreJobAddress(parsed.draft.address);
+  if (!address) return Object.freeze({ ok: false, reasonCode: 'invalid' });
+  return Object.freeze({
+    ok: true,
+    value: Object.freeze({ ...parsed.draft, address }) as CustomerIntakeDraft,
+  });
 }

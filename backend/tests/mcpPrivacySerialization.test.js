@@ -47,6 +47,54 @@ beforeEach(() => {
 });
 
 describe('MCP privacy serialization', () => {
+  test('create_match_request records permitted unsafe audit provenance', async () => {
+    db.query.mockResolvedValue({ rows: [{
+      id: 'match-1',
+      status: 'pending',
+      expires_at: '2026-06-01T10:00:00.000Z',
+    }] });
+    const scheduled = new Date(Date.now() + 60_000).toISOString();
+
+    const result = await callTool(ctx(CUSTOMER_ID, ['mcp:full']), 'create_match_request', {
+      skill_needed: 'Plumbing',
+      address: '12 Exact Street',
+      location_lat: -33.92487,
+      location_lng: 18.42406,
+      coordinate_source: 'entered_coordinates',
+      scheduled_at: scheduled,
+    });
+
+    expect(result.match_id).toBe('match-1');
+    expect(db.query).toHaveBeenCalledWith(
+      expect.stringContaining('coordinate_source'),
+      expect.arrayContaining(['entered_coordinates'])
+    );
+    expect(matcher.dispatchMatch).toHaveBeenCalledWith('match-1');
+  });
+
+  test('create_match_request cannot manufacture map-pin or server-issued provenance', async () => {
+    const base = {
+      skill_needed: 'Plumbing',
+      address: '12 Exact Street',
+      location_lat: -33.92487,
+      location_lng: 18.42406,
+      scheduled_at: new Date(Date.now() + 60_000).toISOString(),
+    };
+    for (const coordinate_source of ['map_pin', 'saved_verified_place', 'provider_geocode']) {
+      await expect(callTool(ctx(CUSTOMER_ID, ['mcp:full']), 'create_match_request', {
+        ...base,
+        coordinate_source,
+      })).rejects.toThrow(/not permitted|server reserved/i);
+    }
+    await expect(callTool(ctx(CUSTOMER_ID, ['mcp:full']), 'create_match_request', {
+      ...base,
+      location_lat: -91,
+      coordinate_source: 'device_gps',
+    })).rejects.toThrow('Address coordinates are invalid');
+    expect(db.query).not.toHaveBeenCalled();
+    expect(matcher.dispatchMatch).not.toHaveBeenCalled();
+  });
+
   test('serializeMcpLabourerCandidate emits approximate location without exact current coordinates', () => {
     const safe = serializeMcpLabourerCandidate({
       user_id: LABOURER_ID,

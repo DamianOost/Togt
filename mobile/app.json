@@ -3,7 +3,7 @@
     "name": "TOGT",
     "slug": "togt",
     "scheme": "togt",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -22,7 +22,7 @@
     },
     "android": {
       "package": "za.togt.app",
-      "versionCode": 3,
+      "versionCode": 4,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#F7F4EF"
@@ -32,6 +32,7 @@
         "ACCESS_COARSE_LOCATION"
       ],
       "blockedPermissions": [
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
         "android.permission.RECORD_AUDIO",
         "android.permission.CAMERA",
         "android.permission.SYSTEM_ALERT_WINDOW",

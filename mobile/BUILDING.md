@@ -5,9 +5,10 @@
 build only. The planned address-pin candidate is `1.2.0`, `versionCode 4`, and
 follows the candidate workflow below.
 
-Local Gradle is the default internal-APK route. Expo Go, an Expo account, and
-EAS cloud build are not required. EAS remains an optional provider and does not
-block a local build when EAS/Expo Push is disabled.
+Local Gradle is the only approved vc4 internal-APK route. Expo Go, an Expo
+account, and EAS cloud build are not required. The checked-in EAS build map is
+empty so a cloud profile cannot bypass the vc4 Maps, signer, and inspection
+gates. A future EAS route requires a separately reviewed release change.
 
 This runbook creates internal synthetic-data artifacts only. It does not
 authorize production data, real KYC, payment, payout, provider activation, or
@@ -92,9 +93,9 @@ packaged push provider defaults to `disabled`, the server capability must be
 current and enabled, and Android notification permission is requested only
 inside that capability-gated registration flow. Foreground location and
 Internet permissions remain for the documented matching/job and API paths;
-background location is not requested. The current vc3 APK does not contain
-`ACCESS_BACKGROUND_LOCATION`; before vc4 promotion, add that permission to the
-builder's explicit forbidden set so a future manifest merge fails closed.
+background location is not requested. `ACCESS_BACKGROUND_LOCATION` is blocked
+in the app configuration and in the builder's post-merge forbidden set, so a
+future dependency or manifest change fails closed before an APK is published.
 
 ## Toolchain
 
@@ -208,7 +209,7 @@ TOGT-<config-class>-1.1.0-vc3-<12-char-commit>-rt<12>-arm64-v8a.apk
 
 The adjacent manifest records the package, version name/code, source commit,
 configuration class, Android cleartext policy, build provider, ABI set, SDKs,
-actual merged permission set, packaged feature flags, signer SHA-256, artifact
+actual merged permission set, packaged feature flags, signer SHA-1/SHA-256, artifact
 SHA-256, size, alignment, and signature-verification result. It also records the
 exact safe API origin, maps/Peach/push selections, and feature flags as a
 versioned runtime contract plus its full SHA-256. Provider keys, service files,
@@ -310,27 +311,13 @@ a new candidate. Android in-place rollback is a same-signer forward build of
 the last known-good source with a new higher `versionCode`; uninstall/reinstall
 of an older APK is internal clean recovery and erases app-local data.
 
-## Optional EAS path
+## EAS path deliberately unavailable for vc4
 
-EAS is not the default and is not needed for the local pipeline. If TOGT later
-selects it, the operator must provide an Expo account/project, `EAS_PROJECT_ID`,
-an approved HTTPS preview endpoint, and reviewed EAS Android signing custody.
-The optional command remains:
-
-```powershell
-npm run build:apk:preview
-```
-
-The checked-in `preview` profile is explicitly an internal, full-lane Grounded
-Momentum APK: customer, Worker, relationships, assisted-intake,
-recommendation-explanation and live-status UI are packaged, while Peach, maps
-and push providers remain disabled. Contextual safety education is also
-packaged but remains package-and-server gated, locally capped at three displays
-with a 14-day cooldown, and dismissible. The Phase 4 actions still require the same
-fresh server capability evidence as a local build, so the current backend shows
-truthful unavailable notices rather than enabling them from package flags.
-Its existence is not proof of provider configuration, remote push delivery,
-physical-device success, or release approval.
+There is no checked-in EAS build profile or `build:apk:preview` command for the
+vc4 address-pin stream. This prevents a cloud build from minting the same
+package/version while bypassing the local same-signer, Maps-metadata, runtime,
+and quarantine inspection gates. Adding EAS later requires its own signer
+continuity, Maps-key restriction, artifact inspection, and promotion design.
 
 ## P0 release evidence still required
 

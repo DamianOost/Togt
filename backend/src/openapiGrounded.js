@@ -1278,6 +1278,11 @@ function applyGroundedOpenApi(spec) {
                 address: { type: 'string', minLength: 3, maxLength: 500 },
                 latitude: { type: 'number', minimum: -90, maximum: 90 },
                 longitude: { type: 'number', minimum: -180, maximum: 180 },
+                coordinateSource: {
+                  type: 'string',
+                  enum: ['map_pin', 'device_gps', 'entered_coordinates'],
+                  description: 'Optional audit provenance. map_pin is authenticated official-client attestation; server-issued sources are not accepted as naked client assertions.',
+                },
                 accessInstructions: { type: 'string', maxLength: 1000 },
               },
             },
@@ -2676,6 +2681,10 @@ function applyGroundedOpenApi(spec) {
     android_live_updates: capabilityExtension('android_live_updates'),
     contextual_safety_education: capabilityExtension('contextual_safety_education'),
     operated_sos: capabilityExtension('operated_sos'),
+    maps_display: capabilityExtension('maps_display'),
+    address_search: capabilityExtension('address_search'),
+    address_resolution: capabilityExtension('address_resolution'),
+    address_provenance_recording: capabilityExtension('address_provenance_recording'),
   };
 }
 

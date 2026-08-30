@@ -445,7 +445,9 @@ describe('atomic single-winner quote acceptance', () => {
     const workerB = await createUser('labourer', '3000006');
     await optIn(workerA);
     await optIn(workerB);
-    const created = await createRequest(customer, 'race-request-key');
+    const sourceBearingRequest = requestBody();
+    sourceBearingRequest.privateLocation.coordinateSource = 'map_pin';
+    const created = await createRequest(customer, 'race-request-key', sourceBearingRequest);
     const requestId = created.body.quoteRequest.id;
     const quoteA = await createSubmittedQuote(workerA, requestId, 'race-quote-a');
     const quoteB = await createSubmittedQuote(workerB, requestId, 'race-quote-b');
@@ -528,12 +530,19 @@ describe('atomic single-winner quote acceptance', () => {
     expect(agreement.rows[0].scope_snapshot.materialsResponsibility)
       .toBe('Worker supplies materials or parts.');
     expect(agreement.rows[0].scope_snapshot.materialsResponsibilityCode).toBe('worker');
-    const canonicalBooking = await db.query('SELECT scope_items FROM bookings');
+    const canonicalBooking = await db.query('SELECT scope_items, coordinate_source FROM bookings');
     expect(canonicalBooking.rows[0].scope_items).toEqual([
       'Remove failed connector',
       'Fit replacement',
       'Pressure test',
     ]);
+    expect(canonicalBooking.rows[0].coordinate_source).toBe('map_pin');
+    const locationSnapshot = await db.query(
+      `SELECT private_location_snapshot->>'coordinateSource' AS coordinate_source
+         FROM grounded_quote_requests WHERE id = $1`,
+      [requestId]
+    );
+    expect(locationSnapshot.rows[0].coordinate_source).toBe('map_pin');
     expect(agreement.rows[0].commercial_snapshot.customerTotalAmount).toBe('1000.00');
   });
 

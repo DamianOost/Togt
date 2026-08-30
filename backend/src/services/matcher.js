@@ -319,7 +319,7 @@ async function commitAttemptToBooking(matchId, attemptId, labourerId) {
     await client.query('BEGIN');
     const lock = await client.query(
       `SELECT id, status, customer_id, skill_needed, address,
-              location_lat, location_lng, scheduled_at, hours_est, notes,
+              location_lat, location_lng, coordinate_source, scheduled_at, hours_est, notes,
               expires_at, expires_at > clock_timestamp() AS request_window_open,
               clock_timestamp() AS server_now
          FROM match_requests
@@ -405,13 +405,13 @@ async function commitAttemptToBooking(matchId, attemptId, labourerId) {
     const total = m.hours_est ? (Number(hourly) * Number(m.hours_est)).toFixed(2) : null;
 
     const bookingRes = await client.query(
-      `INSERT INTO bookings
-         (customer_id, labourer_id, status, operational_phase, skill_needed, address,
-           location_lat, location_lng, scheduled_at, hours_est, total_amount, notes)
-        VALUES ($1, $2, 'accepted', 'scheduled', $3, $4, $5, $6, $7, $8, $9, $10)
+       `INSERT INTO bookings
+          (customer_id, labourer_id, status, operational_phase, skill_needed, address,
+            location_lat, location_lng, coordinate_source, scheduled_at, hours_est, total_amount, notes)
+        VALUES ($1, $2, 'accepted', 'scheduled', $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING *`,
       [m.customer_id, labourerId, m.skill_needed, m.address,
-       m.location_lat, m.location_lng, m.scheduled_at,
+       m.location_lat, m.location_lng, m.coordinate_source, m.scheduled_at,
        m.hours_est || null, total, m.notes || null]
     );
     const booking = bookingRes.rows[0];

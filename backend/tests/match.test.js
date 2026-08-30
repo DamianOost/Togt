@@ -135,6 +135,24 @@ async function waitForAttempt(matchId, count = 1, timeoutMs = 3000) {
   throw new Error(`waitForAttempt timed out (matchId=${matchId}, expected ${count})`);
 }
 
+async function waitForDispatchedAttempt(matchId, timeoutMs = 5000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const result = await db.query(
+      `SELECT offer_expires_at, dispatched_at, dispatch_attempt_count,
+              dispatch_lease_id
+         FROM match_attempts
+        WHERE match_request_id = $1
+          AND dispatched_at IS NOT NULL
+          AND dispatch_lease_id IS NULL`,
+      [matchId]
+    );
+    if (result.rows.length > 0) return result.rows[0];
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`waitForDispatchedAttempt timed out (matchId=${matchId})`);
+}
+
 async function insertPendingMatch(customerId, overrides = {}) {
   const inserted = await db.query(
     `INSERT INTO match_requests (
@@ -245,6 +263,39 @@ describe('POST /api/match', () => {
     expect(res.status).toBe(403);
   });
 
+  test('records only NULL or unsafe audit provenance on the legacy match surface', async () => {
+    const customer = await registerUser({ role: 'customer' });
+    for (const coordinate_source of ['map_pin', 'saved_verified_place', 'provider_geocode']) {
+      const rejected = await request(app)
+        .post('/api/match')
+        .set(authHeader(customer.accessToken))
+        .send({
+          skill_needed: 'Plumbing',
+          address: '1 Test Rd',
+          location_lat: -29.8,
+          location_lng: 31.0,
+          coordinate_source,
+          scheduled_at: FUTURE_ISO(),
+        });
+      expect(rejected.status).toBe(400);
+      expect(rejected.body.type).toMatch(/coordinate_source_(?:not_permitted|server_reserved)$/);
+    }
+    const invalidCoordinates = await request(app)
+      .post('/api/match')
+      .set(authHeader(customer.accessToken))
+      .send({
+        skill_needed: 'Plumbing',
+        address: '1 Test Rd',
+        location_lat: -91,
+        location_lng: 31.0,
+        coordinate_source: 'device_gps',
+        scheduled_at: FUTURE_ISO(),
+      });
+    expect(invalidCoordinates.status).toBe(400);
+    expect(invalidCoordinates.body.type).toMatch(/address_coordinates_invalid$/);
+    expect((await db.query('SELECT COUNT(*)::int AS count FROM match_requests')).rows[0].count).toBe(0);
+  });
+
   test('no candidates available -> match expires immediately with no_candidates reason', async () => {
     // No labourers at all
     const customer = await registerUser({ role: 'customer' });
@@ -280,6 +331,7 @@ describe('POST /api/match', () => {
       skill_needed: 'Plumbing',
       address: '1 Test Rd',
       location_lat: -29.8, location_lng: 31.0,
+      coordinate_source: 'entered_coordinates',
       scheduled_at: FUTURE_ISO(),
       hours_est: 2,
     });
@@ -341,15 +393,17 @@ describe('POST /api/match', () => {
     expect(fulfilment.body.fulfilment.location.precision).toBe('approximate');
 
     const row = await db.query(
-      'SELECT status, matched_booking_id, matched_labourer_id FROM match_requests WHERE id = $1',
+      `SELECT status, matched_booking_id, matched_labourer_id, coordinate_source
+         FROM match_requests WHERE id = $1`,
       [matchId]
     );
     expect(row.rows[0].status).toBe('matched');
     expect(row.rows[0].matched_labourer_id).toBe(labourer.user.id);
     expect(row.rows[0].matched_booking_id).toBe(accept.body.booking.id);
+    expect(row.rows[0].coordinate_source).toBe('entered_coordinates');
 
     const canonical = await db.query(
-      `SELECT b.current_scope_version,
+      `SELECT b.current_scope_version, b.coordinate_source,
               (SELECT COUNT(*)::int FROM grounded_fulfilment_policy_snapshots p
                 WHERE p.booking_id = b.id) AS policies,
               (SELECT COUNT(*)::int FROM grounded_scope_versions s
@@ -360,6 +414,7 @@ describe('POST /api/match', () => {
       [accept.body.booking.id]
     );
     expect(canonical.rows[0]).toMatchObject({ current_scope_version: 1, policies: 1, scopes: 1 });
+    expect(canonical.rows[0].coordinate_source).toBe('entered_coordinates');
     expect(canonical.rows[0].scope_snapshot.description).toBe(offered.body.offer.scopeSummary);
     expect(canonical.rows[0].scope_snapshot.serviceLabel).toBe(offered.body.offer.scopeSummary);
     expect(canonical.rows[0].scope_snapshot.items).toEqual([offered.body.offer.scopeSummary]);
@@ -831,20 +886,13 @@ describe('reviewer-flagged race conditions', () => {
       scheduled_at: FUTURE_ISO(), hours_est: 2,
     });
     const matchId = create.body.match.id;
-    await waitForAttempt(matchId);
+    const active = await waitForDispatchedAttempt(matchId);
 
     expect(matcher.__pendingSize()).toBe(0);
-    const active = await db.query(
-      `SELECT offer_expires_at, dispatched_at, dispatch_attempt_count,
-              dispatch_lease_id
-         FROM match_attempts
-        WHERE match_request_id = $1`,
-      [matchId]
-    );
-    expect(active.rows[0].offer_expires_at).toBeTruthy();
-    expect(active.rows[0].dispatched_at).toBeTruthy();
-    expect(active.rows[0].dispatch_attempt_count).toBeGreaterThanOrEqual(1);
-    expect(active.rows[0].dispatch_lease_id).toBeNull();
+    expect(active.offer_expires_at).toBeTruthy();
+    expect(active.dispatched_at).toBeTruthy();
+    expect(active.dispatch_attempt_count).toBeGreaterThanOrEqual(1);
+    expect(active.dispatch_lease_id).toBeNull();
 
     await request(app).post(`/api/match/${matchId}/accept`).set(authHeader(labourer.accessToken));
     await new Promise((r) => setTimeout(r, 100));

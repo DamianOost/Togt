@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { ProblemError } = require('../../lib/problemJson');
+const { normalizeAddressEvidence } = require('../../lib/addressProvenance');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MONEY_RE = /^(?:0|[1-9]\d{0,6})(?:\.\d{1,2})?$/;
@@ -110,18 +111,22 @@ function assertEmptyCommandBody(body) {
 
 function normalizeLocation(value) {
   const location = plainObject(value, 'privateLocation');
-  rejectUnknownFields(location, ['address', 'latitude', 'longitude', 'accessInstructions'], 'privateLocation');
+  rejectUnknownFields(
+    location,
+    ['address', 'latitude', 'longitude', 'coordinateSource', 'accessInstructions'],
+    'privateLocation'
+  );
   const address = stringValue(location.address, 'privateLocation.address', { min: 3, max: 500 });
-  const latitude = Number(location.latitude);
-  const longitude = Number(location.longitude);
-  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90
-      || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
-    fail('quote_location_invalid', 'Private location coordinates are invalid', 422);
-  }
+  const evidence = normalizeAddressEvidence({
+    latitude: location.latitude,
+    longitude: location.longitude,
+    coordinateSource: location.coordinateSource,
+  }, { surface: 'canonical_quote', label: 'privateLocation' });
   return {
     address,
-    latitude,
-    longitude,
+    latitude: evidence.latitude,
+    longitude: evidence.longitude,
+    ...(evidence.coordinateSource ? { coordinateSource: evidence.coordinateSource } : {}),
     accessInstructions: stringValue(location.accessInstructions, 'privateLocation.accessInstructions', {
       optional: true,
       max: 1000,

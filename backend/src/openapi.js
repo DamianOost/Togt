@@ -464,6 +464,11 @@ const spec = {
                   address: { type: 'string' },
                   location_lat: { type: 'number' },
                   location_lng: { type: 'number' },
+                  coordinate_source: {
+                    type: 'string',
+                    enum: ['device_gps', 'entered_coordinates'],
+                    description: 'Optional unverified audit provenance. This legacy surface cannot assert map_pin or server-issued sources.',
+                  },
                   scheduled_at: { type: 'string', format: 'date-time', description: 'Must be in the future.' },
                   hours_est: { type: 'number' },
                   notes: { type: 'string' },

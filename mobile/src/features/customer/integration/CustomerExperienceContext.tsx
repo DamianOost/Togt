@@ -19,13 +19,17 @@ import {
   saveCustomerIntakeDraft,
 } from '../../../services';
 import {
+  commitMapPinForDraft,
   createCustomerIntakeDraft,
   reviseCustomerIntakeDraft,
   saveCustomerIntakeDraftLocally,
 } from '../intake';
 import type {
+  AddressPickerCommitGuard,
+  Coordinates,
   CustomerIntakeDraft,
   CustomerIntakeDraftChanges,
+  MapPinCommitResult,
 } from '../intake';
 
 export type CatalogueResource =
@@ -48,6 +52,7 @@ type CustomerExperienceValue = Readonly<{
   draftSaveState: DraftSaveState;
   refreshCatalogue: () => Promise<void>;
   reviseDraft: (changes: CustomerIntakeDraftChanges) => void;
+  commitAddressPin: (guard: AddressPickerCommitGuard, coordinates: Coordinates) => MapPinCommitResult;
   selectService: (serviceId: string, serviceVersion: number) => boolean;
   saveDraft: () => Promise<boolean>;
   resetDraft: () => void;
@@ -71,9 +76,20 @@ export function CustomerExperienceProvider({
   const persistenceAllowed = actorId.length > 0;
   const [connectionState, setConnectionState] = useState<'online' | 'offline'>('offline');
   const [draft, setDraft] = useState<CustomerIntakeDraft>(() => newDraft(safeActorId, 'offline'));
+  const draftRef = useRef(draft);
+  const draftMutationEpoch = useRef(0);
   const [catalogue, setCatalogue] = useState<CatalogueResource>({ state: 'loading' });
   const [draftSaveState, setDraftSaveState] = useState<DraftSaveState>({ state: 'idle' });
   const mounted = useRef(true);
+
+  const updateDraft = useCallback((
+    update: CustomerIntakeDraft | ((current: CustomerIntakeDraft) => CustomerIntakeDraft),
+  ): CustomerIntakeDraft => {
+    const next = typeof update === 'function' ? update(draftRef.current) : update;
+    draftRef.current = next;
+    setDraft(next);
+    return next;
+  }, []);
 
   useEffect(() => () => {
     mounted.current = false;
@@ -83,24 +99,34 @@ export function CustomerExperienceProvider({
     const unsubscribe = NetInfo.addEventListener((state) => {
       const next = state.isConnected === true && state.isInternetReachable !== false ? 'online' : 'offline';
       setConnectionState(next);
-      setDraft((current) => current.connectionState === next
+      updateDraft((current) => current.connectionState === next
         ? current
         : reviseCustomerIntakeDraft(current, { connectionState: next }, new Date().toISOString()));
     });
     return unsubscribe;
-  }, []);
+  }, [updateDraft]);
 
   useEffect(() => {
     let active = true;
-    setDraft(newDraft(safeActorId, connectionState));
+    const restoreStartedAtEpoch = 0;
+    draftMutationEpoch.current = restoreStartedAtEpoch;
+    updateDraft(newDraft(safeActorId, connectionState));
     setDraftSaveState({ state: 'idle' });
     if (!persistenceAllowed) return () => { active = false; };
     void loadCustomerIntakeDraft(safeActorId).then((restored) => {
-      if (!active || !restored) return;
-      setDraft(reviseCustomerIntakeDraft(restored, { connectionState }, new Date().toISOString()));
+      if (
+        !active
+        || !restored
+        || draftMutationEpoch.current !== restoreStartedAtEpoch
+      ) return;
+      updateDraft(reviseCustomerIntakeDraft(
+        restored,
+        { connectionState: draftRef.current.connectionState },
+        new Date().toISOString(),
+      ));
     });
     return () => { active = false; };
-  }, [safeActorId, persistenceAllowed]);
+  }, [safeActorId, persistenceAllowed, updateDraft]);
 
   const refreshCatalogue = useCallback(async () => {
     setCatalogue({ state: 'loading' });
@@ -126,15 +152,34 @@ export function CustomerExperienceProvider({
   }, [refreshCatalogue]);
 
   const reviseDraft = useCallback((changes: CustomerIntakeDraftChanges) => {
-    setDraft((current) => reviseCustomerIntakeDraft(current, changes, new Date().toISOString()));
+    draftMutationEpoch.current += 1;
+    updateDraft((current) => reviseCustomerIntakeDraft(current, changes, new Date().toISOString()));
     setDraftSaveState({ state: 'idle' });
-  }, []);
+  }, [updateDraft]);
+
+  const commitAddressPin = useCallback((
+    guard: AddressPickerCommitGuard,
+    coordinates: Coordinates,
+  ): MapPinCommitResult => {
+    const current = draftRef.current;
+    const committed = commitMapPinForDraft(current, guard, coordinates);
+    if (!committed.ok) return committed;
+    draftMutationEpoch.current += 1;
+    updateDraft(reviseCustomerIntakeDraft(
+      current,
+      { address: committed.address },
+      new Date().toISOString(),
+    ));
+    setDraftSaveState({ state: 'idle' });
+    return committed;
+  }, [updateDraft]);
 
   const selectService = useCallback((serviceId: string, serviceVersion: number): boolean => {
     if (catalogue.state !== 'ready') return false;
     const selected = catalogue.services.find((service) => service.id === serviceId && service.version === serviceVersion);
     if (!selected) return false;
-    setDraft((current) => reviseCustomerIntakeDraft(current, {
+    draftMutationEpoch.current += 1;
+    updateDraft((current) => reviseCustomerIntakeDraft(current, {
       selectedService: toIntakeCatalogueSnapshot(selected),
       commercialTerms: commercialTermsFromCatalogue(selected),
       brief: current.selectedService?.serviceId === selected.id
@@ -150,21 +195,24 @@ export function CustomerExperienceProvider({
     }, new Date().toISOString()));
     setDraftSaveState({ state: 'idle' });
     return true;
-  }, [catalogue]);
+  }, [catalogue, updateDraft]);
 
   const saveDraft = useCallback(async (): Promise<boolean> => {
     if (!persistenceAllowed) {
       setDraftSaveState({ state: 'error', message: 'Sign in again before saving this draft.' });
       return false;
     }
+    draftMutationEpoch.current += 1;
     setDraftSaveState({ state: 'saving' });
     const savedAt = new Date().toISOString();
     const next = saveCustomerIntakeDraftLocally(draft, savedAt);
     const result = await saveCustomerIntakeDraft(safeActorId, next, savedAt);
     if (!mounted.current) return result.ok;
     if (result.ok) {
-      setDraft(next);
-      setDraftSaveState({ state: 'saved', savedAt });
+      const stillCurrent = draftRef.current.draftId === draft.draftId
+        && draftRef.current.revision === draft.revision;
+      if (stillCurrent) updateDraft(next);
+      setDraftSaveState(stillCurrent ? { state: 'saved', savedAt } : { state: 'idle' });
       return true;
     }
     setDraftSaveState({
@@ -174,12 +222,13 @@ export function CustomerExperienceProvider({
         : 'This device could not protect the draft. It has not been marked as saved.',
     });
     return false;
-  }, [draft, persistenceAllowed, safeActorId]);
+  }, [draft, persistenceAllowed, safeActorId, updateDraft]);
 
   const resetDraft = useCallback(() => {
-    setDraft(newDraft(safeActorId, connectionState));
+    draftMutationEpoch.current += 1;
+    updateDraft(newDraft(safeActorId, connectionState));
     setDraftSaveState({ state: 'idle' });
-  }, [connectionState, safeActorId]);
+  }, [connectionState, safeActorId, updateDraft]);
 
   const selectedService = useMemo(() => {
     if (catalogue.state !== 'ready' || !draft.selectedService) return null;
@@ -198,6 +247,7 @@ export function CustomerExperienceProvider({
     draftSaveState,
     refreshCatalogue,
     reviseDraft,
+    commitAddressPin,
     selectService,
     saveDraft,
     resetDraft,
@@ -210,6 +260,7 @@ export function CustomerExperienceProvider({
     draftSaveState,
     refreshCatalogue,
     reviseDraft,
+    commitAddressPin,
     selectService,
     saveDraft,
     resetDraft,

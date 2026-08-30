@@ -25,6 +25,23 @@ function resolveLocalRef(ref) {
 }
 
 describe('Grounded Momentum OpenAPI contract', () => {
+  test('documents source-bearing quote input while legacy match remains audit-only', () => {
+    const quoteLocation = spec.paths['/api/quote-requests'].post.requestBody
+      .content['application/json'].schema.properties.privateLocation.properties;
+    expect(quoteLocation.coordinateSource.enum).toEqual([
+      'map_pin', 'device_gps', 'entered_coordinates',
+    ]);
+    const legacyMatch = spec.paths['/api/match'].post.requestBody
+      .content['application/json'].schema.properties;
+    expect(legacyMatch.coordinate_source.enum).toEqual(['device_gps', 'entered_coordinates']);
+    expect(spec['x-grounded-capabilities']).toMatchObject({
+      maps_display: { available: false },
+      address_search: { available: false },
+      address_resolution: { available: false },
+      address_provenance_recording: { available: false },
+    });
+  });
+
   test('documents the implemented canonical route groups', () => {
     const requiredPaths = [
       '/auth/registration-policy',

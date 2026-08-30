@@ -4,6 +4,9 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
+  addressLocationFingerprint,
+  captureAddressPickerCommitGuard,
+  commitMapPinForDraft,
   CUSTOMER_CONFIRMATION_SNAPSHOT_VERSION,
   CUSTOMER_INTAKE_SCHEMA_VERSION,
   createCustomerIntakeDraft,
@@ -11,6 +14,9 @@ const {
   createSubmissionIntent,
   deriveSubmissionReadiness,
   isAddressResolutionDispatchSafe,
+  isValidCoordinates,
+  normaliseJobAddressForCommit,
+  restoreJobAddress,
   reviseCustomerIntakeDraft,
   saveCustomerIntakeDraftLocally,
   updateJobAddressDetail,
@@ -366,6 +372,113 @@ test('actual address-field edits still invalidate coordinates and confirmation',
   });
   assert.equal(changed.confirmedAt, null);
   assert.equal(changed.entryMode, 'manual');
+});
+
+test('manual typing keeps the raw buffer until an explicit commit boundary', () => {
+  const address = createReadyDraft().address;
+  const raw = updateJobAddressDetail(address, 'line1', '  99  Different Street  ');
+
+  assert.equal(raw.details.line1, '  99  Different Street  ');
+  assert.equal(raw.resolution.status, 'unresolved');
+  const committed = normaliseJobAddressForCommit(raw);
+  assert.equal(committed.details.line1, '99  Different Street');
+  assert.equal(addressLocationFingerprint(raw.details), addressLocationFingerprint(committed.details));
+});
+
+test('entry mode and coordinate source pairings are constrained at construction and dispatch', () => {
+  const address = createReadyDraft().address;
+  assert.throws(() => createResolvedJobAddress({
+    entryMode: 'manual',
+    details: address.details,
+    source: 'map_pin',
+    coordinates: { latitude: -26.2041, longitude: 28.0473 },
+    confirmedAt: null,
+  }), /incompatible/);
+  assert.throws(() => createResolvedJobAddress({
+    entryMode: 'saved_place',
+    details: address.details,
+    source: 'provider_geocode',
+    coordinates: { latitude: -26.2041, longitude: 28.0473 },
+    confirmedAt: null,
+  }), /incompatible/);
+
+  const mapPin = createResolvedJobAddress({
+    entryMode: 'map_pin',
+    details: address.details,
+    source: 'map_pin',
+    coordinates: { latitude: -26.2041, longitude: 28.0473 },
+    confirmedAt: null,
+  });
+  const forged = { ...mapPin, entryMode: 'manual' };
+  assert.equal(isAddressResolutionDispatchSafe(forged), false);
+  const restored = restoreJobAddress(forged);
+  assert.ok(restored);
+  assert.equal(restored.entryMode, 'manual');
+  assert.equal(restored.resolution.status, 'unresolved');
+  assert.equal(restored.resolution.reasonCode, 'restored_address_pair_invalid');
+
+  const unknownMode = restoreJobAddress({ ...address, entryMode: 'provider_claim_from_nowhere' });
+  assert.ok(unknownMode);
+  assert.equal(unknownMode.resolution.status, 'unresolved');
+  assert.equal(unknownMode.resolution.reasonCode, 'restored_address_pair_invalid');
+});
+
+test('pin acceptance validates coordinates and rejects stale draft guards', () => {
+  const original = createReadyDraft();
+  const manual = reviseCustomerIntakeDraft(original, {
+    address: updateJobAddressDetail(original.address, 'line1', ' 23 Example Street '),
+  }, '2026-08-29T07:03:00Z');
+  const guard = captureAddressPickerCommitGuard(manual);
+
+  for (const coordinates of [
+    { latitude: Number.NaN, longitude: 28 },
+    { latitude: 91, longitude: 28 },
+    { latitude: -26, longitude: 181 },
+  ]) {
+    assert.equal(isValidCoordinates(coordinates), false);
+    assert.deepEqual(commitMapPinForDraft(manual, guard, coordinates), {
+      ok: false,
+      reasonCode: 'invalid_coordinates',
+    });
+  }
+
+  const changedRevision = reviseCustomerIntakeDraft(manual, {
+    connectionState: 'offline',
+  }, '2026-08-29T07:04:00Z');
+  assert.deepEqual(commitMapPinForDraft(changedRevision, guard, {
+    latitude: -26.2041,
+    longitude: 28.0473,
+  }), { ok: false, reasonCode: 'address_changed_pin_recheck_required' });
+
+  const replacedDraft = { ...manual, draftId: 'draft-replaced' };
+  assert.deepEqual(commitMapPinForDraft(replacedDraft, guard, {
+    latitude: -26.2041,
+    longitude: 28.0473,
+  }), { ok: false, reasonCode: 'address_changed_pin_recheck_required' });
+
+  const result = commitMapPinForDraft(manual, guard, {
+    latitude: -26.2041,
+    longitude: 28.0473,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.address.entryMode, 'map_pin');
+  assert.equal(result.address.resolution.source, 'map_pin');
+  assert.equal(result.address.confirmedAt, null);
+  assert.equal(result.address.details.line1, '23 Example Street');
+  assert.equal(isAddressResolutionDispatchSafe(result.address), true);
+});
+
+test('pin acceptance requires the three operational address fields', () => {
+  const original = createCustomerIntakeDraft({
+    draftId: 'draft-incomplete-address',
+    createdAt: '2026-08-29T07:00:00Z',
+    connectionState: 'online',
+  });
+  const guard = captureAddressPickerCommitGuard(original);
+  assert.deepEqual(commitMapPinForDraft(original, guard, {
+    latitude: -26.2041,
+    longitude: 28.0473,
+  }), { ok: false, reasonCode: 'address_incomplete' });
 });
 
 test('schedule validation rejects past work and Now when the catalogue does not permit it', () => {

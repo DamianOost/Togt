@@ -51,12 +51,73 @@ describe('POST /bookings scheduled_at validation', () => {
         address: '123 Test Rd',
         location_lat: -29.8,
         location_lng: 31.0,
+        coordinate_source: 'device_gps',
         scheduled_at: future,
         hours_est: 2,
       });
     expect(res.status).toBe(201);
     expect(res.body.booking).toBeDefined();
     expect(res.body.booking.status).toBe('pending');
+    const stored = await db.query('SELECT coordinate_source FROM bookings WHERE id = $1', [res.body.booking.id]);
+    expect(stored.rows[0].coordinate_source).toBe('device_gps');
+  });
+
+  test('keeps legacy NULL explicit and rejects manufactured verified provenance', async () => {
+    const { customer, labourer } = await makeCustomerAndLabourer();
+    const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const legacy = await request(app)
+      .post('/bookings')
+      .set(authHeader(customer.accessToken))
+      .send({
+        labourer_id: labourer.user.id,
+        skill_needed: 'Plumbing',
+        address: '123 Test Rd',
+        location_lat: -29.8,
+        location_lng: 31.0,
+        scheduled_at: future,
+      });
+    expect(legacy.status).toBe(201);
+    const storedLegacy = await db.query(
+      'SELECT coordinate_source FROM bookings WHERE id = $1',
+      [legacy.body.booking.id]
+    );
+    expect(storedLegacy.rows[0].coordinate_source).toBeNull();
+
+    for (const coordinate_source of ['map_pin', 'saved_verified_place', 'provider_geocode']) {
+      const rejected = await request(app)
+        .post('/bookings')
+        .set(authHeader(customer.accessToken))
+        .send({
+          labourer_id: labourer.user.id,
+          skill_needed: 'Plumbing',
+          address: '123 Test Rd',
+          location_lat: -29.8,
+          location_lng: 31.0,
+          coordinate_source,
+          scheduled_at: future,
+        });
+      expect(rejected.status).toBe(400);
+      expect(rejected.body.type).toMatch(/coordinate_source_(?:not_permitted|server_reserved)$/);
+    }
+  });
+
+  test('rejects non-finite or out-of-range direct-booking coordinates before mutation', async () => {
+    const { customer, labourer } = await makeCustomerAndLabourer();
+    const rejected = await request(app)
+      .post('/bookings')
+      .set(authHeader(customer.accessToken))
+      .send({
+        labourer_id: labourer.user.id,
+        skill_needed: 'Plumbing',
+        address: '123 Test Rd',
+        location_lat: -29.8,
+        location_lng: 181,
+        coordinate_source: 'entered_coordinates',
+        scheduled_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      });
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.type).toMatch(/address_coordinates_invalid$/);
+    expect((await db.query('SELECT COUNT(*)::int AS count FROM bookings')).rows[0].count).toBe(0);
   });
 
   test('rejects invalid scheduled_at string with 400', async () => {

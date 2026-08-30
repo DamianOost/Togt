@@ -83,6 +83,7 @@ test('request input is driven by required question IDs and keeps exact location 
       address: '12 Exact Street, Rondebosch',
       latitude: -33.96,
       longitude: 18.47,
+      coordinateSource: 'map_pin',
       accessInstructions: 'Use pedestrian gate',
     },
     schedule: {
@@ -98,6 +99,22 @@ test('request input is driven by required question IDs and keeps exact location 
   expect(normalized.brief.materialsResponsibility).toBe('worker');
   expect(normalized.broadAreaLabel).toBe('Rondebosch, Cape Town');
   expect(normalized.privateLocation.address).toContain('Exact Street');
+  expect(normalized.privateLocation.coordinateSource).toBe('map_pin');
+
+  const legacyBody = {
+    ...body,
+    privateLocation: { ...body.privateLocation },
+  };
+  delete legacyBody.privateLocation.coordinateSource;
+  expect(normalizeRequestInput(legacyBody, serviceRow(), now).privateLocation)
+    .not.toHaveProperty('coordinateSource');
+
+  for (const coordinateSource of ['saved_verified_place', 'provider_geocode']) {
+    expect(() => normalizeRequestInput({
+      ...body,
+      privateLocation: { ...body.privateLocation, coordinateSource },
+    }, serviceRow(), now)).toThrow('Coordinate provenance is server reserved');
+  }
 
   expect(() => normalizeRequestInput({
     ...body,

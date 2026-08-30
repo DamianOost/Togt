@@ -131,6 +131,14 @@ function resolveBuildConfiguration(environment = process.env) {
     ),
     darkTheme: groundedMomentumEnabled && readBoolean(environment, 'TOGT_DARK_THEME', false),
   });
+  const locationCapabilities = Object.freeze({
+    schemaVersion: 1,
+    mapsDisplay: featureFlags.customerFlagship && mapsProvider === 'google',
+    // Provider search/resolution remain deliberately absent in Wave 1.
+    addressSearch: false,
+    addressResolution: false,
+    addressProvenanceRecording: featureFlags.customerFlagship,
+  });
 
   const configuredPackage = environment.ANDROID_PACKAGE_NAME?.trim() || ANDROID_PACKAGE_NAME;
   if (configuredPackage !== ANDROID_PACKAGE_NAME) {
@@ -185,6 +193,7 @@ function resolveBuildConfiguration(environment = process.env) {
     googleMapsAndroidApiKey,
     googleServicesFile,
     groundedMomentumEnabled,
+    locationCapabilities,
     mapsProvider,
     packageName: ANDROID_PACKAGE_NAME,
     peachAllowed,

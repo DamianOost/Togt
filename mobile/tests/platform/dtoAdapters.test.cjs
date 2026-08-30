@@ -135,6 +135,15 @@ test('capability adapter fails closed unless v1 data explicitly says available',
       foreground_location_updates: { available: true, mode: 'active_app_only' },
     },
   });
+  const provenanceUnavailable = adaptCapabilityAvailabilityV1('address_provenance_recording', {
+    schema_version: 1,
+    features: {
+      address_provenance_recording: {
+        available: false,
+        reason_code: 'address_provenance_contract_unavailable',
+      },
+    },
+  });
 
   assert.equal(unavailable.available, false);
   assert.equal(missing.available, false);
@@ -142,4 +151,6 @@ test('capability adapter fails closed unless v1 data explicitly says available',
   assert.equal(disabled.reasonCode, 'not_approved');
   assert.equal(enabled.available, true);
   assert.equal(enabled.mode, 'active_app_only');
+  assert.equal(provenanceUnavailable.available, false);
+  assert.equal(provenanceUnavailable.reasonCode, 'address_provenance_contract_unavailable');
 });

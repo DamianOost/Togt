@@ -17,6 +17,7 @@ const db = require('../src/config/db');
 const matcher = require('../src/services/matcher');
 const { encryptSecret } = require('../src/lib/webhookSecretCrypto');
 const { EVENT_TYPES } = require('../src/services/events');
+const { normalizeAddressEvidence } = require('../src/lib/addressProvenance');
 const {
   serializeLabourerPublic,
   serializeBookingForUser,
@@ -138,10 +139,18 @@ async function estimateBookingCost(ctx, { labourer_id, hours }) {
 }
 
 async function createMatchRequest(ctx, args) {
-  const { skill_needed, address, location_lat, location_lng, scheduled_at, hours_est, notes } = args;
+  const {
+    skill_needed, address, location_lat, location_lng,
+    coordinate_source, scheduled_at, hours_est, notes,
+  } = args;
   if (!skill_needed || !address || location_lat == null || location_lng == null || !scheduled_at) {
     throw new Error('skill_needed, address, location_lat, location_lng, scheduled_at are required');
   }
+  const location = normalizeAddressEvidence({
+    latitude: location_lat,
+    longitude: location_lng,
+    coordinateSource: coordinate_source,
+  }, { surface: 'legacy_audit', label: 'match location' });
   const sched = new Date(scheduled_at);
   if (Number.isNaN(sched.getTime()) || sched.getTime() <= Date.now()) {
     throw new Error('scheduled_at must be a valid ISO-8601 datetime in the future');
@@ -150,11 +159,11 @@ async function createMatchRequest(ctx, args) {
   const ins = await db.query(
     `INSERT INTO match_requests
        (customer_id, skill_needed, address, location_lat, location_lng,
-        scheduled_at, hours_est, notes, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         coordinate_source, scheduled_at, hours_est, notes, expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      RETURNING *`,
-    [ctx.userId, skill_needed, address, location_lat, location_lng,
-     sched, hours_est || null, notes || null, expiresAt]
+    [ctx.userId, skill_needed, address, location.latitude, location.longitude,
+     location.coordinateSource, sched, hours_est || null, notes || null, expiresAt]
   );
   const match = ins.rows[0];
   matcher.dispatchMatch(match.id);
@@ -577,6 +586,11 @@ const TOOLS = [
       properties: {
         skill_needed: { type: 'string' }, address: { type: 'string' },
         location_lat: { type: 'number' }, location_lng: { type: 'number' },
+        coordinate_source: {
+          type: 'string',
+          enum: ['device_gps', 'entered_coordinates'],
+          description: 'Optional unverified audit provenance. MCP cannot assert map_pin or server-issued sources.',
+        },
         scheduled_at: { type: 'string', format: 'date-time' },
         hours_est: { type: 'number' }, notes: { type: 'string' },
       },

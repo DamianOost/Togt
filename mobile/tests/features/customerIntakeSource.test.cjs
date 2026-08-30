@@ -67,7 +67,8 @@ test('the slice has no direct network, store, navigation or legacy service mutat
   for (const { name, source } of sourceFiles()) {
     assert.doesNotMatch(source, /from ['"]axios['"]|\bfetch\s*\(|\.post\s*\(|\.put\s*\(|\.patch\s*\(/, `${name} performs network work`);
     assert.doesNotMatch(source, /useNavigation|navigation\.|useDispatch|store\.|bookingService|locationService/, `${name} owns integration state`);
-    assert.doesNotMatch(source, /Date\.now\s*\(|Math\.random\s*\(/, `${name} creates nondeterministic identity`);
+    assert.doesNotMatch(source, /Math\.random\s*\(/, `${name} creates nondeterministic identity`);
+    assert.doesNotMatch(source, /(?:draftId|idempotencyKey)[\s\S]{0,80}Date\.now\s*\(/, `${name} creates time-based identity`);
   }
 });
 
@@ -87,22 +88,23 @@ test('model covers every price and fulfilment mode with explicit offline and ide
   assert.match(model, /Object\.freeze|deepFreeze/);
 });
 
-test('manual address fallback and capability-off states remain visible without a map', () => {
+test('manual address entry and one truthful map-off state remain visible without provider UI', () => {
   const address = read('AddressPinConfirmationScreen.tsx');
   const shared = read('components.tsx');
-  assert.match(address, /address\.manualTitle/);
+  assert.match(address, /address\.locationDetails/);
   assert.match(address, /address\.search/);
   assert.match(address, /onSelectAddressSuggestion/);
-  assert.match(address, /address\.resolve/);
-  assert.match(address, /coordinatesReady/);
-  assert.match(address, /address\.mapUnavailable/);
-  assert.match(address, /onResolveManualAddress/);
+  assert.match(address, /address\.exactLocation/);
+  assert.match(address, /exact-location-card/);
+  assert.match(address, /mapCapability\.status === 'available'/);
+  assert.match(address, /<CapabilityNotice capability=\{mapCapability\}/);
+  assert.doesNotMatch(address, /address\.resolve|onResolveManualAddress/);
   assert.match(address, /updateJobAddressDetail\(address, field, value\)/);
   assert.match(shared, /capability\.status === 'available'/);
   assert.match(shared, /capability\.explanation/);
 });
 
-test('current location fails closed until reverse-geocoding can verify displayed address text', () => {
+test('foreground GPS is explicit camera-seed input and only pin acceptance creates map provenance', () => {
   const route = fs.readFileSync(path.join(
     mobileRoot,
     'src',
@@ -112,17 +114,103 @@ test('current location fails closed until reverse-geocoding can verify displayed
     'CustomerIntakeRoutes.tsx',
   ), 'utf8');
   const address = read('AddressPinConfirmationScreen.tsx');
+  const picker = read('ExactPinPickerScreen.tsx');
   const model = read('model.ts');
+  const context = fs.readFileSync(path.join(
+    mobileRoot,
+    'src',
+    'features',
+    'customer',
+    'integration',
+    'CustomerExperienceContext.tsx',
+  ), 'utf8');
 
   assert.doesNotMatch(route, /from ['"]expo-location['"]/);
   assert.doesNotMatch(route, /requestForegroundPermissionsAsync|getCurrentPositionAsync/);
-  assert.match(route, /reverse_geocoding_not_configured/);
-  assert.match(route, /currentLocationCapability=\{UNAVAILABLE_CURRENT_LOCATION\}/);
+  assert.match(route, /locationService\.requestForegroundPosition\(\)/);
+  assert.match(route, /captureAddressPickerCommitGuard\(draft\)/);
+  assert.match(route, /const guard = pickerGuardFromRoute\(route\.params\?\.guard\);/);
+  assert.doesNotMatch(route, /pickerGuardFromRoute\(route\.params\?\.guard\) \?\?/);
+  assert.match(route, /testID="exact-pin-picker-invalid-state"/);
+  assert.match(route, /commitAddressPin\(guard, coordinates\)/);
+  assert.doesNotMatch(route, /commitMapPinForDraft\(draft, guard, coordinates\)/);
+  assert.match(context, /commitMapPinForDraft\(draftRef\.current, guard, coordinates\)|const current = draftRef\.current;[\s\S]*commitMapPinForDraft\(current, guard, coordinates\)/);
+  assert.match(context, /draftMutationEpoch\.current !== restoreStartedAtEpoch/);
+  assert.match(context, /const reviseDraft[\s\S]*draftMutationEpoch\.current \+= 1;[\s\S]*updateDraft/);
+  assert.match(context, /const commitAddressPin[\s\S]*if \(!committed\.ok\) return committed;[\s\S]*draftMutationEpoch\.current \+= 1;[\s\S]*updateDraft/);
+  assert.match(route, /await getCapabilityStateAtAction\('maps_display'[\s\S]*!routeActive\.current[\s\S]*commitAddressPin\(guard, coordinates\)/);
+  assert.match(route, /getCapabilityStateAtAction\('maps_display'/);
   assert.match(route, /isAddressResolutionDispatchSafe\(snapshot\.address\)/);
   assert.match(address, /isAddressResolutionDispatchSafe\(address\)/);
-  assert.match(address, /address\.coordinatesUnverified/);
+  assert.doesNotMatch(picker, /from ['"]expo-location['"]|locationService/);
+  assert.match(picker, /label="Centre on my location"/);
+  assert.match(picker, /onPress=\{\(\) => \{ void centreOnLocation\(\); \}\}/);
+  assert.match(picker, /label="Use this pin"/);
+  assert.match(picker, /Place pin at map centre/);
+  assert.match(picker, /disabled=\{!candidate \|\| !mapAvailable \|\| !mapReady/);
+  assert.match(picker, /const candidateAtStart = candidateRef\.current/);
+  assert.match(picker, /candidateRevisionAtStart[\s\S]*await refreshCapability\(\)[\s\S]*isCandidateRevisionCurrent\(candidateRevisionAtStart, candidateRevision\.current\)/);
+  assert.match(picker, /pointerEvents=\{committing \? 'none' : 'auto'\}/);
+  assert.match(picker, /draggable=\{!committing\}/);
+  assert.match(picker, /initialCoordinate \? closePinRegion\(initialCoordinate\) : SOUTH_AFRICA_OVERVIEW_REGION/);
+  assert.match(picker, /initialRegion=\{visibleRegion\}/);
+  assert.match(picker, /candidate \? closePinRegion\(candidate\) : visibleRegion/);
   assert.match(model, /source === 'map_pin'[\s\S]*source === 'saved_verified_place'[\s\S]*source === 'provider_geocode'/);
+  assert.match(model, /source: 'map_pin'/);
   assert.match(model, /isAddressResolutionDispatchSafe\(draft\.address\)[\s\S]*coordinates_unverified/);
+});
+
+test('the exact-pin surface is dedicated, accessible and preserves explicit acceptance', () => {
+  const picker = read('ExactPinPickerScreen.tsx');
+  const preview = read('ExactLocationMapPreview.tsx');
+  const route = fs.readFileSync(path.join(
+    mobileRoot,
+    'src',
+    'features',
+    'customer',
+    'integration',
+    'CustomerIntakeRoutes.tsx',
+  ), 'utf8');
+  const stack = fs.readFileSync(path.join(mobileRoot, 'src', 'navigation', 'GroundedCustomerStack.tsx'), 'utf8');
+
+  assert.match(stack, /name="ExactPinPicker"[\s\S]*component=\{CustomerExactPinPickerRoute\}/);
+  assert.match(stack, /presentation: 'modal'/);
+  assert.match(route, /navigation\.navigate\('ExactPinPicker'/);
+  assert.match(picker, /testID="exact-pin-picker-screen"/);
+  assert.match(picker, /accessibilityLiveRegion="assertive"/);
+  assert.match(picker, /AccessibilityInfo\.setAccessibilityFocus/);
+  assert.match(picker, /accessibilityHint="Requests foreground location permission/);
+  assert.match(picker, /draggable/);
+  assert.match(picker, /onDragEnd/);
+  assert.match(picker, /onRegionChangeComplete/);
+  assert.match(picker, /Place pin at map centre/);
+  assert.match(preview, /pointerEvents="none"/);
+  assert.match(preview, /importantForAccessibility="no-hide-descendants"/);
+  assert.match(preview, /region=\{closePinRegion\(coordinates\)\}/);
+  assert.match(route, /const routeActive = useRef\(true\)/);
+  assert.match(route, /if \(!routeActive\.current\) return;/);
+  assert.match(picker, /active\.current = false;[\s\S]*onCancel\(\)/);
+  assert.ok(
+    picker.indexOf("announceForAccessibility('Exact job pin saved.')")
+      < picker.indexOf('onCommitSuccess();'),
+    'TalkBack success must be queued before the route is dismissed',
+  );
+  assert.match(route, /onCommitSuccess=\{\(\) => \{[\s\S]*navigation\.goBack\(\)/);
+});
+
+test('foreground location distinguishes approximate, denied and blocked results without background access', () => {
+  const service = fs.readFileSync(path.join(mobileRoot, 'src', 'services', 'locationService.js'), 'utf8');
+  const app = JSON.parse(fs.readFileSync(path.join(mobileRoot, 'app.json'), 'utf8')).expo;
+
+  assert.match(service, /async requestForegroundPosition\(\)/);
+  assert.match(service, /requestForegroundPermissionsAsync\(\)/);
+  assert.match(service, /permission\.android\?\.accuracy === 'coarse'/);
+  assert.match(service, /granted_approximate/);
+  assert.match(service, /location_permission_denied/);
+  assert.match(service, /location_permission_blocked/);
+  assert.doesNotMatch(service, /requestBackgroundPermissionsAsync/);
+  assert.doesNotMatch(app.android.permissions.join(','), /ACCESS_BACKGROUND_LOCATION/);
+  assert.ok(app.android.blockedPermissions.includes('android.permission.ACCESS_BACKGROUND_LOCATION'));
 });
 
 test('boolean catalogue questions use keyed Yes and No controls with literal boolean answers', () => {

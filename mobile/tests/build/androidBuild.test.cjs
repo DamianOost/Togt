@@ -5,23 +5,114 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const {
+  BASELINE_SIGNER_SHA1,
   BASELINE_SIGNER_SHA256,
   BLOCKED_ANDROID_PERMISSIONS,
   assertAndroidPermissionBoundary,
+  assertAddressPinCandidateProfile,
   assertApkSdkVersions,
+  assertGoogleMapsManifestMetadata,
   assertRuntimeAssetMetadata,
   createArtifactBaseName,
   createSafeRuntimeContract,
   fingerprintRuntimeContract,
   normalizeFingerprint,
+  normalizeSha1Fingerprint,
   parseAaptBadging,
   parseAaptPermissions,
   parseAbiList,
   parseAndroidCleartextPolicy,
   parseAndroidVersionCatalog,
   parseSignerFingerprint,
+  parseSignerFingerprints,
   resolveSigningConfiguration,
 } = require('../../scripts/android-build.cjs');
+
+test('address-pin vc4 preflight requires the flagship Google Maps profile', () => {
+  const identity = {
+    packageName: 'za.togt.app',
+    versionCode: 4,
+    versionName: '1.2.0',
+  };
+  const runtime = runtimeAssetFixture({
+    featureFlags: {
+      ...runtimeAssetFixture().runtime.featureFlags,
+      groundedMomentumShell: true,
+      customerFlagship: true,
+    },
+    googleMapsAndroidApiKey: 'synthetic-test-key',
+    locationCapabilities: {
+      schemaVersion: 1,
+      mapsDisplay: true,
+      addressSearch: false,
+      addressResolution: false,
+      addressProvenanceRecording: true,
+    },
+    mapsProvider: 'google',
+  }).runtime;
+
+  assert.doesNotThrow(() => assertAddressPinCandidateProfile(identity, runtime));
+  assert.throws(
+    () => assertAddressPinCandidateProfile(identity, { ...runtime, mapsProvider: 'disabled' }),
+    /requires the packaged Google Maps provider/
+  );
+  assert.throws(
+    () => assertAddressPinCandidateProfile(identity, {
+      ...runtime,
+      featureFlags: { ...runtime.featureFlags, customerFlagship: false },
+    }),
+    /requires groundedMomentumShell and customerFlagship/
+  );
+  assert.throws(
+    () => assertAddressPinCandidateProfile(identity, {
+      ...runtime,
+      locationCapabilities: { ...runtime.locationCapabilities, mapsDisplay: false },
+    }),
+    /requires the packaged location-capability contract/
+  );
+  assert.throws(
+    () => assertAddressPinCandidateProfile({ ...identity, versionName: '1.1.0' }, runtime),
+    /must use versionName 1\.2\.0/
+  );
+});
+
+test('APK map metadata inspection verifies the packaged key without recording it', () => {
+  const key = 'synthetic-android-key';
+  const xml = [
+    'E: meta-data',
+    'A: android:name="com.google.android.geo.API_KEY"',
+    `A: android:value="${key}"`,
+  ].join('\n');
+  assert.equal(assertGoogleMapsManifestMetadata(xml, {
+    googleMapsAndroidApiKey: key,
+    mapsProvider: 'google',
+  }), true);
+  assert.throws(
+    () => assertGoogleMapsManifestMetadata(xml, {
+      googleMapsAndroidApiKey: 'different-key',
+      mapsProvider: 'google',
+    }),
+    /does not contain the configured Android key/
+  );
+  assert.equal(assertGoogleMapsManifestMetadata('E: manifest', {
+    googleMapsAndroidApiKey: null,
+    mapsProvider: 'disabled',
+    locationCapabilities: {
+      schemaVersion: 1,
+      mapsDisplay: false,
+      addressSearch: false,
+      addressResolution: false,
+      addressProvenanceRecording: true,
+    },
+  }), false);
+  assert.throws(
+    () => assertGoogleMapsManifestMetadata(xml, {
+      googleMapsAndroidApiKey: null,
+      mapsProvider: 'disabled',
+    }),
+    /present in a Maps-disabled build/
+  );
+});
 
 function runtimeAssetFixture(overrides = {}) {
   const runtime = {
@@ -60,6 +151,7 @@ function runtimeAssetFixture(overrides = {}) {
         peach: runtime.peachAllowed,
         push: runtime.pushProvider,
       },
+      locationCapabilities: runtime.locationCapabilities,
       featureFlags: {
         schemaVersion: 1,
         flags: runtime.featureFlags,
@@ -73,9 +165,9 @@ test('Grounded Momentum release identity keeps the package and advances beyond P
   const app = require('../../app.json').expo;
   const packageJson = require('../../package.json');
   assert.equal(app.android.package, 'za.togt.app');
-  assert.equal(app.version, '1.1.0');
+  assert.equal(app.version, '1.2.0');
   assert.equal(packageJson.version, app.version);
-  assert.equal(app.android.versionCode, 3);
+  assert.equal(app.android.versionCode, 4);
   assert.equal(packageJson.scripts.android, 'expo run:android');
   assert.equal(packageJson.scripts.ios, 'expo run:ios');
   assert.deepEqual(parseAbiList(), ['arm64-v8a']);
@@ -91,12 +183,12 @@ test('artifact naming is deterministic across the locked identity inputs', () =>
     configClass: 'development-lan',
     sourceCommit: '0123456789abcdef0123456789abcdef01234567',
     runtimeConfigSha256: 'A'.repeat(64),
-    versionCode: 3,
-    versionName: '1.1.0',
+    versionCode: 4,
+    versionName: '1.2.0',
   };
   assert.equal(
     createArtifactBaseName(values),
-    'TOGT-development-lan-1.1.0-vc3-0123456789ab-rtaaaaaaaaaaaa-arm64-v8a'
+    'TOGT-development-lan-1.2.0-vc4-0123456789ab-rtaaaaaaaaaaaa-arm64-v8a'
   );
   assert.equal(createArtifactBaseName(values), createArtifactBaseName({ ...values }));
 });
@@ -112,7 +204,7 @@ test('ABI parsing deduplicates supported values and rejects unsupported values',
 
 test('aapt metadata parser records package, version, SDK, and actual ABIs', () => {
   const parsed = parseAaptBadging([
-    "package: name='za.togt.app' versionCode='3' versionName='1.1.0' platformBuildVersionName='16' platformBuildVersionCode='36' compileSdkVersion='36' compileSdkVersionCodename='16'",
+    "package: name='za.togt.app' versionCode='4' versionName='1.2.0' platformBuildVersionName='16' platformBuildVersionCode='36' compileSdkVersion='36' compileSdkVersionCodename='16'",
     "sdkVersion:'24'",
     "targetSdkVersion:'36'",
     "native-code: 'arm64-v8a'",
@@ -123,8 +215,8 @@ test('aapt metadata parser records package, version, SDK, and actual ABIs', () =
     minSdkVersion: '24',
     packageName: 'za.togt.app',
     targetSdkVersion: '36',
-    versionCode: 3,
-    versionName: '1.1.0',
+    versionCode: 4,
+    versionName: '1.2.0',
   });
   assert.doesNotThrow(() => assertApkSdkVersions(parsed));
   assert.throws(
@@ -176,14 +268,46 @@ test('APK permission evidence excludes camera, audio, overlay, and legacy storag
 });
 
 test('signer parser normalizes apksigner output and rejects missing evidence', () => {
-  const output = `Signer #1 certificate SHA-256 digest: ${BASELINE_SIGNER_SHA256.toLowerCase()}`;
+  const output = [
+    `Signer #1 certificate SHA-1 digest: ${BASELINE_SIGNER_SHA1.toLowerCase()}`,
+    `Signer #1 certificate SHA-256 digest: ${BASELINE_SIGNER_SHA256.toLowerCase()}`,
+  ].join('\n');
   assert.equal(parseSignerFingerprint(output), BASELINE_SIGNER_SHA256);
+  assert.deepEqual(parseSignerFingerprints(output), {
+    sha1: BASELINE_SIGNER_SHA1,
+    sha256: BASELINE_SIGNER_SHA256,
+  });
   assert.equal(
     normalizeFingerprint(BASELINE_SIGNER_SHA256.match(/../g).join(':')),
     BASELINE_SIGNER_SHA256
   );
+  assert.equal(
+    normalizeSha1Fingerprint(BASELINE_SIGNER_SHA1.match(/../g).join(':')),
+    BASELINE_SIGNER_SHA1
+  );
   assert.throws(() => parseSignerFingerprint('Verified'), /did not report a signer/);
+  assert.throws(
+    () => parseSignerFingerprints(`Signer #1 certificate SHA-256 digest: ${BASELINE_SIGNER_SHA256}`),
+    /did not report a signer SHA-1/
+  );
   assert.throws(() => normalizeFingerprint('1234'), /64-character SHA-256/);
+  assert.throws(() => normalizeSha1Fingerprint('1234'), /40-character SHA-1/);
+});
+
+test('the internal signer baseline cannot be redefined by an environment override', () => {
+  assert.throws(
+    () => resolveSigningConfiguration({
+      TOGT_ANDROID_EXPECTED_SIGNER_SHA256: 'A'.repeat(64),
+      TOGT_ANDROID_SIGNING_MODE: 'generated-debug',
+    }, { appEnvironment: 'development' }),
+    /cannot redefine the internal signer baseline/
+  );
+  const resolved = resolveSigningConfiguration({
+    TOGT_ANDROID_EXPECTED_SIGNER_SHA256: BASELINE_SIGNER_SHA256.match(/../g).join(':'),
+    TOGT_ANDROID_SIGNING_MODE: 'generated-debug',
+  }, { appEnvironment: 'development' });
+  assert.equal(resolved.expectedSignerSha1, BASELINE_SIGNER_SHA1);
+  assert.equal(resolved.expectedSignerSha256, BASELINE_SIGNER_SHA256);
 });
 
 test('prebuild cleartext parser requires an explicit application policy', () => {
@@ -268,10 +392,21 @@ test('runtime configuration fingerprint binds endpoint, providers, and feature f
     ...runtime,
     featureFlags: { ...runtime.featureFlags, relationships: true },
   }));
+  const changedLocationCapability = fingerprintRuntimeContract(createSafeRuntimeContract({
+    ...runtime,
+    locationCapabilities: { ...runtime.locationCapabilities, mapsDisplay: true },
+  }));
+  const changedMapsKey = fingerprintRuntimeContract(createSafeRuntimeContract({
+    ...runtime,
+    googleMapsAndroidApiKey: 'rotated-synthetic-key',
+    mapsProvider: 'google',
+  }));
   assert.match(baseline, /^[A-F0-9]{64}$/);
   assert.notEqual(changedEndpoint, baseline);
   assert.notEqual(changedProvider, baseline);
   assert.notEqual(changedFlag, baseline);
+  assert.notEqual(changedLocationCapability, baseline);
+  assert.notEqual(changedMapsKey, baseline);
 });
 
 test('release keystores inside the repository are rejected before signing', () => {
@@ -334,4 +469,27 @@ test('runtime asset guard rejects a stale packaged feature path', () => {
     () => assertRuntimeAssetMetadata(JSON.stringify(stale), 'bundle', runtime),
     /feature flag aiAssistedIntake mismatch/
   );
+});
+
+test('candidate APKs remain quarantined until every artifact inspection passes', () => {
+  const source = fs.readFileSync(
+    path.resolve(__dirname, '..', '..', 'scripts', 'android-build.cjs'),
+    'utf8'
+  );
+  const buildStart = source.indexOf('function buildApk(');
+  assert.notEqual(buildStart, -1);
+  const buildSource = source.slice(buildStart, source.indexOf('\nfunction main(', buildStart));
+  const quarantineIndex = buildSource.indexOf('fs.mkdtempSync(');
+  const signatureInspectionIndex = buildSource.indexOf('parseSignerFingerprints(signerOutput)');
+  const metadataInspectionIndex = buildSource.indexOf('assertGoogleMapsManifestMetadata(');
+  const publishIndex = buildSource.indexOf('fs.copyFileSync(inspectedApk, artifactPath');
+  const cleanupIndex = buildSource.indexOf('removeGeneratedDirectory(quarantineRoot, outputRoot)');
+
+  assert.ok(quarantineIndex >= 0, 'build must create an isolated candidate directory');
+  assert.ok(signatureInspectionIndex > quarantineIndex, 'signature inspection must use the quarantined APK');
+  assert.ok(metadataInspectionIndex > signatureInspectionIndex, 'manifest inspection must follow signature verification');
+  assert.ok(publishIndex > metadataInspectionIndex, 'publication must happen only after inspections pass');
+  assert.ok(cleanupIndex > publishIndex, 'candidate quarantine must be cleaned after publication or failure');
+  assert.match(buildSource, /COPYFILE_EXCL/);
+  assert.match(buildSource, /finally\s*{\s*removeGeneratedDirectory\(quarantineRoot, outputRoot\)/);
 });

@@ -10,6 +10,7 @@ const { recordPrivacyAudit } = require('../lib/privacyAudit');
 const { verifyStartPin, withStartContext } = require('../lib/startPin');
 const { problemResponse } = require('../lib/problemJson');
 const { legacyDirectBookingCreationEnabled } = require('../config/legacyCompatibility');
+const { normalizeAddressEvidence } = require('../lib/addressProvenance');
 
 const STATUS_TO_EVENT = {
   accepted: 'booking.accepted',
@@ -57,11 +58,20 @@ router.post('/', authMiddleware, requireLegacyDirectBookingCompatibility, idempo
       return res.status(403).json({ error: 'Only customers can create bookings' });
     }
 
-    const { labourer_id, skill_needed, address, location_lat, location_lng, scheduled_at, hours_est, notes } = req.body;
+    const {
+      labourer_id, skill_needed, address, location_lat, location_lng,
+      coordinate_source, scheduled_at, hours_est, notes,
+    } = req.body;
 
-    if (!labourer_id || !skill_needed || !address || !location_lat || !location_lng || !scheduled_at) {
+    if (!labourer_id || !skill_needed || !address
+        || location_lat == null || location_lng == null || !scheduled_at) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
+    const location = normalizeAddressEvidence({
+      latitude: location_lat,
+      longitude: location_lng,
+      coordinateSource: coordinate_source,
+    }, { surface: 'legacy_audit', status: 400, label: 'booking location' });
 
     const scheduledDate = new Date(scheduled_at);
     if (Number.isNaN(scheduledDate.getTime())) {
@@ -89,11 +99,11 @@ router.post('/', authMiddleware, requireLegacyDirectBookingCompatibility, idempo
       const result = await client.query(
         `INSERT INTO bookings
            (customer_id, labourer_id, skill_needed, address, location_lat, location_lng,
-            scheduled_at, hours_est, total_amount, notes)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            coordinate_source, scheduled_at, hours_est, total_amount, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          RETURNING *`,
-        [req.user.id, labourer_id, skill_needed, address, location_lat, location_lng,
-         scheduled_at, hours_est || null, total_amount, notes || null]
+        [req.user.id, labourer_id, skill_needed, address, location.latitude, location.longitude,
+         location.coordinateSource, scheduled_at, hours_est || null, total_amount, notes || null]
       );
       const row = result.rows[0];
       await emitEvent(client, {

@@ -17,6 +17,25 @@ export type Coordinates = Readonly<{
   longitude: number;
 }>;
 
+export type AddressEntryMode =
+  | 'manual'
+  | 'saved_place'
+  | 'current_location'
+  | 'map_pin'
+  | 'provider_search';
+
+export type ResolvedCoordinateSource =
+  | 'map_pin'
+  | 'saved_verified_place'
+  | 'provider_geocode'
+  | 'device_gps'
+  | 'entered_coordinates';
+
+export type DispatchSafeCoordinateSource = Extract<
+  ResolvedCoordinateSource,
+  'map_pin' | 'saved_verified_place' | 'provider_geocode'
+>;
+
 export type CoordinateResolution =
   | Readonly<{
       status: 'unresolved';
@@ -26,7 +45,7 @@ export type CoordinateResolution =
     }>
   | Readonly<{
       status: 'resolved';
-      source: 'map_pin' | 'saved_verified_place' | 'provider_geocode' | 'device_gps' | 'entered_coordinates';
+      source: ResolvedCoordinateSource;
       coordinates: Coordinates;
       reasonCode: 'coordinates_resolved';
       detailsFingerprint: string;
@@ -44,7 +63,7 @@ export type AddressDetails = Readonly<{
 }>;
 
 export type JobAddress = Readonly<{
-  entryMode: 'manual' | 'saved_place' | 'current_location' | 'map_pin';
+  entryMode: AddressEntryMode;
   details: AddressDetails;
   resolution: CoordinateResolution;
   confirmedAt: string | null;
@@ -280,8 +299,10 @@ function requireMinorAmount(value: number, field: string): number {
   return value;
 }
 
-function isValidCoordinates(coordinates: Coordinates): boolean {
-  return Number.isFinite(coordinates.latitude)
+export function isValidCoordinates(coordinates: Coordinates | null | undefined): coordinates is Coordinates {
+  return coordinates !== null
+    && coordinates !== undefined
+    && Number.isFinite(coordinates.latitude)
     && Number.isFinite(coordinates.longitude)
     && coordinates.latitude >= -90
     && coordinates.latitude <= 90
@@ -336,7 +357,7 @@ function normaliseBrief(brief: JobBrief): JobBrief {
   });
 }
 
-function normaliseAddressDetails(details: AddressDetails): AddressDetails {
+export function normaliseAddressDetails(details: AddressDetails): AddressDetails {
   return deepFreeze({
     line1: details.line1.trim(),
     unitOrComplex: details.unitOrComplex.trim(),
@@ -349,29 +370,54 @@ function normaliseAddressDetails(details: AddressDetails): AddressDetails {
   });
 }
 
-function addressLocationFingerprint(details: AddressDetails): string {
-  return stableFingerprint({
+function rawAddressDetails(details: AddressDetails): AddressDetails {
+  return deepFreeze({
     line1: details.line1,
     unitOrComplex: details.unitOrComplex,
     suburb: details.suburb,
     city: details.city,
     province: details.province,
     postalCode: details.postalCode,
+    landmark: details.landmark,
+    accessInstructions: details.accessInstructions,
+  });
+}
+
+export function addressLocationFingerprint(details: AddressDetails): string {
+  const normalised = normaliseAddressDetails(details);
+  return stableFingerprint({
+    line1: normalised.line1,
+    unitOrComplex: normalised.unitOrComplex,
+    suburb: normalised.suburb,
+    city: normalised.city,
+    province: normalised.province,
+    postalCode: normalised.postalCode,
   });
 }
 
 export type DispatchSafeJobAddress = JobAddress & Readonly<{
   resolution: Extract<CoordinateResolution, { status: 'resolved' }> & Readonly<{
-    source: 'map_pin' | 'saved_verified_place' | 'provider_geocode';
+    source: DispatchSafeCoordinateSource;
   }>;
 }>;
 
-function isDispatchSafeCoordinateSource(
-  source: Extract<CoordinateResolution, { status: 'resolved' }>['source'],
+export function isDispatchSafeCoordinateSource(
+  source: ResolvedCoordinateSource,
 ): source is DispatchSafeJobAddress['resolution']['source'] {
   return source === 'map_pin'
     || source === 'saved_verified_place'
     || source === 'provider_geocode';
+}
+
+export function isAddressEntryModeSourcePairValid(
+  entryMode: AddressEntryMode,
+  source: ResolvedCoordinateSource,
+): boolean {
+  if (entryMode === 'map_pin') return source === 'map_pin';
+  if (entryMode === 'saved_place') return source === 'saved_verified_place';
+  if (entryMode === 'current_location') return source === 'device_gps';
+  if (entryMode === 'provider_search') return source === 'provider_geocode';
+  return source === 'provider_geocode' || source === 'entered_coordinates';
 }
 
 /**
@@ -382,6 +428,7 @@ function isDispatchSafeCoordinateSource(
  */
 export function isAddressResolutionDispatchSafe(address: JobAddress): address is DispatchSafeJobAddress {
   return address.resolution.status === 'resolved'
+    && isAddressEntryModeSourcePairValid(address.entryMode, address.resolution.source)
     && isDispatchSafeCoordinateSource(address.resolution.source)
     && isValidCoordinates(address.resolution.coordinates)
     && (
@@ -392,17 +439,24 @@ export function isAddressResolutionDispatchSafe(address: JobAddress): address is
     );
 }
 
-function normaliseAddress(address: JobAddress): JobAddress {
-  const details = normaliseAddressDetails(address.details);
+function prepareAddress(address: JobAddress, commit: boolean): JobAddress {
+  const details = commit ? normaliseAddressDetails(address.details) : rawAddressDetails(address.details);
   if (address.resolution.status === 'resolved' && !isValidCoordinates(address.resolution.coordinates)) {
     throw new TypeError('resolved coordinates are invalid');
   }
   if (
     address.resolution.status === 'resolved'
+    && !isAddressEntryModeSourcePairValid(address.entryMode, address.resolution.source)
+  ) {
+    throw new TypeError('entryMode and coordinate source are incompatible');
+  }
+  const normalisedDetails = normaliseAddressDetails(details);
+  if (
+    address.resolution.status === 'resolved'
     && address.resolution.detailsFingerprint !== addressLocationFingerprint(details)
     // Accept and migrate persisted v1 drafts whose fingerprint also covered
     // landmark and access notes. Those notes never identify the map position.
-    && address.resolution.detailsFingerprint !== stableFingerprint(details)
+    && address.resolution.detailsFingerprint !== stableFingerprint(normalisedDetails)
   ) {
     throw new TypeError('address text and resolved coordinates must come from the same address version');
   }
@@ -412,7 +466,7 @@ function normaliseAddress(address: JobAddress): JobAddress {
   const confirmationEligible = resolution.status === 'resolved'
     && isDispatchSafeCoordinateSource(resolution.source);
   return deepFreeze({
-    entryMode: address.entryMode,
+    entryMode: resolution.status === 'unresolved' ? 'manual' : address.entryMode,
     details,
     resolution,
     // GPS/entered-coordinate drafts cannot retain dispatch confirmation. A
@@ -423,6 +477,128 @@ function normaliseAddress(address: JobAddress): JobAddress {
   });
 }
 
+/**
+ * Commit boundary for Save Draft, pin acceptance and consequential submission.
+ * Ordinary field updates deliberately use the raw-buffer path instead.
+ */
+export function normaliseJobAddressForCommit(address: JobAddress): JobAddress {
+  return prepareAddress(address, true);
+}
+
+/**
+ * Fail-closed restoration for legacy or locally corrupted address state. Valid
+ * legacy unsafe pairs remain auditable but can never retain confirmation.
+ */
+export function restoreJobAddress(input: unknown): JobAddress | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const value = input as Record<string, unknown>;
+  const details = value.details;
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return null;
+  const detailRecord = details as Record<string, unknown>;
+  const fields: Array<keyof AddressDetails> = [
+    'line1',
+    'unitOrComplex',
+    'suburb',
+    'city',
+    'province',
+    'postalCode',
+    'landmark',
+    'accessInstructions',
+  ];
+  if (!fields.every((field) => typeof detailRecord[field] === 'string')) return null;
+  const addressDetails = Object.fromEntries(
+    fields.map((field) => [field, detailRecord[field]]),
+  ) as AddressDetails;
+  const entryModes: readonly AddressEntryMode[] = [
+    'manual',
+    'saved_place',
+    'current_location',
+    'map_pin',
+    'provider_search',
+  ];
+  const entryModeValid = entryModes.includes(value.entryMode as AddressEntryMode);
+  const entryMode = entryModeValid
+    ? value.entryMode as AddressEntryMode
+    : 'manual';
+  const resolution = value.resolution;
+  if (!resolution || typeof resolution !== 'object' || Array.isArray(resolution)) return null;
+  const resolutionRecord = resolution as Record<string, unknown>;
+  if (resolutionRecord.status === 'unresolved') {
+    return prepareAddress({
+      entryMode: 'manual',
+      details: addressDetails,
+      resolution: {
+        status: 'unresolved',
+        source: null,
+        coordinates: null,
+        reasonCode: typeof resolutionRecord.reasonCode === 'string'
+          ? resolutionRecord.reasonCode
+          : 'coordinates_not_resolved',
+      },
+      confirmedAt: null,
+    }, true);
+  }
+  const sources: readonly ResolvedCoordinateSource[] = [
+    'map_pin',
+    'saved_verified_place',
+    'provider_geocode',
+    'device_gps',
+    'entered_coordinates',
+  ];
+  const source = resolutionRecord.source as ResolvedCoordinateSource;
+  const coordinates = resolutionRecord.coordinates as Coordinates | null;
+  const fingerprint = resolutionRecord.detailsFingerprint;
+  const confirmedAt = value.confirmedAt;
+  if (
+    resolutionRecord.status !== 'resolved'
+    || !sources.includes(source)
+    || !isValidCoordinates(coordinates)
+    || typeof fingerprint !== 'string'
+    || (confirmedAt !== null && typeof confirmedAt !== 'string')
+  ) {
+    return null;
+  }
+  if (!entryModeValid) {
+    return prepareAddress({
+      entryMode: 'manual',
+      details: addressDetails,
+      resolution: {
+        status: 'unresolved',
+        source: null,
+        coordinates: null,
+        reasonCode: 'restored_address_pair_invalid',
+      },
+      confirmedAt: null,
+    }, true);
+  }
+  try {
+    return prepareAddress({
+      entryMode,
+      details: addressDetails,
+      resolution: {
+        status: 'resolved',
+        source,
+        coordinates,
+        reasonCode: 'coordinates_resolved',
+        detailsFingerprint: fingerprint,
+      },
+      confirmedAt,
+    }, true);
+  } catch {
+    return prepareAddress({
+      entryMode: 'manual',
+      details: addressDetails,
+      resolution: {
+        status: 'unresolved',
+        source: null,
+        coordinates: null,
+        reasonCode: 'restored_address_pair_invalid',
+      },
+      confirmedAt: null,
+    }, true);
+  }
+}
+
 export function createResolvedJobAddress(input: Readonly<{
   entryMode: JobAddress['entryMode'];
   details: AddressDetails;
@@ -430,8 +606,11 @@ export function createResolvedJobAddress(input: Readonly<{
   coordinates: Coordinates;
   confirmedAt: string | null;
 }>): JobAddress {
+  if (!isAddressEntryModeSourcePairValid(input.entryMode, input.source)) {
+    throw new TypeError('entryMode and coordinate source are incompatible');
+  }
   const details = normaliseAddressDetails(input.details);
-  return normaliseAddress({
+  return prepareAddress({
     entryMode: input.entryMode,
     details,
     resolution: {
@@ -442,6 +621,60 @@ export function createResolvedJobAddress(input: Readonly<{
       detailsFingerprint: addressLocationFingerprint(details),
     },
     confirmedAt: input.confirmedAt,
+  }, true);
+}
+
+export type AddressPickerCommitGuard = Readonly<{
+  draftId: string;
+  draftRevision: number;
+  detailsFingerprint: string;
+}>;
+
+export type MapPinCommitResult =
+  | Readonly<{ ok: true; address: JobAddress }>
+  | Readonly<{
+      ok: false;
+      reasonCode: 'address_changed_pin_recheck_required' | 'invalid_coordinates' | 'address_incomplete';
+    }>;
+
+export function captureAddressPickerCommitGuard(
+  draft: CustomerIntakeDraft,
+): AddressPickerCommitGuard {
+  return deepFreeze({
+    draftId: draft.draftId,
+    draftRevision: draft.revision,
+    detailsFingerprint: addressLocationFingerprint(draft.address.details),
+  });
+}
+
+export function commitMapPinForDraft(
+  draft: CustomerIntakeDraft,
+  guard: AddressPickerCommitGuard,
+  coordinates: Coordinates,
+): MapPinCommitResult {
+  if (
+    draft.draftId !== guard.draftId
+    || draft.revision !== guard.draftRevision
+    || addressLocationFingerprint(draft.address.details) !== guard.detailsFingerprint
+  ) {
+    return Object.freeze({ ok: false, reasonCode: 'address_changed_pin_recheck_required' });
+  }
+  if (!isValidCoordinates(coordinates)) {
+    return Object.freeze({ ok: false, reasonCode: 'invalid_coordinates' });
+  }
+  const details = normaliseAddressDetails(draft.address.details);
+  if (!details.line1 || !details.city || !details.province) {
+    return Object.freeze({ ok: false, reasonCode: 'address_incomplete' });
+  }
+  return Object.freeze({
+    ok: true,
+    address: createResolvedJobAddress({
+      entryMode: 'map_pin',
+      details,
+      source: 'map_pin',
+      coordinates,
+      confirmedAt: null,
+    }),
   });
 }
 
@@ -461,14 +694,14 @@ export function updateJobAddressDetail(
 ): JobAddress {
   const details = { ...address.details, [field]: value };
   if (!LOCATION_ADDRESS_FIELDS.has(field)) {
-    return normaliseAddress({
+    return prepareAddress({
       ...address,
       details,
       // Notes must be confirmed again, but they do not move the verified pin.
       confirmedAt: null,
-    });
+    }, false);
   }
-  return normaliseAddress({
+  return prepareAddress({
     entryMode: 'manual',
     details,
     resolution: {
@@ -478,7 +711,7 @@ export function updateJobAddressDetail(
       reasonCode: 'address_text_changed',
     },
     confirmedAt: null,
-  });
+  }, false);
 }
 
 function normaliseSchedule(schedule: ScheduleSelection | null): ScheduleSelection | null {
@@ -571,7 +804,7 @@ export function reviseCustomerIntakeDraft(
       ? null
       : normaliseCatalogueSnapshot(changes.selectedService);
   const brief = changes.brief === undefined ? draft.brief : normaliseBrief(changes.brief);
-  const address = changes.address === undefined ? draft.address : normaliseAddress(changes.address);
+  const address = changes.address === undefined ? draft.address : prepareAddress(changes.address, false);
   const schedule = changes.schedule === undefined ? draft.schedule : normaliseSchedule(changes.schedule);
   const commercialTerms = changes.commercialTerms === undefined
     ? draft.commercialTerms
@@ -609,6 +842,7 @@ export function saveCustomerIntakeDraftLocally(
     revision: draft.revision + 1,
     updatedAt: timestamp,
     persistence: { state: 'saved_locally', savedAt: timestamp },
+    address: normaliseJobAddressForCommit(draft.address),
   });
 }
 
@@ -620,7 +854,11 @@ function hasAnswer(value: BriefAnswerValue | undefined): boolean {
 }
 
 function addressHasOperationalText(address: JobAddress): boolean {
-  return Boolean(address.details.line1 && address.details.city && address.details.province);
+  return Boolean(
+    address.details.line1.trim()
+    && address.details.city.trim()
+    && address.details.province.trim(),
+  );
 }
 
 export function validateScheduleSelection(
@@ -771,11 +1009,15 @@ export function createSubmissionIntent(
   requestedAt: string,
 ): SubmissionIntentResult {
   const timestamp = requireIsoInstant(requestedAt, 'requestedAt');
-  const readiness = deriveSubmissionReadiness(draft, capabilities, timestamp);
+  const committedDraft = deepFreeze({
+    ...draft,
+    address: normaliseJobAddressForCommit(draft.address),
+  }) as CustomerIntakeDraft;
+  const readiness = deriveSubmissionReadiness(committedDraft, capabilities, timestamp);
   if (!readiness.ready) return Object.freeze({ ok: false, readiness });
 
-  const snapshot = buildSnapshot(draft);
-  const idempotencyKey = `customer-intake:${draft.draftId}:r${draft.revision}:${snapshot.fingerprint}`;
+  const snapshot = buildSnapshot(committedDraft);
+  const idempotencyKey = `customer-intake:${committedDraft.draftId}:r${committedDraft.revision}:${snapshot.fingerprint}`;
   return deepFreeze({
     ok: true,
     readiness,

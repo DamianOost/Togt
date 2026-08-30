@@ -11,6 +11,7 @@ const appJson = require('../app.json');
 
 const BASELINE_SIGNER_SHA256 =
   'FAC61745DC0903786FB9EDE62A962B399F7348F0BB6F899B8332667591033B9C';
+const BASELINE_SIGNER_SHA1 = '5E8F16062EA3CD2C4A0D547876BAA6F38CABF625';
 const DEFAULT_ABIS = ['arm64-v8a'];
 const SUPPORTED_ABIS = new Set(['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64']);
 const SIGNING_MODES = new Set(['generated-debug', 'keystore']);
@@ -21,6 +22,7 @@ const REQUIRED_MIN_SDK_VERSION = '24';
 const REQUIRED_TARGET_SDK_VERSION = '36';
 const REQUIRED_COMPILE_SDK_VERSION = '36';
 const BLOCKED_ANDROID_PERMISSIONS = Object.freeze([
+  'android.permission.ACCESS_BACKGROUND_LOCATION',
   'android.permission.CAMERA',
   'android.permission.READ_EXTERNAL_STORAGE',
   'android.permission.RECORD_AUDIO',
@@ -101,6 +103,16 @@ function createArtifactBaseName({
   ].join('-');
 }
 
+function normalizeSha1Fingerprint(value, name = 'fingerprint') {
+  const normalized = typeof value === 'string'
+    ? value.replace(/[^a-fA-F0-9]/g, '').toUpperCase()
+    : '';
+  if (!/^[A-F0-9]{40}$/.test(normalized)) {
+    throw new Error(`${name} must be a 40-character SHA-1 fingerprint.`);
+  }
+  return normalized;
+}
+
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
   if (value && typeof value === 'object') {
@@ -112,6 +124,11 @@ function stableJson(value) {
 }
 
 function createSafeRuntimeContract(runtime) {
+  const mapsAndroidKeySha256 = runtime.mapsProvider === 'google'
+    && typeof runtime.googleMapsAndroidApiKey === 'string'
+    && runtime.googleMapsAndroidApiKey
+    ? crypto.createHash('sha256').update(runtime.googleMapsAndroidApiKey).digest('hex').toUpperCase()
+    : null;
   return Object.freeze({
     schemaVersion: 1,
     apiOrigin: new URL(runtime.apiBaseUrl).origin,
@@ -123,9 +140,11 @@ function createSafeRuntimeContract(runtime) {
     scheme: runtime.scheme,
     providers: Object.freeze({
       maps: runtime.mapsProvider,
+      mapsAndroidKeySha256,
       peach: runtime.peachAllowed,
       push: runtime.pushProvider,
     }),
+    locationCapabilities: Object.freeze({ ...runtime.locationCapabilities }),
     featureFlags: Object.freeze({
       schemaVersion: 1,
       flags: Object.freeze({ ...runtime.featureFlags }),
@@ -238,6 +257,15 @@ function isPathInside(parent, candidate) {
   return relative !== '' && !relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative);
 }
 
+function parseSignerFingerprints(output) {
+  const sha1Match = output.match(/Signer #1 certificate SHA-1 digest:\s*([a-fA-F0-9:]+)/i);
+  if (!sha1Match) throw new Error('apksigner did not report a signer SHA-1 digest.');
+  return Object.freeze({
+    sha1: normalizeSha1Fingerprint(sha1Match[1], 'APK signer SHA-1 fingerprint'),
+    sha256: parseSignerFingerprint(output),
+  });
+}
+
 function isPathAtOrInside(parent, candidate) {
   const relative = path.relative(path.resolve(parent), path.resolve(candidate));
   return relative === '' || (
@@ -266,9 +294,12 @@ function run(command, args, options = {}) {
 
   if (result.error) throw result.error;
   if (result.status !== 0) {
-    const detail = capture
+    let detail = capture
       ? `${result.stdout || ''}${result.stderr || ''}`.trim()
       : '';
+    for (const secret of options.sensitiveValues || []) {
+      if (typeof secret === 'string' && secret) detail = detail.split(secret).join('[REDACTED]');
+    }
     throw new Error(
       `${path.basename(command)} exited with status ${result.status}${detail ? `:\n${detail}` : '.'}`
     );
@@ -299,6 +330,13 @@ function requireDirectory(directoryPath, message) {
     throw new Error(message || `Required directory is missing: ${directoryPath}`);
   }
   return directoryPath;
+}
+
+function removeGeneratedDirectory(directoryPath, outputRoot) {
+  if (!isPathInside(outputRoot, directoryPath)) {
+    throw new Error(`Refusing to remove a directory outside ${outputRoot}.`);
+  }
+  fs.rmSync(directoryPath, { force: true, recursive: true });
 }
 
 function parseAndroidVersionCatalog(source) {
@@ -413,6 +451,12 @@ function resolveSigningConfiguration(environment, runtime, { requireGeneratedKey
     environment.TOGT_ANDROID_EXPECTED_SIGNER_SHA256 || BASELINE_SIGNER_SHA256,
     'TOGT_ANDROID_EXPECTED_SIGNER_SHA256'
   );
+  if (expectedSignerSha256 !== BASELINE_SIGNER_SHA256) {
+    throw new Error(
+      'TOGT_ANDROID_EXPECTED_SIGNER_SHA256 cannot redefine the internal signer baseline. ' +
+      'A different signer requires an explicitly separate clean-install track.'
+    );
+  }
 
   if (mode === 'generated-debug') {
     if (runtime.appEnvironment !== 'development') {
@@ -427,6 +471,7 @@ function resolveSigningConfiguration(environment, runtime, { requireGeneratedKey
     }
     return {
       alias: 'androiddebugkey',
+      expectedSignerSha1: BASELINE_SIGNER_SHA1,
       expectedSignerSha256,
       keyPasswordEnvironmentName: 'TOGT_INTERNAL_DEBUG_KEY_PASSWORD',
       keystorePath,
@@ -466,6 +511,7 @@ function resolveSigningConfiguration(environment, runtime, { requireGeneratedKey
 
   return {
     alias,
+    expectedSignerSha1: BASELINE_SIGNER_SHA1,
     expectedSignerSha256,
     keyPasswordEnvironmentName: 'TOGT_ANDROID_KEY_PASSWORD',
     keystorePath,
@@ -512,6 +558,35 @@ function verifyReleaseIdentity(runtime) {
   };
 }
 
+function assertAddressPinCandidateProfile(identity, runtime) {
+  if (identity.versionCode !== 4) return;
+  if (identity.versionName !== '1.2.0') {
+    throw new Error('Address-pin versionCode 4 must use versionName 1.2.0.');
+  }
+  if (
+    runtime.featureFlags?.groundedMomentumShell !== true
+    || runtime.featureFlags?.customerFlagship !== true
+  ) {
+    throw new Error(
+      'Address-pin versionCode 4 requires groundedMomentumShell and customerFlagship.'
+    );
+  }
+  if (runtime.mapsProvider !== 'google' || !runtime.googleMapsAndroidApiKey) {
+    throw new Error(
+      'Address-pin versionCode 4 requires the packaged Google Maps provider and Android key.'
+    );
+  }
+  if (
+    runtime.locationCapabilities?.schemaVersion !== 1
+    || runtime.locationCapabilities?.mapsDisplay !== true
+    || runtime.locationCapabilities?.addressProvenanceRecording !== true
+  ) {
+    throw new Error(
+      'Address-pin versionCode 4 requires the packaged location-capability contract.'
+    );
+  }
+}
+
 function preflight(
   environment = buildEnvironment(),
   { requireSigning = true, requireToolchain = true } = {}
@@ -521,6 +596,7 @@ function preflight(
     throw new Error('The local APK command requires ANDROID_BUILD_PROVIDER=local_gradle.');
   }
   const identity = verifyReleaseIdentity(runtime);
+  assertAddressPinCandidateProfile(identity, runtime);
   const abis = parseAbiList(environment.TOGT_ANDROID_ABIS);
   const signing = requireSigning ? resolveSigningConfiguration(environment, runtime) : null;
   const toolchain = requireToolchain ? resolveToolchain(environment) : null;
@@ -530,6 +606,7 @@ function preflight(
   run(process.execPath, [expoCli, 'config', '--type', 'public', '--json'], {
     capture: true,
     env: environment,
+    sensitiveValues: [runtime.googleMapsAndroidApiKey],
   });
 
   const toolchainSummary = toolchain
@@ -596,6 +673,28 @@ function assertSameValues(actual, expected, label) {
   }
 }
 
+function assertGoogleMapsManifestMetadata(xmlTreeSource, runtime) {
+  const metadataName = 'com.google.android.geo.API_KEY';
+  const hasMetadata = typeof xmlTreeSource === 'string' && xmlTreeSource.includes(metadataName);
+  if (runtime.mapsProvider !== 'google') {
+    if (hasMetadata) {
+      throw new Error('Google Maps manifest metadata is present in a Maps-disabled build.');
+    }
+    return false;
+  }
+  if (!hasMetadata) {
+    throw new Error('Google Maps manifest metadata is missing from the Maps-enabled APK.');
+  }
+  if (
+    typeof runtime.googleMapsAndroidApiKey !== 'string'
+    || !runtime.googleMapsAndroidApiKey
+    || !xmlTreeSource.includes(runtime.googleMapsAndroidApiKey)
+  ) {
+    throw new Error('Google Maps manifest metadata does not contain the configured Android key.');
+  }
+  return true;
+}
+
 function assertRuntimeAssetMetadata(appConfigSource, bundleSource, runtime) {
   let appConfig;
   try {
@@ -633,6 +732,12 @@ function assertRuntimeAssetMetadata(appConfigSource, bundleSource, runtime) {
         `Generated app.config feature flag ${name} mismatch: expected ${expected}; found ${actual}.`
       );
     }
+  }
+  if (
+    stableJson(extra.locationCapabilities)
+    !== stableJson(runtime.locationCapabilities)
+  ) {
+    throw new Error('Generated app.config location-capability contract mismatch.');
   }
 
   if (typeof bundleSource !== 'string' || !bundleSource.trim()) {
@@ -728,126 +833,162 @@ function buildApk(context, sourceCommit) {
   });
   const outputRoot = path.join(mobileRoot, 'dist', 'apk');
   fs.mkdirSync(outputRoot, { recursive: true });
-  const alignedApk = path.join(outputRoot, `${artifactBaseName}.aligned.apk`);
   const artifactPath = path.join(outputRoot, `${artifactBaseName}.apk`);
   const manifestPath = path.join(outputRoot, `${artifactBaseName}.manifest.json`);
-  for (const generatedPath of [alignedApk, artifactPath, manifestPath]) {
+  for (const generatedPath of [artifactPath, `${artifactPath}.idsig`, manifestPath]) {
     removeGeneratedFile(generatedPath, outputRoot);
   }
+  const quarantineRoot = fs.mkdtempSync(path.join(outputRoot, '.candidate-'));
+  const alignedApk = path.join(quarantineRoot, 'aligned.apk');
+  const inspectedApk = path.join(quarantineRoot, 'candidate.apk');
+  const inspectedManifest = path.join(quarantineRoot, 'candidate.manifest.json');
 
-  run(
-    context.toolchain.zipalign,
-    ['-P', '16', '-f', '-v', '4', gradleApk, alignedApk],
-    { env: context.environment }
-  );
-
-  const signingEnvironment = { ...context.environment };
-  if (context.signing.mode === 'generated-debug') {
-    signingEnvironment.TOGT_INTERNAL_DEBUG_STORE_PASSWORD = 'android';
-    signingEnvironment.TOGT_INTERNAL_DEBUG_KEY_PASSWORD = 'android';
-  }
-  run(
-    context.toolchain.apksigner,
-    [
-      'sign',
-      '--ks', context.signing.keystorePath,
-      '--ks-key-alias', context.signing.alias,
-      '--ks-pass', `env:${context.signing.storePasswordEnvironmentName}`,
-      '--key-pass', `env:${context.signing.keyPasswordEnvironmentName}`,
-      '--min-sdk-version', REQUIRED_MIN_SDK_VERSION,
-      '--out', artifactPath,
-      alignedApk,
-    ],
-    { env: signingEnvironment, shell: process.platform === 'win32' }
-  );
-  removeGeneratedFile(alignedApk, outputRoot);
-
-  run(context.toolchain.zipalign, ['-c', '-P', '16', '-v', '4', artifactPath], {
-    capture: true,
-    env: context.environment,
-  });
-  const signerOutput = run(
-    context.toolchain.apksigner,
-    ['verify', '--verbose', '--print-certs', artifactPath],
-    { capture: true, env: context.environment, shell: process.platform === 'win32' }
-  );
-  const signerSha256 = parseSignerFingerprint(signerOutput);
-  if (signerSha256 !== context.signing.expectedSignerSha256) {
-    throw new Error(
-      `Signer mismatch: expected ${context.signing.expectedSignerSha256}; found ${signerSha256}.`
+  try {
+    run(
+      context.toolchain.zipalign,
+      ['-P', '16', '-f', '-v', '4', gradleApk, alignedApk],
+      { env: context.environment }
     );
-  }
 
-  const badging = parseAaptBadging(
-    run(context.toolchain.aapt, ['dump', 'badging', artifactPath], {
+    const signingEnvironment = { ...context.environment };
+    if (context.signing.mode === 'generated-debug') {
+      signingEnvironment.TOGT_INTERNAL_DEBUG_STORE_PASSWORD = 'android';
+      signingEnvironment.TOGT_INTERNAL_DEBUG_KEY_PASSWORD = 'android';
+    }
+    run(
+      context.toolchain.apksigner,
+      [
+        'sign',
+        '--ks', context.signing.keystorePath,
+        '--ks-key-alias', context.signing.alias,
+        '--ks-pass', `env:${context.signing.storePasswordEnvironmentName}`,
+        '--key-pass', `env:${context.signing.keyPasswordEnvironmentName}`,
+        '--min-sdk-version', REQUIRED_MIN_SDK_VERSION,
+        '--out', inspectedApk,
+        alignedApk,
+      ],
+      { env: signingEnvironment, shell: process.platform === 'win32' }
+    );
+    removeGeneratedFile(alignedApk, quarantineRoot);
+
+    run(context.toolchain.zipalign, ['-c', '-P', '16', '-v', '4', inspectedApk], {
       capture: true,
       env: context.environment,
-    })
-  );
-  if (badging.packageName !== context.identity.packageName) {
-    throw new Error(`APK package mismatch: ${badging.packageName}.`);
-  }
-  if (
-    badging.versionCode !== context.identity.versionCode ||
-    badging.versionName !== context.identity.versionName
-  ) {
-    throw new Error(
-      `APK version mismatch: ${badging.versionName} (${badging.versionCode}).`
+    });
+    const signerOutput = run(
+      context.toolchain.apksigner,
+      ['verify', '--verbose', '--print-certs', inspectedApk],
+      { capture: true, env: context.environment, shell: process.platform === 'win32' }
     );
+    const signer = parseSignerFingerprints(signerOutput);
+    if (signer.sha256 !== context.signing.expectedSignerSha256) {
+      throw new Error(
+        `Signer SHA-256 mismatch: expected ${context.signing.expectedSignerSha256}; found ${signer.sha256}.`
+      );
+    }
+    if (signer.sha1 !== context.signing.expectedSignerSha1) {
+      throw new Error(
+        `Signer SHA-1 mismatch: expected ${context.signing.expectedSignerSha1}; found ${signer.sha1}.`
+      );
+    }
+
+    const badging = parseAaptBadging(
+      run(context.toolchain.aapt, ['dump', 'badging', inspectedApk], {
+        capture: true,
+        env: context.environment,
+      })
+    );
+    if (badging.packageName !== context.identity.packageName) {
+      throw new Error(`APK package mismatch: ${badging.packageName}.`);
+    }
+    if (
+      badging.versionCode !== context.identity.versionCode ||
+      badging.versionName !== context.identity.versionName
+    ) {
+      throw new Error(
+        `APK version mismatch: ${badging.versionName} (${badging.versionCode}).`
+      );
+    }
+    assertApkSdkVersions(badging);
+    assertSameValues(badging.abis, context.abis, 'APK ABI');
+    const androidPermissions = parseAaptPermissions(
+      run(context.toolchain.aapt, ['dump', 'permissions', inspectedApk], {
+        capture: true,
+        env: context.environment,
+      })
+    );
+    assertAndroidPermissionBoundary(androidPermissions);
+    const mapsManifestMetadataVerified = assertGoogleMapsManifestMetadata(
+      run(
+        context.toolchain.aapt,
+        ['dump', 'xmltree', inspectedApk, 'AndroidManifest.xml'],
+        {
+          capture: true,
+          env: context.environment,
+          sensitiveValues: [context.runtime.googleMapsAndroidApiKey],
+        }
+      ),
+      context.runtime
+    );
+
+    const artifactSha256 = sha256File(inspectedApk);
+    const manifest = {
+      schemaVersion: 3,
+      artifactFile: path.basename(artifactPath),
+      artifactSha256,
+      artifactSizeBytes: fs.statSync(inspectedApk).size,
+      packageName: badging.packageName,
+      versionName: badging.versionName,
+      versionCode: badging.versionCode,
+      sourceCommit,
+      appEnvironment: context.runtime.appEnvironment,
+      androidCleartextAllowed: context.runtime.androidCleartextAllowed,
+      configClass: context.runtime.configClass,
+      buildProvider: context.runtime.buildProvider,
+      apiOrigin: runtimeConfig.apiOrigin,
+      providers: runtimeConfig.providers,
+      featureFlags: context.runtime.featureFlags,
+      runtimeConfig,
+      runtimeConfigSha256,
+      abis: badging.abis,
+      androidPermissions,
+      mapsManifestMetadataVerified,
+      minSdkVersion: badging.minSdkVersion,
+      targetSdkVersion: badging.targetSdkVersion,
+      compileSdkVersion: context.sdkEvidence.compileSdkVersion,
+      androidSdkEvidence: context.sdkEvidence,
+      enforcedAndroidGradleProperties: {
+        buildToolsVersion: REQUIRED_BUILD_TOOLS_VERSION,
+        compileSdkVersion: REQUIRED_COMPILE_SDK_VERSION,
+        minSdkVersion: REQUIRED_MIN_SDK_VERSION,
+        targetSdkVersion: REQUIRED_TARGET_SDK_VERSION,
+      },
+      signerSha1: signer.sha1,
+      signerSha256: signer.sha256,
+      expectedSignerSha1: context.signing.expectedSignerSha1,
+      expectedSignerSha256: context.signing.expectedSignerSha256,
+      signingMode: context.signing.mode,
+      aligned: true,
+      signatureVerified: true,
+    };
+    fs.writeFileSync(inspectedManifest, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+    let apkPublished = false;
+    try {
+      fs.copyFileSync(inspectedApk, artifactPath, fs.constants.COPYFILE_EXCL);
+      apkPublished = true;
+      fs.copyFileSync(inspectedManifest, manifestPath, fs.constants.COPYFILE_EXCL);
+    } catch (error) {
+      if (apkPublished) removeGeneratedFile(artifactPath, outputRoot);
+      throw error;
+    }
+
+    console.log(`APK: ${artifactPath}`);
+    console.log(`Manifest: ${manifestPath}`);
+    console.log(`SHA-256: ${artifactSha256}`);
+    return { artifactPath, manifest, manifestPath };
+  } finally {
+    removeGeneratedDirectory(quarantineRoot, outputRoot);
   }
-  assertApkSdkVersions(badging);
-  assertSameValues(badging.abis, context.abis, 'APK ABI');
-  const androidPermissions = parseAaptPermissions(
-    run(context.toolchain.aapt, ['dump', 'permissions', artifactPath], {
-      capture: true,
-      env: context.environment,
-    })
-  );
-  assertAndroidPermissionBoundary(androidPermissions);
-
-  const artifactSha256 = sha256File(artifactPath);
-  const manifest = {
-    schemaVersion: 2,
-    artifactFile: path.basename(artifactPath),
-    artifactSha256,
-    artifactSizeBytes: fs.statSync(artifactPath).size,
-    packageName: badging.packageName,
-    versionName: badging.versionName,
-    versionCode: badging.versionCode,
-    sourceCommit,
-    appEnvironment: context.runtime.appEnvironment,
-    androidCleartextAllowed: context.runtime.androidCleartextAllowed,
-    configClass: context.runtime.configClass,
-    buildProvider: context.runtime.buildProvider,
-    apiOrigin: runtimeConfig.apiOrigin,
-    providers: runtimeConfig.providers,
-    featureFlags: context.runtime.featureFlags,
-    runtimeConfig,
-    runtimeConfigSha256,
-    abis: badging.abis,
-    androidPermissions,
-    minSdkVersion: badging.minSdkVersion,
-    targetSdkVersion: badging.targetSdkVersion,
-    compileSdkVersion: context.sdkEvidence.compileSdkVersion,
-    androidSdkEvidence: context.sdkEvidence,
-    enforcedAndroidGradleProperties: {
-      buildToolsVersion: REQUIRED_BUILD_TOOLS_VERSION,
-      compileSdkVersion: REQUIRED_COMPILE_SDK_VERSION,
-      minSdkVersion: REQUIRED_MIN_SDK_VERSION,
-      targetSdkVersion: REQUIRED_TARGET_SDK_VERSION,
-    },
-    signerSha256,
-    expectedSignerSha256: context.signing.expectedSignerSha256,
-    signingMode: context.signing.mode,
-    aligned: true,
-    signatureVerified: true,
-  };
-  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
-
-  console.log(`APK: ${artifactPath}`);
-  console.log(`Manifest: ${manifestPath}`);
-  console.log(`SHA-256: ${artifactSha256}`);
-  return { artifactPath, manifest, manifestPath };
 }
 
 function main() {
@@ -887,23 +1028,28 @@ if (require.main === module) {
 }
 
 module.exports = {
+  BASELINE_SIGNER_SHA1,
   BASELINE_SIGNER_SHA256,
   BLOCKED_ANDROID_PERMISSIONS,
   REQUIRED_COMPILE_SDK_VERSION,
   REQUIRED_MIN_SDK_VERSION,
   REQUIRED_TARGET_SDK_VERSION,
   assertAndroidPermissionBoundary,
+  assertAddressPinCandidateProfile,
   assertApkSdkVersions,
+  assertGoogleMapsManifestMetadata,
   assertRuntimeAssetMetadata,
   createArtifactBaseName,
   createSafeRuntimeContract,
   fingerprintRuntimeContract,
   normalizeFingerprint,
+  normalizeSha1Fingerprint,
   parseAaptBadging,
   parseAaptPermissions,
   parseAbiList,
   parseAndroidCleartextPolicy,
   parseAndroidVersionCatalog,
   parseSignerFingerprint,
+  parseSignerFingerprints,
   resolveSigningConfiguration,
 };

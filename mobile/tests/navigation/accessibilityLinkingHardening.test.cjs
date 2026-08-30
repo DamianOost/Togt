@@ -72,6 +72,11 @@ test('transaction links are UUID-bound to the authenticated role and registered 
   );
   assert.equal(stateFor(customer, `worker/projects/${ID}`), undefined);
   assert.equal(stateFor(worker, `customer/projects/${ID}`), undefined);
+  assert.equal(
+    stateFor(customer, 'customer/workers/00000000-0000-4000-8000-000000000001/book'),
+    undefined,
+    'the valid-form legacy BookingForm link must remain rejected by the Grounded customer shell',
+  );
   assert.equal(stateFor(customer, 'customer/projects/not-a-uuid'), undefined);
   assert.equal(stateFor(worker, `worker/projects/${ID}?role=customer`), undefined);
 

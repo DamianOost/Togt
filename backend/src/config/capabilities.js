@@ -6,7 +6,7 @@ const MINIMUM_APP_VERSION = '1.0.0';
 // not evidence that its complete customer, reconciliation, operational, and
 // device gates have passed. These values stay false until that evidence is
 // reviewed and the owning release explicitly enables the capability.
-const FEATURES = Object.freeze({
+const CORE_FEATURES = Object.freeze({
   peach_checkout: Object.freeze({
     available: false,
     reason_code: 'hosted_checkout_not_proven',
@@ -73,17 +73,75 @@ const FEATURES = Object.freeze({
   }),
 });
 
-function featureAvailable(name) {
-  return FEATURES[name]?.available === true;
+// Search/geocode endpoints are deliberately outside Wave 1. Even a configured
+// provider and an Operations flag cannot advertise an endpoint that this
+// server release does not implement.
+const ADDRESS_PROVIDER_BOUNDARY_IMPLEMENTED = false;
+
+function exactReleaseFlag(environment, name) {
+  return environment?.[name] === 'true';
 }
 
-function capabilitySnapshot(now = new Date()) {
+function addressProviderConfigured(environment) {
+  const key = environment?.GOOGLE_ADDRESS_PROVIDER_API_KEY;
+  return environment?.ADDRESS_PROVIDER === 'google'
+    && typeof key === 'string'
+    && key.trim().length >= 20;
+}
+
+function providerCapability(environment, releaseFlag, releaseReason) {
+  if (!exactReleaseFlag(environment, releaseFlag)) {
+    return Object.freeze({ available: false, reason_code: releaseReason });
+  }
+  if (!addressProviderConfigured(environment)) {
+    return Object.freeze({ available: false, reason_code: 'address_provider_not_configured' });
+  }
+  if (!ADDRESS_PROVIDER_BOUNDARY_IMPLEMENTED) {
+    return Object.freeze({ available: false, reason_code: 'address_provider_boundary_not_implemented' });
+  }
+  return Object.freeze({ available: true, provider: 'google_server_proxy' });
+}
+
+function locationFeatures(environment = process.env) {
+  return Object.freeze({
+    maps_display: exactReleaseFlag(environment, 'MAPS_DISPLAY_RELEASE_ENABLED')
+      ? Object.freeze({ available: true, mode: 'android_google_maps' })
+      : Object.freeze({ available: false, reason_code: 'maps_display_release_disabled' }),
+    address_search: providerCapability(
+      environment,
+      'ADDRESS_SEARCH_RELEASE_ENABLED',
+      'address_search_release_disabled'
+    ),
+    address_resolution: providerCapability(
+      environment,
+      'ADDRESS_RESOLUTION_RELEASE_ENABLED',
+      'address_resolution_release_disabled'
+    ),
+    address_provenance_recording: exactReleaseFlag(environment, 'ADDRESS_PROVENANCE_RECORDING_ENABLED')
+      ? Object.freeze({ available: true, mode: 'nullable_audit_recording' })
+      : Object.freeze({ available: false, reason_code: 'address_provenance_contract_unavailable' }),
+  });
+}
+
+function featuresFor(environment = process.env) {
+  return Object.freeze({ ...CORE_FEATURES, ...locationFeatures(environment) });
+}
+
+// Export a complete default registry for schema generation and modules that
+// inspect feature metadata at startup. Snapshot/action checks remain dynamic.
+const FEATURES = featuresFor(process.env);
+
+function featureAvailable(name, environment = process.env) {
+  return featuresFor(environment)[name]?.available === true;
+}
+
+function capabilitySnapshot(now = new Date(), environment = process.env) {
   return {
     schema_version: SCHEMA_VERSION,
     generated_at: now.toISOString(),
     ttl_seconds: CACHE_TTL_SECONDS,
     minimum_app_version: MINIMUM_APP_VERSION,
-    features: FEATURES,
+    features: featuresFor(environment),
   };
 }
 
@@ -92,6 +150,9 @@ module.exports = {
   CACHE_TTL_SECONDS,
   MINIMUM_APP_VERSION,
   FEATURES,
+  featuresFor,
+  locationFeatures,
+  addressProviderConfigured,
   featureAvailable,
   capabilitySnapshot,
 };

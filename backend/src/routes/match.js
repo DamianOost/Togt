@@ -12,6 +12,7 @@ const {
   serializeBookingForUser,
 } = require('../lib/privacy');
 const { recordPrivacyAudit } = require('../lib/privacyAudit');
+const { normalizeAddressEvidence } = require('../lib/addressProvenance');
 
 const router = express.Router();
 
@@ -21,11 +22,16 @@ const REQUEST_TTL_MS = 10 * 60 * 1000;
 router.post('/', matchCreateLimiter, authMiddleware, idempotencyMiddleware(), requireRole('customer'), async (req, res, next) => {
   try {
     const { skill_needed, address, location_lat, location_lng,
-            scheduled_at, hours_est, notes } = req.body || {};
+            coordinate_source, scheduled_at, hours_est, notes } = req.body || {};
 
     if (!skill_needed || !address || location_lat == null || location_lng == null || !scheduled_at) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
+    const location = normalizeAddressEvidence({
+      latitude: location_lat,
+      longitude: location_lng,
+      coordinateSource: coordinate_source,
+    }, { surface: 'legacy_audit', status: 400, label: 'match location' });
     const sched = new Date(scheduled_at);
     if (Number.isNaN(sched.getTime())) {
       return res.status(400).json({ error: 'Invalid scheduled_at' });
@@ -39,11 +45,11 @@ router.post('/', matchCreateLimiter, authMiddleware, idempotencyMiddleware(), re
       const ins = await client.query(
         `INSERT INTO match_requests
            (customer_id, skill_needed, address, location_lat, location_lng,
-            scheduled_at, hours_est, notes, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            coordinate_source, scheduled_at, hours_est, notes, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING *`,
-        [req.user.id, skill_needed, address, location_lat, location_lng,
-         sched, hours_est || null, notes || null, expiresAt]
+        [req.user.id, skill_needed, address, location.latitude, location.longitude,
+         location.coordinateSource, sched, hours_est || null, notes || null, expiresAt]
       );
       const row = ins.rows[0];
       await emitEvent(client, {

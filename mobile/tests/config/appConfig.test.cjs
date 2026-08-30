@@ -99,13 +99,20 @@ test('local Gradle development config is labelled and locks release identity', (
       darkTheme: false,
     },
   });
+  assert.deepEqual(config.extra.locationCapabilities, {
+    schemaVersion: 1,
+    mapsDisplay: false,
+    addressSearch: false,
+    addressResolution: false,
+    addressProvenanceRecording: true,
+  });
   assert.equal(config.android.package, 'za.togt.app');
-  assert.equal(config.android.versionCode, 3);
+  assert.equal(config.android.versionCode, 4);
   assert.doesNotMatch(
     config.android.permissions.join(','),
     /ACCESS_BACKGROUND_LOCATION/
   );
-  assert.equal(config.version, '1.1.0');
+  assert.equal(config.version, '1.2.0');
   assert.equal(config.scheme, 'togt');
   assert.equal(base.expo.scheme, 'togt');
   assert.equal(config.extra.eas, undefined);
@@ -118,6 +125,7 @@ test('Android blocks unused sensitive permissions while preserving library-only 
     EXPO_PUBLIC_APP_ENV: 'development',
   });
   assert.deepEqual(config.android.blockedPermissions, [
+    'android.permission.ACCESS_BACKGROUND_LOCATION',
     'android.permission.RECORD_AUDIO',
     'android.permission.CAMERA',
     'android.permission.SYSTEM_ALERT_WINDOW',
@@ -269,6 +277,13 @@ test('local preview config does not require an Expo project', () => {
   assert.deepEqual(config.extra.features, { groundedMomentum: false });
   assert.equal(config.extra.featureFlags.flags.groundedMomentumShell, false);
   assert.equal(config.extra.featureFlags.flags.customerFlagship, false);
+  assert.deepEqual(config.extra.locationCapabilities, {
+    schemaVersion: 1,
+    mapsDisplay: false,
+    addressSearch: false,
+    addressResolution: false,
+    addressProvenanceRecording: false,
+  });
 });
 
 test('Grounded Momentum shell has an explicit packaged rollback flag', () => {
@@ -385,6 +400,20 @@ test('enabled Google providers require their provider-specific inputs', () => {
     }),
     /must point to a readable file/
   );
+  const mapsEnabled = configFor({
+    ...common,
+    EXPO_PUBLIC_MAPS_PROVIDER: 'google',
+    GOOGLE_MAPS_ANDROID_API_KEY: 'synthetic-restricted-android-key',
+    TOGT_GROUNDED_MOMENTUM: 'true',
+    TOGT_CUSTOMER_FLAGSHIP: 'true',
+  });
+  assert.deepEqual(mapsEnabled.extra.locationCapabilities, {
+    schemaVersion: 1,
+    mapsDisplay: true,
+    addressSearch: false,
+    addressResolution: false,
+    addressProvenanceRecording: true,
+  });
 });
 
 test('package override and invalid provider values fail closed', () => {
@@ -407,26 +436,10 @@ test('package override and invalid provider values fail closed', () => {
   );
 });
 
-test('optional EAS profile remains an internal APK profile', () => {
-  assert.equal(eas.build.preview.distribution, 'internal');
-  assert.equal(eas.build.preview.environment, 'preview');
-  assert.equal(eas.build.preview.env.ANDROID_BUILD_PROVIDER, 'eas');
-  assert.equal(eas.build.preview.android.buildType, 'apk');
-  assert.equal(eas.build.preview.env.EXPO_PUBLIC_ENABLE_PEACH, 'false');
-  assert.equal(eas.build.preview.env.EXPO_PUBLIC_MAPS_PROVIDER, 'disabled');
-  assert.equal(eas.build.preview.env.EXPO_PUBLIC_PUSH_PROVIDER, 'disabled');
-  for (const name of [
-    'TOGT_GROUNDED_MOMENTUM',
-    'TOGT_CUSTOMER_FLAGSHIP',
-    'TOGT_WORKER_EXPERIENCE',
-    'TOGT_RELATIONSHIPS',
-    'TOGT_AI_ASSISTED_INTAKE',
-    'TOGT_EXPLAINABLE_RECOMMENDATIONS',
-    'TOGT_LIVE_PLATFORM_STATUS',
-    'TOGT_CONTEXTUAL_SAFETY_EDUCATION',
-  ]) {
-    assert.equal(eas.build.preview.env[name], 'true', `${name} must be packaged for the internal full-lane preview`);
-  }
+test('vc4 exposes no EAS profile that can bypass the inspected local Gradle route', () => {
+  const packageJson = require('../../package.json');
+  assert.deepEqual(eas.build, {});
+  assert.equal(packageJson.scripts['build:apk:preview'], undefined);
 });
 
 test('notification config uses the generated monochrome Grounded Momentum icon', () => {

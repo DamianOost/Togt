@@ -8,6 +8,7 @@ import { useSelector } from 'react-redux';
 import { useTogtTheme } from '../design';
 import {
   CustomerAddressRoute,
+  CustomerExactPinPickerRoute,
   CustomerActiveWorkRoute,
   CustomerExperienceProvider,
   CustomerHomeRoute,
@@ -111,6 +112,11 @@ export default function GroundedCustomerStack() {
         <Stack.Screen name="ServiceSelect" component={CustomerServiceSelectRoute} />
         <Stack.Screen name="JobBrief" component={CustomerJobBriefRoute} />
         <Stack.Screen name="Address" component={CustomerAddressRoute} />
+        <Stack.Screen
+          name="ExactPinPicker"
+          component={CustomerExactPinPickerRoute}
+          options={{ animation: 'slide_from_bottom', presentation: 'modal' }}
+        />
         <Stack.Screen name="Schedule" component={CustomerScheduleRoute} />
         <Stack.Screen name="ReviewEstimate" component={CustomerReviewRoute} />
         <Stack.Screen name="QuoteRequest" component={CustomerQuoteRequestRoute} />

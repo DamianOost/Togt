@@ -9,7 +9,10 @@ const {
   decodeCustomerDraftEnvelope,
   encodeCustomerDraftEnvelope,
 } = require('../../src/data/grounded/draftEnvelope.ts');
-const { createCustomerIntakeDraft } = require('../../src/features/customer/intake/model.ts');
+const {
+  createCustomerIntakeDraft,
+  createResolvedJobAddress,
+} = require('../../src/features/customer/intake/model.ts');
 
 function draft() {
   return createCustomerIntakeDraft({
@@ -82,4 +85,40 @@ test('tampered, future-saved and oversized drafts fail closed', () => {
     draft: oversized,
     savedAt: '2026-08-29T08:05:00.000Z',
   }), { ok: false, reasonCode: 'draft_too_large' });
+});
+
+test('restore canonicalises an impossible entry-mode/source pair to unresolved', () => {
+  const original = draft();
+  const mapPin = createResolvedJobAddress({
+    entryMode: 'map_pin',
+    details: {
+      line1: '23 Example Street',
+      unitOrComplex: '',
+      suburb: 'Roodepoort',
+      city: 'Johannesburg',
+      province: 'Gauteng',
+      postalCode: '1724',
+      landmark: '',
+      accessInstructions: '',
+    },
+    source: 'map_pin',
+    coordinates: { latitude: -26.16, longitude: 27.87 },
+    confirmedAt: null,
+  });
+  const forged = { ...original, address: { ...mapPin, entryMode: 'manual' } };
+  const encoded = encodeCustomerDraftEnvelope({
+    actorId: 'customer-one',
+    draft: forged,
+    savedAt: '2026-08-29T08:05:00.000Z',
+  });
+  assert.equal(encoded.ok, true);
+  const loaded = decodeCustomerDraftEnvelope({
+    actorId: 'customer-one',
+    serialized: encoded.serialized,
+    now: '2026-08-29T08:06:00.000Z',
+  });
+  assert.equal(loaded.ok, true);
+  assert.equal(loaded.value.address.entryMode, 'manual');
+  assert.equal(loaded.value.address.resolution.status, 'unresolved');
+  assert.equal(loaded.value.address.resolution.reasonCode, 'restored_address_pair_invalid');
 });

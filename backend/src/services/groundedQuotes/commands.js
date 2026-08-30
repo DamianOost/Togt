@@ -705,11 +705,11 @@ async function acceptQuote({ actor, key, quoteId, body }) {
         `INSERT INTO bookings (
            customer_id, labourer_id, status, operational_phase,
            skill_needed, address, location_lat, location_lng,
-           scheduled_at, hours_est, total_amount, notes, scope_items,
+           coordinate_source, scheduled_at, hours_est, total_amount, notes, scope_items,
            accepted_quote_id, accepted_quote_version
          ) VALUES (
            $1, $2, 'accepted', 'scheduled', $3, $4, $5, $6,
-           $7, $8, $9, NULL, $10::jsonb, $11, $12
+           $7, $8, $9, $10, NULL, $11::jsonb, $12, $13
          ) RETURNING *`,
         [
           actor.id,
@@ -718,6 +718,7 @@ async function acceptQuote({ actor, key, quoteId, body }) {
           location.address,
           location.latitude,
           location.longitude,
+          location.coordinateSource || null,
           quote.proposed_start_at,
           Number(quote.duration_minutes) / 60,
           quote.customer_total_amount,

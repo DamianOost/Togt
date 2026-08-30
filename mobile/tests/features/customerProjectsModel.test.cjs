@@ -239,6 +239,12 @@ test('Project grouping honours authoritative segments and rejects duplicate IDs'
   assert.equal(grouped.active.length, 1);
   assert.equal(grouped.upcoming.length, 1);
   assert.equal(grouped.past.length, 1);
+  const upcomingOnly = groupProjects([
+    { ...base, projectId: 'project-upcoming-only', segment: 'upcoming' },
+  ]);
+  assert.equal(upcomingOnly.active.length, 0);
+  assert.equal(upcomingOnly.upcoming.length, 1);
+  assert.equal(upcomingOnly.past.length, 0);
   assert.throws(() => groupProjects([
     { ...base, projectId: 'same-project', segment: 'active' },
     { ...base, projectId: 'same-project', segment: 'past' },

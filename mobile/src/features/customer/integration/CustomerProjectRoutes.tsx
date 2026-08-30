@@ -1,5 +1,5 @@
 import { useFocusEffect } from '@react-navigation/native';
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Linking, Text } from 'react-native';
 import { packagedFeatureEnabled } from '../../../app/runtimeFeatureFlags';
 import {
@@ -67,6 +67,7 @@ import type {
 import { useCustomerExperience } from './CustomerExperienceContext';
 
 type JsonRecord = Record<string, unknown>;
+const UPCOMING_ENRICHMENT_BATCH_SIZE = 4;
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -86,6 +87,10 @@ function responseProjects(response: unknown): readonly unknown[] | null {
 
 function responseFulfilment(response: unknown): unknown {
   return isRecord(response) ? response.fulfilment : null;
+}
+
+function projectRevisionKey(project: ProjectListItem): string {
+  return `${project.projectId}:${project.stateVersion}`;
 }
 
 function revealedStartPin(response: unknown): string | null {
@@ -112,8 +117,12 @@ export function CustomerProjectsRoute({ navigation }: { navigation: any }) {
   const { actorId, connectionState } = useCustomerExperience();
   const [segment, setSegment] = useState<ProjectSegment>('active');
   const [projects, setProjects] = useState<Loadable<readonly ProjectListItem[]>>({ state: 'loading' });
+  const refreshSequenceRef = useRef(0);
+  const enrichmentSequenceRef = useRef(0);
+  const rescheduleEvidenceRef = useRef(new Map<string, boolean>());
 
   const refresh = useCallback(async () => {
+    const refreshSequence = ++refreshSequenceRef.current;
     if (connectionState === 'offline') {
       setProjects((current) => current.state === 'ready'
         ? { ...current, connectionState: 'offline' }
@@ -122,7 +131,7 @@ export function CustomerProjectsRoute({ navigation }: { navigation: any }) {
     }
     setProjects((current) => current.state === 'ready' ? current : { state: 'loading' });
     try {
-      const response = await loadGroundedProjects(segment);
+      const response = await loadGroundedProjects();
       const rawItems = responseProjects(response);
       if (!rawItems) throw new Error('project_list_contract_invalid');
       const items: ProjectListItem[] = [];
@@ -131,39 +140,97 @@ export function CustomerProjectsRoute({ navigation }: { navigation: any }) {
         if (!adapted.ok) throw new Error(adapted.reasonCode);
         items.push(adapted.value);
       }
-      const actionableItems = segment === 'upcoming'
-        ? await Promise.all(items.map(async (item) => {
-            try {
-              const response = await loadGroundedFulfilment(item.projectId);
-              const adapted = adaptGroundedFulfilmentV1(responseFulfilment(response));
-              return adapted.ok
-                ? Object.freeze({
-                    ...item,
-                    canReschedule: adapted.value.allowedActions.proposeReschedule
-                      || adapted.value.allowedActions.decideReschedule,
-                  })
-                : item;
-            } catch {
-              return item;
-            }
-          }))
-        : items;
-      setProjects(actionableItems.length === 0
+      if (refreshSequence !== refreshSequenceRef.current) return;
+      const currentRevisionKeys = new Set(items
+        .filter((item) => item.segment === 'upcoming')
+        .map(projectRevisionKey));
+      for (const cachedKey of rescheduleEvidenceRef.current.keys()) {
+        if (!currentRevisionKeys.has(cachedKey)) rescheduleEvidenceRef.current.delete(cachedKey);
+      }
+      const listedItems = items.map((item) => {
+        const key = projectRevisionKey(item);
+        if (item.segment !== 'upcoming' || !rescheduleEvidenceRef.current.has(key)) return item;
+        return Object.freeze({
+          ...item,
+          canReschedule: rescheduleEvidenceRef.current.get(key) === true,
+        });
+      });
+      setProjects(listedItems.length === 0
         ? { state: 'empty' }
         : {
             state: 'ready',
-            value: Object.freeze(actionableItems),
+            value: Object.freeze(listedItems),
             connectionState,
             lastUpdatedAt: new Date().toISOString(),
           });
     } catch (error) {
+      if (refreshSequence !== refreshSequenceRef.current) return;
       setProjects({ state: 'error', correlationId: correlationId(error) });
     }
-  }, [connectionState, segment]);
+  }, [connectionState]);
 
   useFocusEffect(useCallback(() => {
     void refresh();
+    return () => { refreshSequenceRef.current += 1; };
   }, [refresh]));
+
+  const upcomingEnrichmentTrigger = useMemo(() => projects.state === 'ready'
+    ? `${projects.lastUpdatedAt}:${projects.value
+        .filter((item) => item.segment === 'upcoming')
+        .map(projectRevisionKey)
+        .join('|')}`
+    : '', [projects]);
+
+  useEffect(() => {
+    const enrichmentSequence = ++enrichmentSequenceRef.current;
+    if (segment !== 'upcoming' || connectionState === 'offline'
+        || projects.state !== 'ready' || !upcomingEnrichmentTrigger) {
+      return () => { enrichmentSequenceRef.current += 1; };
+    }
+    const pending = projects.value.filter((item) => item.segment === 'upcoming'
+      && !rescheduleEvidenceRef.current.has(projectRevisionKey(item)));
+
+    void (async () => {
+      for (let index = 0; index < pending.length; index += UPCOMING_ENRICHMENT_BATCH_SIZE) {
+        const batch = pending.slice(index, index + UPCOMING_ENRICHMENT_BATCH_SIZE);
+        const results = await Promise.all(batch.map(async (item) => {
+          try {
+            const response = await loadGroundedFulfilment(item.projectId);
+            const adapted = adaptGroundedFulfilmentV1(responseFulfilment(response));
+            if (!adapted.ok) return null;
+            return Object.freeze({
+              key: projectRevisionKey(item),
+              canReschedule: adapted.value.allowedActions.proposeReschedule
+                || adapted.value.allowedActions.decideReschedule,
+            });
+          } catch {
+            return null;
+          }
+        }));
+        if (enrichmentSequence !== enrichmentSequenceRef.current) return;
+        const updates = new Map<string, boolean>();
+        for (const result of results) {
+          if (!result) continue;
+          rescheduleEvidenceRef.current.set(result.key, result.canReschedule);
+          updates.set(result.key, result.canReschedule);
+        }
+        if (updates.size === 0) continue;
+        setProjects((current) => {
+          if (current.state !== 'ready') return current;
+          return {
+            ...current,
+            value: Object.freeze(current.value.map((item) => {
+              const key = projectRevisionKey(item);
+              if (!updates.has(key)) return item;
+              return Object.freeze({ ...item, canReschedule: updates.get(key) === true });
+            })),
+          };
+        });
+      }
+    })();
+
+    return () => { enrichmentSequenceRef.current += 1; };
+  }, [connectionState, segment, upcomingEnrichmentTrigger]);
 
   return (
     <ProjectsListScreen

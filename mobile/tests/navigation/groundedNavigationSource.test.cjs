@@ -192,6 +192,25 @@ test('customer Projects recovers listed quote requests into the existing detail 
   assert.match(projects, /onOpenQuoteRequests/);
 });
 
+test('an empty current Project segment keeps every segment filter reachable', () => {
+  const routes = read('src/features/customer/integration/CustomerProjectRoutes.tsx');
+  const projects = read('src/features/customer/projects/ProjectsListScreen.tsx');
+  const route = exportedFunctionBody(routes, 'CustomerProjectsRoute');
+
+  assert.match(route, /loadGroundedProjects\(\)/);
+  assert.doesNotMatch(route, /loadGroundedProjects\(segment\)/);
+  assert.match(route, /setProjects\(listedItems\.length === 0[\s\S]*state: 'ready'/);
+  assert.match(route, /refreshSequence !== refreshSequenceRef\.current/);
+  assert.match(route, /return \(\) => \{ refreshSequenceRef\.current \+= 1; \};/);
+  assert.match(route, /segment !== 'upcoming'/);
+  assert.match(route, /UPCOMING_ENRICHMENT_BATCH_SIZE/);
+  assert.match(route, /rescheduleEvidenceRef\.current\.has\(projectRevisionKey\(item\)\)/);
+  assert.doesNotMatch(route, /\}, \[connectionState, segment\]\);/);
+  assert.match(projects, /const SEGMENTS[^\n]+\['active', 'upcoming', 'past'\]/);
+  assert.match(projects, /testID=\{`project-segment-\$\{segment\}`\}/);
+  assert.match(projects, /grouped\[selectedSegment\]/);
+});
+
 test('customer and Worker chat mount one Grounded controller with participant-safe evidence', () => {
   const customer = read('src/navigation/GroundedCustomerStack.tsx');
   const worker = read('src/navigation/GroundedWorkerStack.tsx');

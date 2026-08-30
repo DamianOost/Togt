@@ -1,6 +1,8 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTogtTheme } from '../design';
 import {
@@ -39,12 +41,23 @@ import ActiveJobScreen from '../screens/labourer/ActiveJobScreen';
 import KYCScreen from '../screens/shared/KYCScreen';
 import ScopeConfirmScreen from '../screens/shared/ScopeConfirmScreen';
 import GroundedTabIcon from './GroundedTabIcon';
+import { resolveGroundedTabBarLayout } from './groundedTabBarLayout';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
 function WorkerTabs() {
   const theme = useTogtTheme();
+  const insets = useSafeAreaInsets();
+  const { fontScale } = useWindowDimensions();
+  const tabBarLayout = resolveGroundedTabBarLayout({
+    bottomInset: insets.bottom,
+    fontScale,
+    labelLineHeight: theme.typography.caption.lineHeight as number,
+    minimumBottomPadding: theme.spacing.xs,
+    minimumHeight: theme.sizing.touchTarget + theme.spacing.md,
+    topPadding: theme.spacing.xs,
+  });
 
   return (
     <Tab.Navigator
@@ -53,13 +66,14 @@ function WorkerTabs() {
         tabBarActiveTintColor: theme.colors.actionPrimary,
         tabBarInactiveTintColor: theme.colors.textSecondary,
         tabBarHideOnKeyboard: true,
+        tabBarAllowFontScaling: true,
         tabBarLabelStyle: theme.typography.caption,
         tabBarStyle: {
           backgroundColor: theme.colors.surface,
           borderTopColor: theme.colors.border,
-          minHeight: theme.sizing.touchTarget + theme.spacing.md,
-          paddingBottom: theme.spacing.xs,
-          paddingTop: theme.spacing.xs,
+          height: tabBarLayout.height,
+          paddingBottom: tabBarLayout.paddingBottom,
+          paddingTop: tabBarLayout.paddingTop,
         },
         tabBarIcon: ({ color, focused, size }) => {
           const icon = route.name === 'Today'

@@ -67,12 +67,47 @@ test('Grounded role shells use the approved tab information architecture once', 
   assert.match(worker, /GroundedTabIcon/);
   assert.doesNotMatch(customer + worker, /[\u{1F300}-\u{1FAFF}]/u);
   assert.doesNotMatch(customer + worker, /#[\da-f]{3,8}\b/i);
+  for (const shell of [customer, worker]) {
+    assert.match(shell, /useSafeAreaInsets/);
+    assert.match(shell, /useWindowDimensions/);
+    assert.match(shell, /resolveGroundedTabBarLayout/);
+    assert.match(shell, /tabBarAllowFontScaling: true/);
+    assert.match(shell, /height: tabBarLayout\.height/);
+  }
   assert.match(customer, /name="LabourerProfile" component=\{GroundedWorkerProfileRoute\}/);
   assert.match(customer, /name="Chat" component=\{GroundedProjectChatRoute\}/);
   assert.match(customer, /name="QuoteRequests" component=\{CustomerOpenQuoteRequestsRoute\}/);
   assert.match(worker, /name="Chat" component=\{GroundedProjectChatRoute\}/);
   assert.doesNotMatch(customer, /import LabourerProfileScreen/);
   assert.doesNotMatch(customer + worker, /import ChatScreen/);
+});
+
+test('Grounded tab layout keeps normal and 200% labels above Android gesture insets', () => {
+  const { GROUNDED_TAB_ICON_SIZE, resolveGroundedTabBarLayout } = require(
+    '../../src/navigation/groundedTabBarLayout.ts',
+  );
+  const topPadding = 8;
+  const minimumHeight = 64;
+  const labelLineHeight = 16;
+
+  for (const bottomInset of [0, 24]) {
+    for (const fontScale of [1, 2]) {
+      const layout = resolveGroundedTabBarLayout({
+        bottomInset,
+        fontScale,
+        labelLineHeight,
+        minimumBottomPadding: 8,
+        minimumHeight,
+        topPadding,
+      });
+      assert.equal(layout.paddingBottom, Math.max(bottomInset, 8));
+      assert.ok(layout.height >= minimumHeight);
+      assert.ok(
+        layout.height - layout.paddingTop - layout.paddingBottom
+          >= GROUNDED_TAB_ICON_SIZE + labelLineHeight * fontScale,
+      );
+    }
+  }
 });
 
 test('transactional routes remain above tabs and grounded offers target WorkerJobDetail', () => {

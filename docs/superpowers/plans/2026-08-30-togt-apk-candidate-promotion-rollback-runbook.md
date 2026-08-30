@@ -34,6 +34,8 @@ working branch
 
 If any gate fails, reject or supersede the candidate, repair on a new commit, allocate a new candidate identity/version code where required, and repeat. Never rebuild after approval and call the new bytes the same release.
 
+If TOGT simply does not like vc4 before promotion, reject it and keep vc3; no release rollback occurs. If vc4 is already installed, returning to the retained lower-code APK requires uninstall/reinstall and loses app-local data. The data-preserving alternative is the last-known-good code rebuilt with the next higher version code and the same signer.
+
 ## 2. What the existing pipeline already proves
 
 `mobile/scripts/android-build.cjs` already provides a strong base:
@@ -299,6 +301,8 @@ In addition to the standard gate, verify:
 
 - Google Android key is restricted to `za.togt.app` plus the recorded internal signer SHA-1;
 - no server key or raw Maps key appears in logs, screenshots, evidence records, or mobile responses;
+- independently inspected build evidence reports `groundedMomentumShell: true` and `customerFlagship: true` for the vc4 candidate profile;
+- Grounded Address is reachable, legacy `RequestMatch`/`BookingForm` are not registered, and the valid-form legacy link `togt://customer/workers/00000000-0000-4000-8000-000000000001/book` is rejected;
 - `ACCESS_BACKGROUND_LOCATION` is absent;
 - precise, approximate, denied, and later-granted foreground-location paths;
 - GPS centres but does not resolve or confirm;
@@ -308,6 +312,8 @@ In addition to the standard gate, verify:
 - landmark/access edits preserve coordinates;
 - Adjust Pin → Cancel preserves the previous safe address;
 - draft/session state survives process death and the `versionCode 3` → `4` upgrade;
+- canonical vc4 quote `map_pin` provenance survives booking conversion; match/MCP/direct-booking `NULL`, unsafe or server-issued evidence propagates without allowing those surfaces to manufacture `map_pin`; absent vc3 provenance remains `NULL`/unverified;
+- `address_provenance_recording` off/absent causes truthful draft preservation with no incompatible field sent; fresh/on records the vc4 source;
 - maps capability-off and expired capability snapshots fail closed truthfully;
 - a controlled `maps_display` disable → refresh/expiry → restore drill records before/after snapshot hashes, blocks new picker mounts and pin commits while off, and recovers without losing the draft;
 - worker-facing exact-address privacy remains unchanged;
@@ -325,6 +331,9 @@ Disable the affected runtime feature first:
 - `maps_display`
 - `address_search`
 - `address_resolution`
+- `address_provenance_recording` when final vc4 submission itself must stop
+
+This layer contains provider, data-contract and booking-safety incidents. It cannot restore disliked packaged visuals or navigation; those go directly to a same-signer APK forward rollback.
 
 The capability snapshot advertises a 300-second TTL, but the current mounted-screen implementation does not yet guarantee timer-driven invalidation. Until the address capability-refresh contract is implemented, containment takes effect after the next capability refresh rather than within a guaranteed 300 seconds. Wave 1 must refresh on focus/app foreground, invalidate at expiry, and revalidate `maps_display` immediately before picker open/new pin binding. Confirm revalidates source/revision/fingerprint and any separate address-submission gate; an existing fingerprint-matching `map_pin` is not revoked merely because map display is off. Today a registry change also requires a controlled backend redeploy/restart; a future operated admin kill switch may shorten this while preserving auditability.
 
@@ -373,7 +382,7 @@ A same-package, same-signer, higher-version upgrade normally preserves SecureSto
 Rules:
 
 - keep local schemas backward compatible for at least one promoted release;
-- Wave 1 remains on the existing address/draft schema and requires no destructive local migration;
+- Wave 1 keeps the existing mobile address/draft schema compatible and uses only an additive nullable backend provenance migration; it requires no destructive migration;
 - introduce a new storage key or non-destructive copy migration when a schema must change;
 - upgrade-test real populated drafts and both role sessions;
 - ensure a rollback build can read data written by the candidate; and
@@ -383,7 +392,11 @@ The local development backend must use a persistent JWT signing secret stored ou
 
 ## 11. Database and API safety
 
-- Wave 1 pin wiring has no database migration.
+- Wave 1 adds nullable checked `coordinate_source` columns to `match_requests` and `bookings`, plus optional quote-request snapshot provenance. Historical rows remain `NULL`; no backfill claims verification.
+- Match/quote provenance is copied atomically into the resulting booking.
+- `saved_verified_place` and `provider_geocode` are server-reserved sources and cannot be naked client assertions.
+- Strict source admission is not enforced in Wave 1; a future separately operated gate defaults unavailable/off during the vc3/recovery compatibility window. Audit/recording mode is never represented as universal server verification.
+- Deploy the nullable migration and compatible backend first with `address_provenance_recording` off, verify propagation, then enable it for vc4. Against an older/missing capability, vc4 preserves its draft, sends no unknown location field and blocks final submission truthfully.
 - Deploy additive backend/API support before the APK where needed.
 - Keep the old app compatible for at least one promoted release.
 - Saved Places ships separately with an additive, user-scoped schema and protected CRUD.

@@ -39,6 +39,7 @@ This specification supersedes any wording that treats raw GPS coordinates plus i
 10. Search and geocoding remain truthfully disabled until their separate backend and release gates pass.
 11. Saved Places is the first cost-control follow-up and precedes provider search where practical.
 12. Exact location remains hidden from workers until the existing approved reveal boundary.
+13. Wave 1 records coordinate provenance end to end on the server. Missing legacy provenance remains explicit `NULL`; it is never inferred or presented as verified.
 
 ## 4. Delivery boundary
 
@@ -51,12 +52,13 @@ Wave 1 includes:
 - raw six-field address entry;
 - a dedicated exact-pin picker;
 - explicit `Use this pin` resolution to `map_pin`;
+- an additive server provenance bridge across quote requests, match requests and bookings;
 - address confirmation and navigation to Schedule;
 - truthful maps-off, permission-denied, stale-capability, and unresolved states;
 - automated model, capability, component, and route tests; and
 - candidate APK inspection on emulator and physical Android before promotion.
 
-Wave 1 requires no database migration and no new address-provider endpoint.
+Wave 1 includes one additive, nullable provenance migration but no destructive schema change and no new address-provider endpoint. Existing vc3, agent and MCP payloads remain compatible by writing `NULL`. Strict source admission is not enforced in Wave 1; a future separately operated admission gate defaults unavailable/off until every supported writer and recovery build transports the contract.
 
 ### Wave 1b — Saved Places
 
@@ -181,6 +183,44 @@ metadata:
 
 It must not contain or overwrite `landmark` or `accessInstructions`. If the provider omits `unitOrComplex`, preserve the customer's value rather than blanking it. Provider search-session tokens remain server-only and never appear in the mobile response; a separate opaque TOGT request/correlation ID may be returned when operationally required.
 
+### 6.5 Server provenance and audit bridge
+
+The mobile safety model is not sufficient as the only audit record. Wave 1 transports the declared coordinate source through every booking-producing path.
+
+Storage contract:
+
+- add nullable, checked `coordinate_source` to `match_requests` and `bookings`;
+- add optional `privateLocation.coordinateSource` to the Grounded quote-request contract and immutable private-location snapshot;
+- copy quote-request provenance into `bookings.coordinate_source` when a quote is accepted;
+- copy `match_requests.coordinate_source` into the matched booking in the same transaction; and
+- keep historical and compatible legacy/MCP writes `NULL`, with no default or inferred backfill.
+
+The shared server vocabulary is:
+
+```text
+map_pin
+saved_verified_place
+provider_geocode
+device_gps
+entered_coordinates
+```
+
+Server rules:
+
+- validate finite coordinates and latitude/longitude bounds through one shared contract for quote, match, MCP and gated direct-booking inputs;
+- reject unknown provenance values;
+- accept `map_pin` in Wave 1 only on the canonical vc4 quote-request contract as an authenticated customer/client attestation, and record it without claiming the server independently observed a touch gesture;
+- do not let legacy match/direct-booking, MCP or agent tool schemas manufacture `map_pin`; those surfaces may record `NULL`, an explicitly unsafe source, or a valid server-issued evidence reference only;
+- reserve `saved_verified_place` and `provider_geocode` for service-assigned evidence; reject either as a naked client assertion;
+- treat `device_gps`, `entered_coordinates` and `NULL` as non-verified evidence; and
+- never present `NULL` or a client-declared value as provider/server verification.
+
+Wave 1 is audit/recording mode for backward compatibility, not final universal enforcement. A separately operated address-submission admission gate later requires a server-accepted safe source on every booking-producing path. It may become mandatory only when the supported vc3/agent/MCP writers and the prepared recovery build can either transport provenance or receive a truthful update/verification-required response.
+
+The vc4 client sends `coordinateSource` only when a fresh `address_provenance_recording` capability proves the additive DTO/schema is deployed. Without that evidence it preserves the draft and blocks final booking/quote submission with a truthful service-update message; it must not send an unknown field to an older backend or silently submit without provenance.
+
+Accepted Wave 1 limitation: a recorded `map_pin` proves that the official vc4 contract declared explicit pin acceptance; it does not cryptographically prove a physical gesture. Saved-place and provider sources become genuinely server-authoritative only through later server-issued evidence.
+
 ## 7. State model
 
 ### 7.1 Persistent address states
@@ -208,6 +248,20 @@ The candidate coordinate is local to the picker until `Use this pin`. Opening Ad
 When the picker opens, capture `draftId`, the committed draft revision, and the normalised six-field fingerprint. `Use this pin` must compare all three with current state. If the draft was edited, restored, replaced, or synchronised while the picker was open, reject the commit, discard the stale candidate, and show **The address changed—set the pin again**.
 
 ### 7.3 Transition rules
+
+`entryMode` is the most recent committed address-acquisition method for the current six location-bearing fields. It is UI/acquisition context, never dispatch-safety evidence; only `resolution.source` controls safety. Constructors and draft restore must derive or validate these pairings rather than accepting an unconstrained Cartesian product:
+
+| Transition | `entryMode` | `resolution.source` |
+|---|---|---|
+| Fresh/manual location-bearing edit | `manual` | unresolved |
+| Explicit `Use this pin` after any valid seed/placement | `map_pin` | `map_pin` |
+| Service-issued Saved Place selection | `saved_place` | `saved_verified_place` |
+| Manual/provider-geocoded address | `manual` | `provider_geocode` |
+| GPS camera seed before acceptance | no persisted change | no persisted change |
+| Legacy GPS draft only | `current_location` | `device_gps` (non-dispatchable) |
+| Legacy entered-coordinate draft only | `manual` | `entered_coordinates` (non-dispatchable) |
+
+Wave 2 adds `provider_search` as an entry mode for autocomplete selection instead of mislabelling it `manual`. Note-only edits preserve both fields. Impossible pairings are rejected or safely canonicalised to unresolved during draft restoration; they never become dispatch-safe.
 
 - GPS may seed the camera/candidate but may not mutate the persisted `JobAddress`.
 - A neutral default camera region is never a candidate and leaves `Use this pin` disabled.
@@ -239,6 +293,7 @@ The backend registry, `/api/capabilities` response, mobile feature-name registry
 | `maps_display` | Google map provider selected and Android key packaged | Fresh server evidence plus explicit maps-display release approval | Available only when both pass |
 | `address_search` | Search client path packaged | Explicit release approval plus validated backend provider configuration | Unavailable |
 | `address_resolution` | Resolution client path packaged | Explicit release approval plus validated backend provider configuration | Unavailable |
+| `address_provenance_recording` | Provenance DTO/client path packaged | Fresh server evidence that migration, DTO and propagation are deployed | Required before final vc4 submission |
 | `foreground_location_updates` | Existing foreground location package and safe permission declaration | Fresh server capability | Enables the request path; camera centring only |
 
 The server-side `maps_display` value is a release/kill gate, not proof that a particular APK contains a valid Android key. Effective map display is the intersection of packaged evidence and a fresh runtime snapshot.
@@ -258,6 +313,7 @@ Capability and workflow reasons remain distinct:
 - `maps_display_release_disabled`
 - `address_search_release_disabled`
 - `address_provider_not_configured`
+- `address_provenance_contract_unavailable`
 - `pin_not_set`
 - `address_changed_pin_recheck_required`
 - `location_permission_denied`
@@ -349,9 +405,20 @@ The confirmation sheet may grow or scroll without hiding `Use this pin`. The add
 
 **Exit:** contract tests fail for the current deadlocked route and encode the desired safe sources.
 
+### LOC-00A — additive server provenance bridge
+
+- Add nullable, checked `coordinate_source` to `match_requests` and `bookings` without backfilling historical rows.
+- Extend Grounded quote `privateLocation` with optional `coordinateSource`, retain it in the request snapshot and copy it to an accepted booking.
+- Extend match, MCP and gated direct-booking inputs with optional audit provenance and one shared source/coordinate validator, while forbidding those surfaces from manufacturing `map_pin`.
+- Propagate match provenance into the booking atomically.
+- Reject naked client assertions of server-reserved `saved_verified_place` and `provider_geocode`.
+- Do not enforce strict source admission in Wave 1; document the future admission gate as unavailable/off during the vc3 rollback window, while `NULL` remains explicit legacy/unverified evidence.
+
+**Exit:** REST/MCP unsafe/`NULL` audit provenance survives match → booking, gated direct booking records only permitted audit provenance, canonical vc4 `map_pin` survives quote request → accepted booking, invalid coordinates/sources fail, tool-authored/direct-booking `map_pin` fails, and no row is silently upgraded to verified.
+
 ### LOC-01 — capability registry end to end
 
-- Add the three address/map entries to `backend/src/config/capabilities.js`.
+- Add the three address/map entries plus `address_provenance_recording` to `backend/src/config/capabilities.js`.
 - Add the matching mobile feature names, packaged gates, DTO adaptation, reason codes, and tests.
 - Keep search and resolution runtime-off in Wave 1.
 - Refresh on screen focus/app foreground, invalidate at snapshot expiry, and revalidate `maps_display` before picker open/new pin binding. Confirm revalidates safe source, draft revision, fingerprint and any separate submission-admission gate—not map-display availability.
@@ -372,6 +439,7 @@ The confirmation sheet may grow or scroll without hiding `Use this pin`. The add
 - Keep raw six-field values during editing.
 - Commit normalised values at save/resolution/submission boundaries.
 - Make fingerprint invalidation explicit and tested.
+- Derive or validate the `entryMode`/`resolution.source` compatibility matrix in constructors, normalisation and draft restore.
 - Preserve landmark/access instructions separately.
 
 **Exit:** ordinary typing is stable and no stale resolution survives a location-bearing edit.
@@ -392,6 +460,7 @@ The confirmation sheet may grow or scroll without hiding `Use this pin`. The add
 - Mount the exact-location card and preview.
 - Commit accepted candidate as `map_pin`.
 - Confirm the safe address and navigate to Schedule.
+- Require the Grounded customer stack for this candidate; legacy `RequestMatch` and `BookingForm` must not be registered. Identify the legacy route as `togt://customer/workers/:workerId/book`, then test rejection with a syntactically valid concrete worker ID so malformed parameters cannot create a false pass.
 - Collapse duplicate provider-off notices.
 
 **Exit:** a fresh customer completes Address → Schedule without provider search/geocoding.
@@ -401,14 +470,17 @@ The confirmation sheet may grow or scroll without hiding `Use this pin`. The add
 - Add model, capability, component, navigation, draft persistence, and privacy tests.
 - Cover permission allow/approximate/deny and Maps-off recovery.
 - Cover address edit invalidation and instruction preservation.
+- Cover provenance persistence/propagation, reserved-source rejection, entry-mode/source pairings, absence of legacy route registration and rejection of `togt://customer/workers/00000000-0000-4000-8000-000000000001/book`.
 
-**Exit:** LOC-00–07 focused tests plus the existing complete mobile/backend regression suites pass.
+**Exit:** LOC-00, LOC-00A and LOC-01–07 focused tests plus the existing complete mobile/backend regression suites pass.
 
 ### LOC-07 — candidate APK gate
 
 - Build the x86_64 emulator and ARM64 device members of candidate `1.2.0` / `versionCode 4`.
 - Inspect manifests, permissions, components, ABI, signature, signer, runtime contract, hashes, and Maps metadata.
-- Test clean install and same-signer upgrade from the promoted `versionCode 3` baseline.
+- Assert the independently inspected runtime asset and build manifest report `groundedMomentumShell: true` and `customerFlagship: true` for this candidate profile.
+- Test clean install and same-signer upgrade from the grandfathered `versionCode 3` baseline.
+- Device-smoke the Grounded Address route, prove `RequestMatch` and `BookingForm` are not registered, and prove the valid-form legacy link `togt://customer/workers/00000000-0000-4000-8000-000000000001/book` is rejected.
 - Capture normal/200% screenshots and physical-device evidence.
 
 **Exit:** the exact ARM64 SHA-256 is ready for user approval; nothing is promoted yet.
@@ -444,6 +516,17 @@ The confirmation sheet may grow or scroll without hiding `Use this pin`. The add
 - Missing, non-finite, `NaN`, and out-of-range coordinates are rejected.
 - A picker opened against an older draft ID/revision/fingerprint cannot commit.
 - Atomic draft restore never combines newer address text with older safe resolution; unsaved picker candidates do not survive process death.
+- Every supported `entryMode`/`resolution.source` pair follows the matrix; impossible restored pairs fail closed or canonicalise to unresolved.
+
+### Server provenance tests
+
+- vc4 quote request `map_pin` provenance survives the private-location snapshot and accepted-booking conversion.
+- Match REST/MCP `NULL`, unsafe or server-issued provenance survives matched-booking conversion atomically; tool-authored `map_pin` is rejected.
+- Gated direct-booking REST requests preserve absent source as `NULL` and permitted unsafe audit sources into the booking; `map_pin` and naked server-reserved sources are rejected.
+- Missing vc3/legacy provenance persists as `NULL` and is never projected as verified.
+- Unknown sources, out-of-range/non-finite coordinates, and naked client assertions of `saved_verified_place`/`provider_geocode` are rejected.
+- Without fresh `address_provenance_recording`, vc4 sends no incompatible DTO and blocks final submission truthfully; with it, provenance is required and persisted.
+- A future strict address-submission admission gate defaults unavailable/off during the compatibility/rollback window and must fail closed truthfully when implemented and later enabled.
 
 ### Capability tests
 
@@ -454,6 +537,7 @@ The confirmation sheet may grow or scroll without hiding `Use this pin`. The add
 - A snapshot that expires while the picker/address route remains mounted blocks new picker/pin operations at action time until refresh succeeds.
 - Capability-off does not revoke an already committed, fingerprint-matching safe pin.
 - Search and resolution remain off in Wave 1.
+- Provenance-recording absent/stale → final vc4 submission off; fresh/on → source-bearing submission on.
 - Distinct reason codes survive server-to-mobile adaptation.
 
 ### Component and route tests
@@ -468,10 +552,11 @@ The confirmation sheet may grow or scroll without hiding `Use this pin`. The add
 - Confirm never silently no-ops.
 - Provider-off messaging does not obscure the working pin route.
 - An explicitly saved draft persists through process death and a same-signer APK upgrade; ephemeral picker state does not.
+- With the candidate profile, the Grounded Address route is mounted, legacy `RequestMatch`/`BookingForm` are absent, and `togt://customer/workers/00000000-0000-4000-8000-000000000001/book` is rejected by link parsing.
 
 ### Wave 1b/2 follow-up contract tests
 
-These do not block LOC-00–07 or the Wave 1 candidate:
+These do not block LOC-00, LOC-00A and LOC-01–07 or the Wave 1 candidate:
 
 - Saved-place provenance is service-assigned only from an already dispatch-safe source.
 - Saved place selection makes zero provider requests.
@@ -483,6 +568,7 @@ These do not block LOC-00–07 or the Wave 1 candidate:
 - No background-location permission.
 - No server-only credential or provider session token is packaged in the APK. The Android client Maps key is expected in manifest metadata, must be package/certificate restricted, and is redacted from logs/evidence.
 - Maps metadata and package/signer restriction are verified.
+- Build evidence reports `groundedMomentumShell: true` and `customerFlagship: true`. Recovery builds retain these safe routing flags by default; any exception requires separate approval and proof that legacy booking/match submission is unreachable on both client and server.
 - Clean install and `versionCode 3` → `versionCode 4` upgrade both pass.
 - Precise, approximate, denied, and later-granted foreground location paths pass.
 - Address → Schedule → Review works on the physical device.
@@ -508,6 +594,12 @@ clean candidate commit
 
 Immediate failure containment is server capability-off. APK rollback is a same-signer forward rollback: rebuild the prior accepted source with a new higher `versionCode`. Never depend on installing a lower Android version code over a higher one.
 
+Rollback depends on when TOGT decides it does not like the upgrade:
+
+- **Before vc4 is promoted or installed:** reject the candidate; vc3 remains unchanged and no rollback build is needed.
+- **After vc4 is installed on a test phone but before promotion:** either uninstall and reinstall retained vc3, accepting local-data loss, or install a same-package/same-signer recovery build of the vc3 code at the next higher version code to preserve compatible app data.
+- **After vc4 is promoted:** for a provider/data incident, disable the affected runtime capability first. A visual/UI rejection has no server-side rollback, so proceed directly to the last-known-good code as the next higher same-signer recovery version. The additive nullable provenance columns remain in place and are safely ignored by vc3-derived code.
+
 ## 15. Explicit exclusions
 
 - Places/search/geocoding in Wave 1.
@@ -518,6 +610,8 @@ Immediate failure containment is server capability-off. APK rollback is a same-s
 - iOS delivery in this Android unblock.
 - Any change to exact-address worker privacy timing.
 - Production provider enablement without explicit release evidence.
+- Cryptographic proof that a physical map gesture occurred; Wave 1 records official vc4 `map_pin` client attestation without overstating it as server observation.
+- Universal strict source admission across vc3, legacy REST, MCP and agent writers; Wave 1 records nullable provenance and leaves the future admission gate unavailable/off.
 - Extreme provider/map edge-case expansion beyond the core Address → Schedule deliverable.
 
 ## 16. Definition of done
@@ -526,8 +620,10 @@ Wave 1 is done only when:
 
 - a fresh customer can reach Schedule through an explicitly accepted exact pin;
 - safety invariants remain intact;
+- nullable provenance is recorded and propagated through every touched booking-producing path without misclassifying legacy `NULL` or tool-authored evidence;
+- the vc4 candidate proves the Grounded flagship is active and legacy booking/match routes and links are unavailable;
 - the UI passes Grounded Momentum visual and accessibility review;
-- LOC-00–07 focused tests and the existing complete automated regression suites pass; LOC-08/09 remain separately gated follow-ups;
+- LOC-00, LOC-00A and LOC-01–07 focused tests and the existing complete automated regression suites pass; LOC-08/09 remain separately gated follow-ups;
 - the exact candidate APK passes static, emulator, upgrade, and physical-device inspection;
 - the user approves that APK's SHA-256; and
 - only those exact tested bytes are promoted.

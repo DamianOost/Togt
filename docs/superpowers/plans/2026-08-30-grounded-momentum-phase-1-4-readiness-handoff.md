@@ -58,7 +58,7 @@ The final normal customer, 200% customer and Worker screenshots preserve the app
 
 ## Remaining production gates
 
-- Unblock fresh-customer Address → exact accepted pin → Schedule and pass the candidate gate on emulator and physical Android.
+- Unblock fresh-customer Address → exact accepted pin → Schedule, preserve nullable coordinate provenance through server booking-producing paths, and pass the candidate gate on emulator and physical Android.
 - Replace the development/local API origins with an approved public HTTPS production API.
 - Use the approved release keystore and complete store/distribution signing controls.
 - Supply and validate real Peach credentials, signed webhooks, reconciliation and controlled real-money testing before enabling checkout.

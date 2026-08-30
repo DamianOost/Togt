@@ -910,6 +910,10 @@ Rules:
 - Location denial keeps manual address entry and manual map-pin positioning usable; the draft can be saved, but booking remains blocked until an exact pin is explicitly accepted.
 - Address Search and Address Resolution remain separate runtime capabilities from Maps Display. Pin-first delivery must not wait for Places or Geocoding.
 - Effective map display requires both packaged provider evidence and a fresh server release/capability gate; backend configuration alone is not proof that a particular APK contains a usable key.
+- Wave 1 adds nullable server provenance across quote requests, match requests and bookings. Historical/compatible missing values remain `NULL` and unverified; they are never inferred or backfilled.
+- `map_pin` is initially an authenticated client attestation recorded for audit. `saved_verified_place` and `provider_geocode` require service-assigned evidence and cannot be naked client assertions.
+- Legacy match/direct-booking, MCP and agent tool schemas cannot manufacture `map_pin`; they may record `NULL`, an explicitly unsafe source or valid server-issued evidence only.
+- `entryMode` records the committed acquisition path only; it never overrides or substitutes for server/mobile resolution source.
 - Phase 0 foreground sharing operates only while the active-job screen/app is foregrounded. When the app is backgrounded, the customer sees `Last updated …`, never `Live`.
 - Phase 0 defines an update cadence, stale-after threshold and hard-hide TTL from measured device/battery tests before release.
 - If continuous background tracking is later enabled, it requires an active-job-only Android foreground service/background permission, persistent system disclosure, explicit battery/update budgets and the same terminal stop conditions.
@@ -922,6 +926,7 @@ Acceptance:
 - A fresh customer can complete Address → accepted `map_pin` → Schedule without search/geocoding.
 - Location denial never blocks manual address entry or manual pin placement, but unresolved manual text never dispatches.
 - `device_gps` and `entered_coordinates` remain non-dispatchable; `map_pin`, `saved_verified_place` and `provider_geocode` remain dispatch-safe.
+- Quote/match/direct-booking provenance reaches the resulting booking atomically; vc3/legacy/MCP writes without evidence remain explicit `NULL` until a separately gated server admission policy can require safe provenance everywhere.
 - Scheduled workers receive only broad area until `Start route` or the approved lead-time window; early-reveal, reassignment and cancellation revocation tests pass.
 - Participant-only updates reach the customer within the agreed p95 budget.
 - Tracking listeners unsubscribe cleanly and do not duplicate after navigation.
@@ -1138,6 +1143,7 @@ P0-Triage exit criteria:
 - The successor builds from the recorded source baseline through the documented local Gradle command with a higher `versionCode`.
 - The candidate remains isolated and unpromoted until the exact tested ARM64 SHA-256 receives user approval; merge, push and build success are not promotion evidence.
 - Package, signer, ABI set, source commit, configuration class, checksum, artifact location and known limitations are recorded.
+- The location candidate build evidence reports `groundedMomentumShell: true` and `customerFlagship: true`; Grounded Address is reachable, legacy `RequestMatch`/`BookingForm` are not registered, and the valid-form legacy link `togt://customer/workers/00000000-0000-4000-8000-000000000001/book` is rejected.
 - Clean install and same-signer upgrade install pass on at least one representative physical Android device.
 - Cold launch, auth restore/sign-in and both authorized role shells reach a stable state against synthetic development data.
 - Every enumerated P0.5 crash, navigation mismatch, unintended mutation, scope bypass and endless spinner has a focused regression test and no longer reproduces.
@@ -2415,7 +2421,7 @@ Migration numbering must be checked against the repository at implementation tim
 | Service catalogue | Versioned service/category, pricing mode, risk tier, required fields, fulfilment mode, cancellation and recurrence rules. |
 | Job brief | Structured answers, media references, service version, scope snapshot and customer confirmations. |
 | Quote | Worker-authored scope, exclusions, schedule, amount, expiry and version; single-winner acceptance and withdrawal/decline audit. |
-| Booking journey | Place ID/source/accuracy, `en_route_at`, `arrived_at`, scope/start/completion event references. |
+| Booking journey | Nullable checked `coordinate_source` on match requests/bookings, quote private-location snapshot propagation, later server-issued place/provider evidence, accuracy, `en_route_at`, `arrived_at`, scope/start/completion event references. Historical missing source remains `NULL`/unverified. |
 | Commercial snapshot | Rate/fixed amount, estimated hours/range, platform fee, tax treatment, materials assumptions, cancellation terms and version. |
 | Change orders | Parent scope version, description, time/materials/amount, status, actors and timestamps. |
 | Completion | Request, customer decision, timeout policy, dispute reference and evidence references. |

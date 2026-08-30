@@ -81,7 +81,7 @@ The artifact was built locally with a portable Microsoft JDK 17 and Android SDK/
 
 ### Current P0 correction — 2026-08-30
 
-The implemented fresh-customer intake is blocked at Address because it exposes no path to a dispatch-safe location source. This is a release blocker, not a location-quality enhancement. Execute the pin-first contract in `docs/superpowers/specs/2026-08-30-togt-address-pin-funnel-unblock-spec.md` before treating the customer booking funnel as internally beta-complete. Search/geocoding follow later and must not block the exact-pin route.
+The implemented fresh-customer intake is blocked at Address because it exposes no path to a dispatch-safe location source. This is a release blocker, not a location-quality enhancement. Execute the pin-first contract—including LOC-00A's additive server provenance bridge—in `docs/superpowers/specs/2026-08-30-togt-address-pin-funnel-unblock-spec.md` before treating the customer booking funnel as internally beta-complete. Search/geocoding follow later and must not block the exact-pin route.
 
 ## 4. Ten-star build bar
 
@@ -262,10 +262,12 @@ P0T-00 → P0T-01
 
 - clean launch, sign-in/restore and one customer plus one worker fixture;
 - fresh-customer Address → explicitly accepted exact pin → Schedule;
+- quote/match/direct-booking coordinate provenance → immutable request snapshot/row → resulting booking, with legacy absence retained as `NULL`;
 - Discover → Worker Profile → scheduled request;
 - Fast Match offer expiry/accept distinction;
 - scope confirmation, PIN/start guard and change-order entry;
 - Payment read-only entry and capability-off recovery;
+- flagship candidate omits legacy `RequestMatch`/`BookingForm` registration and rejects the valid-form legacy link `togt://customer/workers/00000000-0000-4000-8000-000000000001/book`;
 - offline/reconnect, duplicate tap, back navigation and logout cleanup.
 
 **Acceptance**
@@ -283,6 +285,8 @@ P0T-00 → P0T-01
 - Follow `docs/superpowers/plans/2026-08-30-togt-apk-candidate-promotion-rollback-runbook.md`.
 - Build higher-version x86_64 and ARM64 candidates through the local pipeline from a clean isolated candidate commit.
 - Independently inspect package/version/SDK/ABI/bundle, permissions/components/provider metadata, runtime contract, Maps-key fingerprint, alignment/signature/signer and SHA-256.
+- Assert vc4 packages `groundedMomentumShell: true` plus `customerFlagship: true`, mounts Grounded Address and rejects legacy customer booking/match routes and links.
+- Verify nullable source provenance through quote/match creation into booking without treating legacy `NULL` as safe.
 - Perform emulator clean/upgrade tests and same-signer physical-device upgrade over the current installed/legacy baseline.
 - Run the P0T-06 smoke matrix against the labelled synthetic development backend.
 - Present the exact ARM64 SHA-256, visual evidence, known limitations and rollback source for user approval.

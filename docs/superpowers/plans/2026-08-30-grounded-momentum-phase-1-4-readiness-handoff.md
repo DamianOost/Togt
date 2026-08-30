@@ -2,15 +2,21 @@
 
 ## Outcome
 
-The Grounded Momentum Phase 1–4 implementation is ready for internal Android beta testing. The accepted application source is commit `4401ef8a0f19c7a2f8615a4f9abc781746577d39` on `codex/mobile/grounded-momentum-full-build-2026-08-29`.
+The Grounded Momentum Phase 1–4 implementation is ready for internal Android exploratory and visual testing. The accepted application source is commit `4401ef8a0f19c7a2f8615a4f9abc781746577d39` on `codex/mobile/grounded-momentum-full-build-2026-08-29`.
 
-This is not a production rollout build. It is a development-signed, local/LAN-connected APK with unsupported production providers truthfully disabled.
+This is not yet an end-to-end customer-booking beta or a production rollout build. It is a development-signed, local/LAN-connected APK with unsupported production providers truthfully disabled.
+
+## Post-handoff P0 finding — 2026-08-30
+
+A fresh customer cannot currently pass Address Confirmation because no mounted path can produce `map_pin`, `saved_verified_place`, or `provider_geocode`, while confirmation correctly rejects unresolved manual/GPS input. The UI can be explored, but the booking funnel is blocked before Schedule.
+
+The approved correction is the pin-first Wave 1 in `docs/superpowers/specs/2026-08-30-togt-address-pin-funnel-unblock-spec.md`. Its first implementation must be treated as an inspectable candidate under `docs/superpowers/plans/2026-08-30-togt-apk-candidate-promotion-rollback-runbook.md`, not as an automatically accepted replacement.
 
 ## Phase result
 
-- Phase 0: release identity, signer continuity, fail-closed provider policy, APK verification and reliability gates pass.
+- Phase 0: release identity, signer continuity, fail-closed provider policy and existing APK verification pass; the fresh-customer address gate remains open as described below.
 - Phase 1: approved Grounded Momentum tokens, typography, component foundations, icons and customer/Worker navigation are mounted.
-- Phase 2: the customer flagship intake and Project lifecycle, plus the minimum paired Worker path, are implemented against canonical evidence.
+- Phase 2: the customer flagship intake visuals and Project lifecycle, plus the minimum paired Worker path, are mounted against canonical evidence; the fresh-customer Address → Schedule transition remains blocked pending the pin-first candidate.
 - Phase 3: Worker Today, Jobs, quote requests, lifecycle, earnings, account readiness, trust, safety, relationships and retention surfaces are implemented.
 - Phase 4: assisted intake, explainable recommendations, contextual safety education and live status are mounted behind packaged and server capability gates.
 
@@ -52,6 +58,7 @@ The final normal customer, 200% customer and Worker screenshots preserve the app
 
 ## Remaining production gates
 
+- Unblock fresh-customer Address → exact accepted pin → Schedule and pass the candidate gate on emulator and physical Android.
 - Replace the development/local API origins with an approved public HTTPS production API.
 - Use the approved release keystore and complete store/distribution signing controls.
 - Supply and validate real Peach credentials, signed webhooks, reconciliation and controlled real-money testing before enabling checkout.
@@ -59,4 +66,4 @@ The final normal customer, 200% customer and Worker screenshots preserve the app
 - Install/upgrade the ARM64 candidate on physical devices and complete OEM, camera/media, GPS, notification, TalkBack and Android 16 runtime checks.
 - Complete operational privacy, support, incident-response and store-release approvals.
 
-Until those gates pass, the correct classification is **internal beta ready**, not production ready.
+Until the address-pin candidate passes, the correct classification is **internal exploratory/visual APK ready**, not end-to-end customer-booking beta ready and not production ready.

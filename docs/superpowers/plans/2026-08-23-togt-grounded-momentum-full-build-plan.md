@@ -79,6 +79,10 @@ The artifact was built locally with a portable Microsoft JDK 17 and Android SDK/
 - Resolution of the known crash, navigation, unintended mutation and truthfulness defects.
 - Public HTTPS/WSS preview, remote push, restricted Maps/Places keys, Peach sandbox reconciliation, production-grade KYC, operated SOS and payout.
 
+### Current P0 correction — 2026-08-30
+
+The implemented fresh-customer intake is blocked at Address because it exposes no path to a dispatch-safe location source. This is a release blocker, not a location-quality enhancement. Execute the pin-first contract in `docs/superpowers/specs/2026-08-30-togt-address-pin-funnel-unblock-spec.md` before treating the customer booking funnel as internally beta-complete. Search/geocoding follow later and must not block the exact-pin route.
+
 ## 4. Ten-star build bar
 
 Every wave must leave TOGT more truthful and more testable. A feature is not accepted because its happy-path screen renders.
@@ -92,7 +96,7 @@ The build bar requires:
 5. deterministic retries, idempotency and race handling;
 6. compact Android, 200% text, TalkBack and weak-network evidence;
 7. observable provider/background work with PII-safe logs;
-8. an installable signed artifact, source commit and rollback point at each release gate;
+8. an installable signed candidate, immutable build/evidence records, exact-hash approval, promoted bytes and rollback point at each release gate;
 9. capability flags/kill switches for incomplete or externally blocked work;
 10. exact automated and physical-device evidence attached to the owning ticket.
 
@@ -245,6 +249,8 @@ P0T-00 → P0T-01
 
 ### P0T-06 — Automate the bounded triage smoke matrix
 
+**Reopened 2026-08-30:** The historical vc3 matrix did not and could not pass the newly discovered fresh-customer Address → Schedule journey. LOC-06 in the focused address-pin specification supersedes this ticket for that journey; prior vc3 evidence remains valid only for the paths it actually exercised and is not retroactively upgraded.
+
 **Scope**
 
 - Add unit/component/API regression coverage owned by P0T-02 through P0T-05.
@@ -255,6 +261,7 @@ P0T-00 → P0T-01
 **Required journeys**
 
 - clean launch, sign-in/restore and one customer plus one worker fixture;
+- fresh-customer Address → explicitly accepted exact pin → Schedule;
 - Discover → Worker Profile → scheduled request;
 - Fast Match offer expiry/accept distinction;
 - scope confirmation, PIN/start guard and change-order entry;
@@ -267,21 +274,27 @@ P0T-00 → P0T-01
 - No reproducible JavaScript crash, unhandled route action or false success remains.
 - Failures retain logs and evidence instead of being rerun until green.
 
-### P0T-07 — Build, install, verify and distribute the successor
+### P0T-07 — Build, inspect, approve and promote the successor
+
+**Reopened 2026-08-30:** The historical vc3 artifact remains the grandfathered upgrade baseline, not evidence for the location candidate. LOC-07 and the candidate runbook govern vc4 inspection, approval and promotion.
 
 **Scope**
 
-- Build the higher-version ARM64 internal APK through the local pipeline.
-- Inspect package/version/SDK/ABI/bundle, verify alignment/signature and calculate SHA-256.
-- Perform clean install and same-signer upgrade over v1 on a representative physical Android device.
+- Follow `docs/superpowers/plans/2026-08-30-togt-apk-candidate-promotion-rollback-runbook.md`.
+- Build higher-version x86_64 and ARM64 candidates through the local pipeline from a clean isolated candidate commit.
+- Independently inspect package/version/SDK/ABI/bundle, permissions/components/provider metadata, runtime contract, Maps-key fingerprint, alignment/signature/signer and SHA-256.
+- Perform emulator clean/upgrade tests and same-signer physical-device upgrade over the current installed/legacy baseline.
 - Run the P0T-06 smoke matrix against the labelled synthetic development backend.
-- Upload to the approved Development artifact store and retain v1.
+- Present the exact ARM64 SHA-256, visual evidence, known limitations and rollback source for user approval.
+- Promote the exact approved bytes without rebuilding; retain the previous baseline.
 
 **Acceptance**
 
 - Physical device cold-launches the successor and both fixture roles complete the selected matrix.
 - Upgrade preserves intended local state without replaying legacy consequential commands.
-- Artifact manifest, checksum, signer, source commit, known limitations and rollback instructions are published.
+- Immutable build/evidence records, checksum, signer SHA-1/SHA-256, source/backend identity, provider/runtime identity, known limitations and rollback instructions are published.
+- Approval names the exact ARM64 SHA-256 and promotion hashes prove the tested bytes were not rebuilt or overwritten.
+- Rollback is prepared as capability-off plus a same-signer build of the last known-good source with a new higher `versionCode`; a lower-version Android install is not the release rollback path.
 - P0-Reliability backlog is reissued from measured evidence; no Reliability item blocks the internal APK unless it violates a Triage truth/safety gate.
 
 ## 8. Wave 2 — reliability spine plus Phase 1 foundation
@@ -394,12 +407,16 @@ Exit requires complete manual booking, confirmed/visible AI fields, privacy/lega
 
 ### Every APK/release gate
 
+- isolated clean candidate commit; build success is not promotion;
+- standalone static inspection of the exact existing APK and delta from the previous promoted build manifest/promotion record;
 - clean and upgrade install where compatible;
 - physical target devices, performance/battery and accessibility checks;
-- artifact identity, signer, ABI, checksum and source manifest;
+- Grounded Momentum screenshot/visual review for affected screens;
+- artifact identity, signer SHA-1/SHA-256, ABI, checksum, source/runtime/provider manifest and exact-hash user approval;
 - migration/provider reconciliation where affected;
 - operations/support drill where affected;
-- retained prior artifact and tested rollback path.
+- promotion of the exact approved bytes without overwrite;
+- retained prior artifact and tested capability/forward-rollback path.
 
 ## 13. Genuine external blockers
 

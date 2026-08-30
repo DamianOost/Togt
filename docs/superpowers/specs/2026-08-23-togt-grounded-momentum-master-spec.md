@@ -676,16 +676,16 @@ Phase 0 has two gates:
 |---|---|---|
 | P0.1 Baseline/branch | Preserve the existing APK, source commit, signer, checksum and known limitations; converge the readiness change onto the uplift branch. | Lock release ownership, durable signing custody, rollback and compatibility evidence. |
 | P0.2 Runtime configuration | Keep the proven local Gradle path; one API/realtime resolver; internal LAN allowed only in a labelled development build. | HTTPS/WSS preview configuration, versioned capabilities and selected push-provider inputs. |
-| P0.3 Native configuration | Provisional assets, correct package/version, safe permissions, scheme and installable APK. | Restricted Maps/Places credentials, final release assets and platform behaviour. |
+| P0.3 Native configuration | Provisional assets, correct package/version, safe permissions, scheme, installable APK and restricted Android Maps-display key for the pin-first candidate. | Provider-search/geocoding credentials, final release assets and broader platform behaviour. |
 | P0.4 Navigation | Typed route contract for touched critical paths and repair of every known invalid route. | Complete deep-link/notification intent matrix and compatibility coverage. |
 | P0.5 Crashes/dead ends | All enumerated defects repaired with focused regression tests. | Broader reliability and lifecycle hardening discovered during triage. |
 | P0.6 Auth/API/state | Stable session restore, refresh, role resolution and visible critical failures; no full state-layer rewrite required. | Canonical DTOs/state layer, durable matching, complete idempotency and compatibility contracts. |
-| P0.7 Location | Manual-address path remains usable; false `Live` state and unsafe reveal are removed or capability-off. | Provider-backed address/pin integrity, freshness/TTL, privacy and approved background tracking. |
+| P0.7 Location | A fresh customer can bind manual address text to an explicitly accepted exact pin and reach Schedule; raw manual/GPS input remains non-dispatchable. False `Live` state and unsafe reveal are removed or capability-off. | Saved Places and provider-assisted address usability, freshness/TTL, privacy and separately approved background tracking. |
 | P0.8 Realtime/push | Listener cleanup/reconnect defects fixed where required for smoke; remote push may be disabled. | Selected Expo Push or direct FCM implementation passes foreground/background/terminated tests. |
 | P0.9 Payment | Payment screen is read-only on entry; online/cash actions are hidden or qualified unless their sandbox path is proven. | Full Peach, cash, refund, dispute and reconciliation contracts pass. |
 | P0.10 Trust/safety/offline | Remove false success/verification/live-sharing claims and gate unsupported actions. | Operated KYC, safety, sharing and conflict-aware resilience pass. |
 | P0.11 Integrity | Apply immediate capability fences and preserve auditability. | Threat register, minimum controls, manual review and appeals are approved. |
-| P0.12 Release gate | Targeted critical-path smoke, clean/upgrade install, artifact manifest and successor APK. | Full device matrix, observability, compatibility, performance and 50-run protocol. |
+| P0.12 Release gate | Targeted critical-path smoke, clean/upgrade install, immutable build/evidence records, exact-APK user approval and successor APK promotion. | Full device matrix, observability, compatibility, performance and 50-run protocol. |
 
 The executable ticket order and evidence bundle are defined in `docs/superpowers/plans/2026-08-23-togt-grounded-momentum-full-build-plan.md`. Requirements assigned to Reliability may begin in parallel behind flags, but they do not expand the Triage exit gate.
 
@@ -711,7 +711,7 @@ Each item needs a dated owner decision before the public-beta candidate. If unre
 Deliverables:
 
 - Record current branch, commit, dependency lockfiles and APK build profile.
-- Record release identity: application ID, `versionName`, monotonically increasing `versionCode`, signing-certificate SHA-256 fingerprint, keystore owner/custody/backup, selected build provider, build profile/channel and Maps-key fingerprint dependency. Record EAS credentials only when EAS is deliberately selected.
+- Record release identity: application ID, `versionName`, monotonically increasing `versionCode`, signing-certificate SHA-1/SHA-256 fingerprints, keystore owner/custody/backup, selected build provider, build profile/channel and non-secret Maps-key fingerprint dependency. Record EAS credentials only when EAS is deliberately selected.
 - Keep the existing APK wrap-up branch stable.
 - Create a dedicated uplift branch using the `codex/` prefix unless TOGT selects another branch strategy.
 - Record baseline backend tests, Expo diagnostics, production export and physical-device behaviour.
@@ -790,6 +790,7 @@ Acceptance:
 
 - Create valid provisional release-safe app, adaptive, splash and monochrome notification assets. Phase 1 replaces them with final brand-approved assets if the identity is not yet locked.
 - Configure Android Maps using a package/signature-restricted key.
+- Assert the final merged APK manifest contains Maps metadata only when expected, without printing the key, and fail the pin-first candidate if `ACCESS_BACKGROUND_LOCATION` appears.
 - Add the `togt` deep-link scheme. Add an EAS project ID only when the Expo Push/EAS provider is selected.
 - Verify safe areas, status bar, navigation bar and edge-to-edge behaviour.
 - Remove unused background-location permission until a real task/foreground service exists.
@@ -799,6 +800,7 @@ Acceptance:
 - All assets resolve in prebuild/export.
 - Launcher and notification marks remain recognizable at target sizes.
 - Map renders in the signed standalone APK, not only Expo Go.
+- Final-APK inspection proves the expected Maps metadata, signer restriction evidence and absence of background-location permission.
 
 ### P0.4 — Typed navigation and route repair
 
@@ -885,6 +887,8 @@ Acceptance:
 
 ### P0.7 — Address, map and location integrity
 
+The fresh-customer Address route is currently a P0 booking-funnel blocker: every path that could produce a dispatch-safe source is absent or disabled, so the customer cannot reach Schedule. The governing pin-first implementation contract is `docs/superpowers/specs/2026-08-30-togt-address-pin-funnel-unblock-spec.md`.
+
 The job location object contains:
 
 ```text
@@ -900,9 +904,12 @@ privacy-safe area label
 Rules:
 
 - Current GPS may seed the picker but never silently override typed location.
+- GPS, default camera position and entered coordinates remain non-dispatchable until the customer explicitly selects `Use this pin` or a canonical provider result is returned.
 - Support pin plus landmark/access instructions where formal addresses are unreliable.
 - Manual unresolved text cannot dispatch a job.
-- Location denial keeps address-first booking fully usable.
+- Location denial keeps manual address entry and manual map-pin positioning usable; the draft can be saved, but booking remains blocked until an exact pin is explicitly accepted.
+- Address Search and Address Resolution remain separate runtime capabilities from Maps Display. Pin-first delivery must not wait for Places or Geocoding.
+- Effective map display requires both packaged provider evidence and a fresh server release/capability gate; backend configuration alone is not proof that a particular APK contains a usable key.
 - Phase 0 foreground sharing operates only while the active-job screen/app is foregrounded. When the app is backgrounded, the customer sees `Last updated …`, never `Live`.
 - Phase 0 defines an update cadence, stale-after threshold and hard-hide TTL from measured device/battery tests before release.
 - If continuous background tracking is later enabled, it requires an active-job-only Android foreground service/background permission, persistent system disclosure, explicit battery/update budgets and the same terminal stop conditions.
@@ -912,7 +919,9 @@ Rules:
 Acceptance:
 
 - Confirmed text and coordinates represent the selected pin.
-- Location denial never blocks manual booking.
+- A fresh customer can complete Address → accepted `map_pin` → Schedule without search/geocoding.
+- Location denial never blocks manual address entry or manual pin placement, but unresolved manual text never dispatches.
+- `device_gps` and `entered_coordinates` remain non-dispatchable; `map_pin`, `saved_verified_place` and `provider_geocode` remain dispatch-safe.
 - Scheduled workers receive only broad area until `Start route` or the approved lead-time window; early-reveal, reassignment and cancellation revocation tests pass.
 - Participant-only updates reach the customer within the agreed p95 budget.
 - Tracking listeners unsubscribe cleanly and do not duplicate after navigation.
@@ -1061,6 +1070,8 @@ Required controls include rate limits, session/device alerts, review-integrity r
 
 ### P0.12 — Testing, observability and signed APK release gate
 
+All Android APKs follow `docs/superpowers/plans/2026-08-30-togt-apk-candidate-promotion-rollback-runbook.md`. A successful build is only a candidate. The exact bytes must pass static inspection, emulator clean/upgrade testing, physical-device testing, visual/accessibility review and user approval against their SHA-256 before promotion. Promotion copies the approved bytes without rebuilding.
+
 Minimum Phase 0 observability ships before the broader Phase 1 measurement foundation:
 
 - configured crash SDK, environment/release tagging and uploaded source maps;
@@ -1109,7 +1120,7 @@ asset/config/LAN-URL validation
 Required Android end-to-end journeys:
 
 - clean launch and auth restore using two separate synthetic accounts, one per role;
-- location denial plus manual address;
+- location denial plus manual address and explicitly accepted exact pin;
 - discovery → profile → scheduled booking;
 - Fast Match and timed offer;
 - push from foreground/background/terminated state;
@@ -1125,6 +1136,7 @@ Required Android end-to-end journeys:
 P0-Triage exit criteria:
 
 - The successor builds from the recorded source baseline through the documented local Gradle command with a higher `versionCode`.
+- The candidate remains isolated and unpromoted until the exact tested ARM64 SHA-256 receives user approval; merge, push and build success are not promotion evidence.
 - Package, signer, ABI set, source commit, configuration class, checksum, artifact location and known limitations are recorded.
 - Clean install and same-signer upgrade install pass on at least one representative physical Android device.
 - Cold launch, auth restore/sign-in and both authorized role shells reach a stable state against synthetic development data.
@@ -1133,6 +1145,7 @@ P0-Triage exit criteria:
 - The selected triage smoke matrix passes for customer and worker paths; no unhandled navigation action or reproducible JavaScript crash remains in that matrix.
 - ADB/device logs contain no new fatal startup, cleartext-policy, missing-asset or repeated-listener error.
 - The signed/aligned APK is uploaded to the approved Development artifact store with release notes and the previous artifact remains available.
+- The Android recovery procedure is rehearsed from the last known-good base through a clean reviewed version/config-only commit and a new higher `versionCode`; installing a lower version over a higher one is not the rollback plan. Any prebuilt recovery code is immediately reserved and recorded.
 - Triage evidence produces the exact Reliability backlog, parallel-lane ownership and external dependency list; it does not silently absorb Reliability scope.
 
 P0-Reliability exit criteria:
@@ -1500,9 +1513,9 @@ These use the Phase 1 component system and the W03/W04/W06–W09 contracts below
 
 **Anatomy:**
 
-- autocomplete/manual search;
-- saved places and explicit `Use current location`;
-- map pin with list/form alternative;
+- manual address entry, with autocomplete only when separately available;
+- saved places when available and explicit `Centre on my location`;
+- manual address form plus a dedicated exact-pin picker and a non-drag accessible placement control;
 - complex/estate/building and landmark fields;
 - access/parking/gate instructions;
 - `Confirm address` action.
@@ -1510,9 +1523,10 @@ These use the Phase 1 component system and the W03/W04/W06–W09 contracts below
 **Rules:**
 
 - Address text and coordinates resolve together.
+- Raw GPS centres the picker only. Dispatch safety requires an explicit `Use this pin` transition to `map_pin`, a `saved_verified_place`, or `provider_geocode`.
 - Workers see only a broad area until `Start route` or the approved lead-time window; exact reveal copy is identical across job detail and notifications.
 - The user can correct the pin without rewriting all instructions.
-- A map failure can resolve through a saved verified place, provider geocoding fallback or GPS coordinates plus landmark/access instructions. If none produces coordinates, drafting remains available but dispatch is blocked with a truthful Retry message.
+- A map failure can resolve only through a saved verified place or provider geocoding. If none produces a dispatch-safe address/coordinate pair, drafting remains available but dispatch is blocked with a truthful retry explanation.
 
 ### C04 — Schedule and Fulfilment
 

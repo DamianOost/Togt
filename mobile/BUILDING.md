@@ -1,7 +1,9 @@
 # TOGT Android internal APK runbook
 
-**Release target:** `za.togt.app`, `versionName 1.1.0`, `versionCode 3`,
-`arm64-v8a`.
+**Grandfathered/current baseline target:** `za.togt.app`, `versionName 1.1.0`,
+`versionCode 3`, `arm64-v8a`. This identity block documents the existing vc3
+build only. The planned address-pin candidate is `1.2.0`, `versionCode 4`, and
+follows the candidate workflow below.
 
 Local Gradle is the default internal-APK route. Expo Go, an Expo account, and
 EAS cloud build are not required. EAS remains an optional provider and does not
@@ -90,7 +92,9 @@ packaged push provider defaults to `disabled`, the server capability must be
 current and enabled, and Android notification permission is requested only
 inside that capability-gated registration flow. Foreground location and
 Internet permissions remain for the documented matching/job and API paths;
-background location is not requested.
+background location is not requested. The current vc3 APK does not contain
+`ACCESS_BACKGROUND_LOCATION`; before vc4 promotion, add that permission to the
+builder's explicit forbidden set so a future manifest merge fails closed.
 
 ## Toolchain
 
@@ -113,7 +117,7 @@ generated/toolchain/enforced-property evidence in the artifact manifest.
 The repository preflight checks every item before prebuild or Gradle runs. It
 does not download a JDK/SDK, mutate global settings, or read production secrets.
 
-## Local development build
+## Current vc3 Maps-disabled baseline build
 
 From `mobile`, set reviewed values in the current PowerShell session. Replace
 angle-bracket placeholders; do not put signing passwords in `.env.local`.
@@ -149,6 +153,21 @@ npm run export:android
 npm run build:apk:local
 ```
 
+For the vc4 address-pin candidate, first update and commit every version-bearing
+source/test file to `versionName 1.2.0` / `versionCode 4`. Use the same reviewed
+inputs above except:
+
+```powershell
+$env:EXPO_PUBLIC_MAPS_PROVIDER = 'google'
+$env:GOOGLE_MAPS_ANDROID_API_KEY = '<Android-restricted-key>'
+```
+
+The key must be restricted to package `za.togt.app` and the candidate signer
+SHA-1. `maps_display` also requires fresh explicit server release evidence;
+`address_search` and `address_resolution` remain off for Wave 1. Build and
+publish only through the immutable candidate/evidence process below. Do not
+treat setting these environment values as provider approval.
+
 `prebuild:android:local` is available when the generated native project alone
 is needed for inspection. It runs a clean Expo Android prebuild and leaves the
 ignored `mobile/android` directory in place. After every prebuild, the repository
@@ -163,6 +182,11 @@ Gradle. `build:apk:local` performs the same preflight/prebuild and then:
 5. rejects a signer that differs from the recorded expected fingerprint;
 6. writes the deterministically named APK and JSON manifest under
    `mobile/dist/apk`.
+
+The current 16 KiB step proves APK ZIP-entry alignment. It does not alone prove
+ELF `LOAD`-segment/page-size compatibility for every native library. Candidate
+static inspection checks both, and the target Android 16 execution gate remains
+required.
 
 The filename is deterministic for the configuration, version, source commit,
 exact safe runtime contract, and ABI set. `rt<12>` is the first 12 characters
@@ -185,9 +209,10 @@ set of reviewed dependency documentation, asset-CDN, font-metadata, NetInfo
 reachability, and Axios placeholder origins. An unknown hard-coded HTTP or
 HTTPS origin—including a standard-port HTTPS origin—fails the build.
 
-`dist` and the generated native project remain ignored; copy only a
-verified artifact and manifest to the approved Development artifact store
-without overwriting v1.
+`dist` and the generated native project remain ignored; copy only a verified
+artifact and manifest to its immutable candidate folder in the approved
+Development artifact store. Do not overwrite a candidate or either recorded
+vc3/v1 baseline.
 
 The build command refuses a dirty source tree so the recorded commit is
 authoritative. Commit reviewed source changes before producing a distributable
@@ -195,7 +220,7 @@ artifact.
 
 ## Signing and upgrade identity
 
-The v1 rollback baseline is:
+The v1 signer-provenance and clean-recovery artifact is:
 
 ```text
 TOGT-LAN-Test-1.0.0-2026-08-23-arm64.apk
@@ -208,6 +233,21 @@ For the labelled development successor, Expo's generated internal debug key is
 allowed only because the pipeline verifies that it matches this recorded v1
 fingerprint. A mismatch fails before an artifact is accepted and must be
 reported as a clean-install build, never an upgrade.
+
+For vc4 and later, independent candidate verification also compares against the
+immutable recorded internal signer. `TOGT_ANDROID_EXPECTED_SIGNER_SHA256` is a
+validation input, not authority to redefine the baseline; a different signer
+starts an explicit clean-install/signing-transition stream.
+
+The grandfathered installed upgrade baselines are the vc3 artifacts identified
+by these exact SHA-256 values:
+
+```text
+ARM64: 18B7ACDB88689A10F1C407715C2553577C1ED431BB62E5062C2E122A16B6B14E
+x86_64: 04E161CC494B1238C90D3F97AC7EB0832CAFD72EE102AEEB32287F8D31BEF33D
+```
+
+Other historical vc3 files are not interchangeable upgrade baselines.
 
 To use a controlled keystore outside the repository, set:
 
@@ -230,9 +270,34 @@ files, keystores, signing-property files, `google-services.json`, and
 `GoogleService-Info.plist`; deliberately named example files remain trackable.
 
 An Android downgrade cannot install over a higher `versionCode`. Rollback means
-retaining v1 for clean-install recovery or rebuilding the prior compatible
-source with a new higher code and the same signer. Feature/capability flags are
-the immediate runtime rollback mechanism.
+retaining v1/vc3 for clean-install recovery or rebuilding the prior compatible
+source from a clean recovery commit with a new higher code and the same signer.
+Server capability changes are the runtime containment mechanism after their
+controlled backend refresh/redeploy. Packaged feature/provider flags require a
+new APK and are not runtime rollback.
+
+## Candidate before promotion
+
+From 2026-08-30 onward, every APK follows
+`../docs/superpowers/plans/2026-08-30-togt-apk-candidate-promotion-rollback-runbook.md`.
+A successful local build is a candidate, not the promoted baseline.
+
+Build from a clean commit on the isolated candidate branch, then inspect and
+test the exact generated bytes before merge/tag/promotion:
+
+1. independently verify APK/build-manifest identity, manifest delta, signature,
+   signer, permissions, provider metadata and runtime contract;
+2. clean-install and upgrade-test the exact x86_64 artifact on the emulator;
+3. upgrade/install the exact ARM64 artifact on the physical device;
+4. record visual, accessibility, functional and sanitized log evidence;
+5. obtain user approval against the exact ARM64 SHA-256; and
+6. copy those approved bytes into the immutable promoted store without
+   rebuilding or overwriting them.
+
+If a candidate fails, retain it as rejected/superseded and build the repair as
+a new candidate. Android in-place rollback is a same-signer forward build of
+the last known-good source with a new higher `versionCode`; uninstall/reinstall
+of an older APK is internal clean recovery and erases app-local data.
 
 ## Optional EAS path
 

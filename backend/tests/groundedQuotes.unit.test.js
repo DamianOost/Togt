@@ -26,8 +26,13 @@ function serviceRow() {
     risk_tier: 'standard',
     required_question_ids: ['leak_location', 'water_isolated'],
     brief_schema: { questions: [
-      { id: 'leak_location', type: 'single_select' },
-      { id: 'water_isolated', type: 'boolean' },
+      {
+        id: 'leak_location',
+        type: 'single_select',
+        label: 'Where is the leak?',
+        options: [{ value: 'kitchen', label: 'Kitchen' }, { value: 'bathroom', label: 'Bathroom' }],
+      },
+      { id: 'water_isolated', type: 'boolean', label: 'Is the water isolated?' },
     ] },
     pricing_rules: { finalPrice: 'accepted_quote_only' },
     materials_rules: { disclosure: 'required' },
@@ -69,7 +74,8 @@ test('worker brief projection strips location keys and contact-shaped text recur
 test('request input is driven by required question IDs and keeps exact location separate', () => {
   const body = {
     brief: {
-      answers: { leak_location: 'Kitchen', water_isolated: true },
+      answers: { leak_location: 'kitchen', water_isolated: true },
+      materialsResponsibility: 'worker',
       summary: 'Leak under the sink',
     },
     broadAreaLabel: 'Rondebosch, Cape Town',
@@ -89,13 +95,44 @@ test('request input is driven by required question IDs and keeps exact location 
   };
   const normalized = normalizeRequestInput(body, serviceRow(), now);
   expect(normalized.brief.answers.water_isolated).toBe(true);
+  expect(normalized.brief.materialsResponsibility).toBe('worker');
   expect(normalized.broadAreaLabel).toBe('Rondebosch, Cape Town');
   expect(normalized.privateLocation.address).toContain('Exact Street');
 
   expect(() => normalizeRequestInput({
     ...body,
-    brief: { answers: { leak_location: 'Kitchen' } },
+    brief: { answers: { leak_location: 'kitchen' }, materialsResponsibility: 'worker' },
   }, serviceRow(), now)).toThrow('Required service questions are unanswered');
+
+  expect(() => normalizeRequestInput({
+    ...body,
+    brief: { ...body.brief, materialsResponsibility: 'invented' },
+  }, serviceRow(), now)).toThrow('Materials responsibility is required');
+
+  expect(() => normalizeRequestInput({
+    ...body,
+    brief: { ...body.brief, answers: { leak_location: 'garage', water_isolated: true } },
+  }, serviceRow(), now)).toThrow('Brief answers do not match the published question contract');
+
+  expect(() => normalizeRequestInput({
+    ...body,
+    brief: { ...body.brief, answers: { leak_location: 'kitchen', water_isolated: 'yes' } },
+  }, serviceRow(), now)).toThrow('Brief answers do not match the published question contract');
+
+  const hiddenQuestionService = serviceRow();
+  hiddenQuestionService.brief_schema = {
+    questions: [
+      { id: 'leak_location', type: 'single_select', options: [{ value: 'kitchen' }] },
+      { id: 'water_isolated', type: 'boolean', label: 'Is the water isolated?' },
+    ],
+  };
+  expect(() => normalizeRequestInput(body, hiddenQuestionService, now))
+    .toThrow('This service brief is not available');
+
+  const oversizedQuestionIdService = serviceRow();
+  oversizedQuestionIdService.brief_schema.questions[0].id = `q_${'a'.repeat(79)}`;
+  expect(() => normalizeRequestInput(body, oversizedQuestionIdService, now))
+    .toThrow('This service brief is not available');
 });
 
 test('draft patches merge without inventing missing commercial values; complete quote validates', () => {

@@ -106,6 +106,7 @@ async function seedConfirmedScope(fixture, version = 1) {
     description: 'Repair the leaking tap',
     items: ['Replace damaged washer'],
     materialsResponsibility: 'Worker supplies washer',
+    materialsResponsibilityCode: 'worker',
     estimatedMinutes: 60,
   };
   await db.query(
@@ -115,6 +116,35 @@ async function seedConfirmedScope(fixture, version = 1) {
        worker_confirmed_by, worker_confirmed_at
      ) VALUES (
        $1, $2, 'confirmed', 'participant_proposal', $3, 'labourer', $4::jsonb,
+       $5, NOW(), $3, NOW()
+     )`,
+    [fixture.booking.id, version, fixture.worker.id, JSON.stringify(snapshot), fixture.customer.id]
+  );
+  await db.query(
+    `UPDATE bookings
+        SET current_scope_version = $2, scope_items = $3::jsonb,
+            scope_confirmed_by_customer = true,
+            scope_confirmed_by_labourer = true,
+            scope_confirmed_at = NOW()
+      WHERE id = $1`,
+    [fixture.booking.id, version, JSON.stringify(snapshot.items)]
+  );
+  return snapshot;
+}
+
+async function seedLegacyAcceptedScope(fixture, version = 1) {
+  const snapshot = {
+    description: 'Repair the leaking tap',
+    items: [{ label: 'Replace damaged washer' }],
+    estimatedMinutes: 60,
+  };
+  await db.query(
+    `INSERT INTO grounded_scope_versions (
+       booking_id, version, status, source, proposed_by, proposed_by_role,
+       scope_snapshot, customer_confirmed_by, customer_confirmed_at,
+       worker_confirmed_by, worker_confirmed_at
+     ) VALUES (
+       $1, $2, 'confirmed', 'accepted_agreement', $3, 'labourer', $4::jsonb,
        $5, NOW(), $3, NOW()
      )`,
     [fixture.booking.id, version, fixture.worker.id, JSON.stringify(snapshot), fixture.customer.id]
@@ -242,12 +272,15 @@ describe('bilateral scope and actor-safe start PIN', () => {
         baseVersion: null,
         description: 'Repair the leaking tap',
         items: ['Replace damaged washer'],
-        materialsResponsibility: 'Worker supplies washer',
+        materialsResponsibility: 'Customer supplies the washer',
+        materialsResponsibilityCode: 'worker',
         estimatedMinutes: 60,
       }
     );
     expect(proposed.status).toBe(201);
     expect(proposed.body.fulfilment.scope.proposal.version).toBe(1);
+    expect(proposed.body.fulfilment.scope.proposal.snapshot.materialsResponsibility)
+      .toBe('Worker supplies materials or parts.');
 
     const confirmed = await transition(
       `/api/projects/${fixture.booking.id}/scope-confirmations`,
@@ -362,6 +395,7 @@ describe('bilateral scope and actor-safe start PIN', () => {
         description: 'Repair the leaking tap',
         items: ['Replace damaged washer'],
         materialsResponsibility: 'Worker supplies washer',
+        materialsResponsibilityCode: 'worker',
         estimatedMinutes: 60,
       }
     );
@@ -377,6 +411,71 @@ describe('bilateral scope and actor-safe start PIN', () => {
       [fixture.booking.id]
     );
     expect(scopes.rows).toEqual([{ status: 'confirmed', count: 1 }]);
+  });
+
+  test('unresolved accepted materials terms block both PIN reveal and work start', async () => {
+    const fixture = await createFixture({ phase: 'scope_confirmation' });
+    const snapshot = {
+      description: 'Repair the leaking tap',
+      items: ['Replace damaged washer'],
+      materialsResponsibility: 'Materials responsibility was not separately recorded.',
+      materialsResponsibilityCode: 'not_recorded',
+    };
+    await db.query(
+      `INSERT INTO grounded_scope_versions (
+         booking_id, version, status, source, proposed_by, proposed_by_role,
+         scope_snapshot, customer_confirmed_by, customer_confirmed_at,
+         worker_confirmed_by, worker_confirmed_at
+       ) VALUES (
+         $1, 1, 'confirmed', 'accepted_agreement', $2, 'customer', $3::jsonb,
+         $2, NOW(), $4, NOW()
+       )`,
+      [fixture.booking.id, fixture.customer.id, JSON.stringify(snapshot), fixture.worker.id]
+    );
+    await db.query(
+      `UPDATE bookings
+          SET current_scope_version = 1, scope_items = $2::jsonb,
+              scope_confirmed_by_customer = true,
+              scope_confirmed_by_labourer = true,
+              scope_confirmed_at = NOW()
+        WHERE id = $1`,
+      [fixture.booking.id, JSON.stringify(snapshot.items)]
+    );
+    const material = createPinMaterial({ bookingId: fixture.booking.id, scopeVersion: 1, generation: 1 });
+    await db.query(
+      `INSERT INTO grounded_start_pin_challenges (
+         booking_id, generation, scope_version, pin_salt, pin_hash,
+         max_attempts, expires_at
+       ) VALUES ($1, 1, 1, $2, $3, 3, NOW() + INTERVAL '1 hour')`,
+      [fixture.booking.id, material.salt, material.hash]
+    );
+
+    const read = await request
+      .get(`/api/projects/${fixture.booking.id}/fulfilment`)
+      .set(auth(fixture.customer));
+    expect(read.status).toBe(200);
+    expect(read.body.fulfilment.start.customerCanReveal).toBe(false);
+    expect(read.body.fulfilment.allowedActions.revealStartPin).toBe(false);
+    expect(read.body.fulfilment.allowedActions.startWork).toBe(false);
+
+    const reveal = await transition(
+      `/api/projects/${fixture.booking.id}/start-pin-reveals`,
+      fixture.customer,
+      0,
+      'unresolved-materials-reveal'
+    );
+    expect(reveal.status).toBe(409);
+    expect(reveal.body.type).toMatch(/start_materials_responsibility_unresolved$/);
+
+    const start = await transition(
+      `/api/projects/${fixture.booking.id}/start`,
+      fixture.worker,
+      0,
+      'unresolved-materials-start',
+      { startPin: material.pin, deviceId: 'android:unresolved-materials-001' }
+    );
+    expect(start.status).toBe(409);
+    expect(start.body.type).toMatch(/start_materials_responsibility_unresolved$/);
   });
 
   test('locks a challenge after the snapshotted attempt limit and permits customer reissue', async () => {
@@ -463,7 +562,7 @@ describe('bilateral schedule and commercial revisions', () => {
 
   test('approves a Worker change order as one new scope and commercial revision', async () => {
     const fixture = await createFixture({ status: 'in_progress', phase: 'work_active' });
-    await seedConfirmedScope(fixture);
+    await seedLegacyAcceptedScope(fixture);
     const proposed = await transition(
       `/api/projects/${fixture.booking.id}/change-orders`,
       fixture.worker,
@@ -495,6 +594,12 @@ describe('bilateral schedule and commercial revisions', () => {
     );
     expect(approved.status).toBe(200);
     expect(approved.body.fulfilment.scope.current.version).toBe(2);
+    expect(approved.body.fulfilment.scope.current.snapshot.items).toEqual([
+      'Replace damaged washer',
+      'Replace isolation valve',
+    ]);
+    expect(approved.body.fulfilment.scope.current.snapshot.materialsResponsibility)
+      .toBe('Materials responsibility was not separately recorded in this accepted agreement.');
     expect(approved.body.fulfilment.changeOrders[0].status).toBe('approved');
 
     const evidence = await db.query(

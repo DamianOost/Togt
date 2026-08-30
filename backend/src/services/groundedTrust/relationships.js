@@ -18,6 +18,7 @@ const {
   serializeBlock,
   serializeRebookDraft,
 } = require('./privacy');
+const { canonicalScopeSnapshot } = require('../groundedFulfilment/scope');
 
 function assertCustomer(actor) {
   if (actor.role !== 'customer') {
@@ -335,9 +336,13 @@ async function blockRelationship(context) {
 }
 
 function sourceScope(booking) {
-  const source = booking.agreement_scope_snapshot || {
+  const source = booking.current_scope_snapshot
+    ? canonicalScopeSnapshot(booking.current_scope_snapshot, booking.current_scope_source)
+    : booking.agreement_scope_snapshot
+    ? canonicalScopeSnapshot(booking.agreement_scope_snapshot, 'accepted_agreement')
+    : canonicalScopeSnapshot({
     items: Array.isArray(booking.scope_items) ? booking.scope_items : [],
-  };
+    }, 'accepted_agreement');
   return boundedJsonObject(source, 'sourceScope');
 }
 

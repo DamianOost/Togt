@@ -416,7 +416,7 @@ async function commitAttemptToBooking(matchId, attemptId, labourerId) {
     );
     const booking = bookingRes.rows[0];
     const acceptedScopeSummary = matchScopeSummary(m);
-    const scopeItems = [{ label: acceptedScopeSummary }];
+    const scopeItems = [acceptedScopeSummary];
     const estimatedMinutes = m.hours_est == null
       ? null
       : Math.round(Number(m.hours_est) * 60);
@@ -434,6 +434,8 @@ async function commitAttemptToBooking(matchId, attemptId, labourerId) {
         serviceLabel: acceptedScopeSummary,
         description: acceptedScopeSummary,
         items: scopeItems,
+        materialsResponsibility: 'Materials responsibility was not separately recorded in this match request.',
+        materialsResponsibilityCode: 'not_recorded',
         estimatedMinutes: Number.isSafeInteger(estimatedMinutes) && estimatedMinutes > 0
           ? estimatedMinutes
           : null,

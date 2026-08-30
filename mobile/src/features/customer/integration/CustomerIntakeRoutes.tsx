@@ -662,11 +662,13 @@ function quoteRequestPayload(intent: SubmissionIntent, service: GroundedCatalogu
   const area = broadAreaLabel(snapshot.address);
   const exactAddress = addressLabel(snapshot.address);
   if (!area || !exactAddress) throw new Error('quote_location_incomplete');
+  if (!snapshot.brief.materialsResponsibility) throw new Error('quote_materials_responsibility_missing');
   return {
     serviceId: snapshot.selectedService.serviceId,
     serviceVersion: snapshot.selectedService.serviceVersion,
     brief: {
       answers: snapshot.brief.answers,
+      materialsResponsibility: snapshot.brief.materialsResponsibility,
       media: snapshot.brief.attachments.flatMap((attachment) => attachment.uploadStatus === 'uploaded' && attachment.remoteAssetId
         ? [{ id: attachment.remoteAssetId, kind: 'image' as const }]
         : []),

@@ -4,6 +4,7 @@ const {
   normalizeStart,
   requestHash,
 } = require('../src/services/groundedFulfilment/contracts');
+const { assertCanonicalInitialScope } = require('../src/services/groundedFulfilment/bootstrap');
 const {
   createPinMaterial,
   verifyPin,
@@ -11,6 +12,9 @@ const {
   deviceIdHash,
 } = require('../src/services/groundedFulfilment/pin');
 const {
+  LEGACY_MATERIALS_RESPONSIBILITY,
+  canonicalScopeSnapshot,
+  scopeMaterialsResolved,
   scrub,
   workerExactAccess,
   serializeFulfilment,
@@ -64,18 +68,36 @@ function state(overrides = {}) {
 }
 
 describe('Grounded fulfilment input contracts', () => {
+  test('initial agreement bootstrap rejects split or malformed scope shapes', () => {
+    const snapshot = {
+      description: 'Replace the failed connector',
+      items: ['Remove failed connector', 'Fit replacement'],
+      materialsResponsibility: 'Worker supplies materials or parts.',
+      materialsResponsibilityCode: 'worker',
+    };
+    expect(() => assertCanonicalInitialScope(snapshot, snapshot.items)).not.toThrow();
+    expect(() => assertCanonicalInitialScope(
+      { ...snapshot, items: [{ label: 'Remove failed connector' }] },
+      [{ label: 'Remove failed connector' }]
+    )).toThrow(/Canonical initial scope/);
+    expect(() => assertCanonicalInitialScope(snapshot, ['Different item']))
+      .toThrow(/Canonical initial scope/);
+  });
+
   test('normalizes scope and monetary intent without allowing server-owned fields', () => {
     expect(normalizeScopeProposal({
       baseVersion: null,
       description: 'Repair the leaking tap',
       items: ['Replace damaged washer'],
-      materialsResponsibility: 'Worker supplies washer',
+      materialsResponsibility: 'Customer supplies the washer',
+      materialsResponsibilityCode: 'worker',
       estimatedMinutes: 60,
     })).toEqual({
       baseVersion: null,
       description: 'Repair the leaking tap',
       items: ['Replace damaged washer'],
-      materialsResponsibility: 'Worker supplies washer',
+      materialsResponsibility: 'Worker supplies materials or parts.',
+      materialsResponsibilityCode: 'worker',
       estimatedMinutes: 60,
     });
     expect(() => normalizeChangeOrder({
@@ -94,7 +116,15 @@ describe('Grounded fulfilment input contracts', () => {
       description: 'Call me on 082 123 4567 before the repair',
       items: ['Replace washer'],
       materialsResponsibility: 'Worker supplies washer',
+      materialsResponsibilityCode: 'worker',
     })).toThrow(/contact/i);
+    expect(() => normalizeScopeProposal({
+      baseVersion: null,
+      description: 'Repair the leaking tap',
+      items: ['Replace washer'],
+      materialsResponsibility: 'Discuss later',
+      materialsResponsibilityCode: 'discuss',
+    })).toThrow(/supplies materials/i);
   });
 
   test('requires a six-digit PIN and opaque device identifier', () => {
@@ -136,6 +166,97 @@ describe('server-issued start PIN material', () => {
 });
 
 describe('fulfilment privacy projection', () => {
+  test('legacy accepted scope snapshots project the documented string contract without inventing responsibility', () => {
+    expect(canonicalScopeSnapshot({
+      description: 'Replace the failed connector',
+      items: [{ label: 'Remove failed connector' }, { label: 'Fit replacement' }],
+    }, 'accepted_agreement')).toEqual({
+      description: 'Replace the failed connector',
+      items: ['Remove failed connector', 'Fit replacement'],
+      materialsResponsibility: LEGACY_MATERIALS_RESPONSIBILITY,
+    });
+    const corrupt = { description: 'Unknown shape', items: [{ value: 'must not disappear' }] };
+    expect(canonicalScopeSnapshot(corrupt, 'accepted_agreement')).toBe(corrupt);
+    const mixed = { description: 'Mixed shape', items: ['Keep me', { label: 'Keep me too' }] };
+    expect(canonicalScopeSnapshot(mixed, 'accepted_agreement')).toEqual({
+      description: 'Mixed shape',
+      items: ['Keep me', 'Keep me too'],
+      materialsResponsibility: LEGACY_MATERIALS_RESPONSIBILITY,
+    });
+    expect(canonicalScopeSnapshot(mixed, 'approved_change_order')).toEqual({
+      description: 'Mixed shape',
+      items: ['Keep me', 'Keep me too'],
+      materialsResponsibility: LEGACY_MATERIALS_RESPONSIBILITY,
+    });
+    const unknownMaterials = { items: [{ label: 'Keep me' }], materialsResponsibility: { code: 'worker' } };
+    expect(canonicalScopeSnapshot(unknownMaterials, 'accepted_agreement')).toBe(unknownMaterials);
+    expect(canonicalScopeSnapshot({ items: [{ label: 'Proposal' }] }, 'worker_proposal'))
+      .toEqual({ items: [{ label: 'Proposal' }] });
+  });
+
+  test('start authority requires explicit accepted terms or a bilaterally confirmed participant scope', () => {
+    const accepted = {
+      status: 'confirmed',
+      source: 'accepted_agreement',
+      scope_snapshot: {
+        materialsResponsibility: 'Worker supplies materials or parts.',
+        materialsResponsibilityCode: 'worker',
+      },
+    };
+    expect(scopeMaterialsResolved(accepted)).toBe(true);
+    expect(scopeMaterialsResolved({
+      ...accepted,
+      scope_snapshot: {
+        materialsResponsibility: 'Agree on site.',
+        materialsResponsibilityCode: 'discuss',
+      },
+    })).toBe(false);
+    expect(scopeMaterialsResolved({
+      status: 'confirmed',
+      source: 'participant_proposal',
+      scope_snapshot: {
+        materialsResponsibility: 'Customer supplies the valve.',
+        materialsResponsibilityCode: 'customer',
+      },
+      customer_confirmed_at: '2026-08-29T11:05:00.000Z',
+      worker_confirmed_at: '2026-08-29T11:00:00.000Z',
+    })).toBe(true);
+    expect(scopeMaterialsResolved({
+      status: 'confirmed',
+      source: 'participant_proposal',
+      scope_snapshot: { materialsResponsibility: 'TBD' },
+      customer_confirmed_at: '2026-08-29T11:05:00.000Z',
+      worker_confirmed_at: '2026-08-29T11:00:00.000Z',
+    })).toBe(false);
+  });
+
+  test('unresolved accepted terms remain visible but expose no PIN or start authority', () => {
+    const unresolvedScope = {
+      version: 1,
+      status: 'confirmed',
+      source: 'accepted_agreement',
+      proposed_by_role: 'customer',
+      scope_snapshot: {
+        description: 'Repair the leaking tap',
+        items: ['Replace damaged washer'],
+        materialsResponsibility: LEGACY_MATERIALS_RESPONSIBILITY,
+        materialsResponsibilityCode: 'not_recorded',
+      },
+      customer_confirmed_at: '2026-08-29T11:00:00.000Z',
+      worker_confirmed_at: '2026-08-29T11:00:00.000Z',
+      created_at: '2026-08-29T10:00:00.000Z',
+    };
+    const dto = serializeFulfilment(
+      booking({ operational_phase: 'scope_confirmation', current_scope_version: 1 }),
+      state({ scopes: [unresolvedScope] }),
+      { id: IDS.customer, role: 'customer' }
+    );
+    expect(dto.scope.current.snapshot.materialsResponsibility).toBe(LEGACY_MATERIALS_RESPONSIBILITY);
+    expect(dto.start.customerCanReveal).toBe(false);
+    expect(dto.allowedActions.revealStartPin).toBe(false);
+    expect(dto.allowedActions.startWork).toBe(false);
+  });
+
   test('scheduled Workers receive only an approximate area and no participant contact', () => {
     const dto = serializeFulfilment(booking(), state(), { id: IDS.worker, role: 'labourer' });
     expect(dto.location.precision).toBe('approximate');

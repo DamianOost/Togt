@@ -1,7 +1,7 @@
 import { useNetInfo } from '@react-native-community/netinfo';
 import { useFocusEffect } from '@react-navigation/native';
 import React, { useCallback, useState } from 'react';
-import { Linking, Text } from 'react-native';
+import { Linking, Text, View } from 'react-native';
 import { useSelector } from 'react-redux';
 import { packagedFeatureEnabled } from '../../../app/runtimeFeatureFlags';
 import {
@@ -26,7 +26,7 @@ import {
 } from '../../../services/capabilityService';
 import { loadIntelligenceCapability } from '../../../services/groundedIntelligence';
 import { claimContextualSafetyEducation } from '../../../services/safetyEducationStore';
-import { AppScaffold, Button, InlineError, Surface, TextField, TopAppBar } from '../../../ui';
+import { AppScaffold, Button, Chip, InlineError, Surface, TextField, TopAppBar } from '../../../ui';
 import {
   WorkerActiveWorkScreen,
   WorkerCompletionScreen,
@@ -248,14 +248,14 @@ export function WorkerJobDetailRoute({ navigation, route }: { navigation: any; r
 type ScopeProposalDraft = Readonly<{
   description: string;
   itemsText: string;
-  materialsResponsibility: string;
+  materialsResponsibilityCode: 'customer' | 'worker' | null;
   estimatedMinutes: string;
 }>;
 
 const EMPTY_SCOPE_PROPOSAL: ScopeProposalDraft = Object.freeze({
   description: '',
   itemsText: '',
-  materialsResponsibility: '',
+  materialsResponsibilityCode: null,
   estimatedMinutes: '',
 });
 
@@ -334,7 +334,7 @@ export function WorkerScopeStartRoute({ navigation, route }: { navigation: any; 
     && proposal.description.trim().length <= 1_500
     && items.length > 0
     && items.length <= 50
-    && proposal.materialsResponsibility.trim().length >= 2
+    && proposal.materialsResponsibilityCode !== null
     && minutes !== null && minutes > 0 && minutes <= 10_080;
 
   const submitProposal = async () => {
@@ -342,11 +342,15 @@ export function WorkerScopeStartRoute({ navigation, route }: { navigation: any; 
     setSubmittingProposal(true);
     setProposalError(null);
     try {
+      const materialsResponsibility = proposal.materialsResponsibilityCode === 'customer'
+        ? 'Customer supplies materials or parts.'
+        : 'Worker supplies materials or parts.';
       const normalizedProposal = {
-        baseVersion: null,
+        baseVersion: fulfilment.scope.current?.version ?? null,
         description: proposal.description.trim(),
         items,
-        materialsResponsibility: proposal.materialsResponsibility.trim(),
+        materialsResponsibility,
+        materialsResponsibilityCode: proposal.materialsResponsibilityCode,
         estimatedMinutes: minutes,
       };
       await runGroundedFulfilmentCommand({
@@ -367,7 +371,11 @@ export function WorkerScopeStartRoute({ navigation, route }: { navigation: any; 
     }
   };
 
-  if (resource.status === 'empty') {
+  const currentMaterialsCode = fulfilment?.scope.current?.materialsResponsibilityCode ?? null;
+  const needsMaterialsResolution = fulfilment?.allowedActions.proposeScope === true
+    && currentMaterialsCode !== 'customer'
+    && currentMaterialsCode !== 'worker';
+  if (resource.status === 'empty' || needsMaterialsResolution) {
     return (
       <AppScaffold
         contentContainerStyle={{ gap: theme.spacing.lg, paddingBottom: theme.spacing.xxxl }}
@@ -382,7 +390,25 @@ export function WorkerScopeStartRoute({ navigation, route }: { navigation: any; 
         </Surface>
         <TextField label="Scope description" maxLength={1_500} multiline onChangeText={(description) => setProposal((current) => ({ ...current, description }))} required value={proposal.description} />
         <TextField helperText="One included item per line." label="Included work" maxLength={4_000} multiline onChangeText={(itemsText) => setProposal((current) => ({ ...current, itemsText }))} required value={proposal.itemsText} />
-        <TextField label="Materials responsibility" maxLength={300} onChangeText={(materialsResponsibility) => setProposal((current) => ({ ...current, materialsResponsibility }))} required value={proposal.materialsResponsibility} />
+        <View style={{ gap: theme.spacing.xs }}>
+          <Text accessibilityRole="header" allowFontScaling style={[theme.typography.h3, { color: theme.colors.text }]}>Who supplies materials or parts?</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.xs }}>
+            <Chip
+              label="Customer supplies"
+              onPress={() => setProposal((current) => ({ ...current, materialsResponsibilityCode: 'customer' }))}
+              selected={proposal.materialsResponsibilityCode === 'customer'}
+              testID="scope-materials-customer"
+              tone="brand"
+            />
+            <Chip
+              label="Worker supplies"
+              onPress={() => setProposal((current) => ({ ...current, materialsResponsibilityCode: 'worker' }))}
+              selected={proposal.materialsResponsibilityCode === 'worker'}
+              testID="scope-materials-worker"
+              tone="brand"
+            />
+          </View>
+        </View>
         <TextField inputMode="numeric" label="Estimated minutes" maxLength={5} onChangeText={(estimatedMinutes) => setProposal((current) => ({ ...current, estimatedMinutes: estimatedMinutes.replace(/\D/g, '') }))} required value={proposal.estimatedMinutes} />
         {proposalError ? <InlineError message={proposalError} /> : null}
         <Button

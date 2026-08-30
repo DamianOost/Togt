@@ -5,6 +5,10 @@ const { ProblemError } = require('../../lib/problemJson');
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MONEY_RE = /^(?:0|[1-9]\d{0,6})(?:\.\d{1,2})?$/;
 const CONTACT_RE = /(?:\+?27|0)[\s-]?[6-8][\d\s-]{7,12}\d|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
+const MATERIALS_RESPONSIBILITY_LABELS = Object.freeze({
+  customer: 'Customer supplies materials or parts.',
+  worker: 'Worker supplies materials or parts.',
+});
 
 function fail(type, title, status = 422, detail, extensions) {
   throw new ProblemError({ type, title, status, detail, extensions });
@@ -106,16 +110,31 @@ function normalizeArrival(body) {
 
 function normalizeScopeProposal(body) {
   const value = plainObject(body);
-  rejectUnknown(value, ['baseVersion', 'description', 'items', 'materialsResponsibility', 'estimatedMinutes']);
+  rejectUnknown(value, [
+    'baseVersion', 'description', 'items', 'materialsResponsibility',
+    'materialsResponsibilityCode', 'estimatedMinutes',
+  ]);
+  if (!['customer', 'worker'].includes(value.materialsResponsibilityCode)) {
+    fail(
+      'scope_materials_responsibility_invalid',
+      'Choose who supplies materials or parts',
+      422,
+      'materialsResponsibilityCode must be customer or worker.'
+    );
+  }
+  // Validate the client text for shape and PII, but do not let a client-authored
+  // sentence contradict the structured owner that controls start eligibility.
+  cleanText(value.materialsResponsibility, 'materialsResponsibility', {
+    min: 2,
+    max: 300,
+    rejectContact: true,
+  });
   return {
     baseVersion: value.baseVersion == null ? null : positiveInteger(value.baseVersion, 'baseVersion'),
     description: cleanText(value.description, 'description', { max: 1500, rejectContact: true }),
     items: cleanItems(value.items),
-    materialsResponsibility: cleanText(value.materialsResponsibility, 'materialsResponsibility', {
-      min: 2,
-      max: 300,
-      rejectContact: true,
-    }),
+    materialsResponsibility: MATERIALS_RESPONSIBILITY_LABELS[value.materialsResponsibilityCode],
+    materialsResponsibilityCode: value.materialsResponsibilityCode,
     estimatedMinutes: value.estimatedMinutes == null
       ? null
       : positiveInteger(value.estimatedMinutes, 'estimatedMinutes', 10080),

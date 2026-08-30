@@ -8,6 +8,8 @@ export const CUSTOMER_INTAKE_MESSAGES = Object.freeze({
   'common.edit': 'Edit',
   'common.retry': 'Try again',
   'common.saveDraft': 'Save draft',
+  'common.yes': 'Yes',
+  'common.no': 'No',
   'home.account': 'Open account',
   'home.location': 'Job location',
   'home.locationFallback': 'Choose a job location',

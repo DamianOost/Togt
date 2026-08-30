@@ -26,7 +26,7 @@ export type BriefQuestion = Readonly<{
   prompt: string;
   helperText: string | null;
   required: boolean;
-  inputType: 'short_text' | 'long_text' | 'single_choice' | 'multiple_choice' | 'number';
+  inputType: 'short_text' | 'long_text' | 'single_choice' | 'multiple_choice' | 'number' | 'boolean';
   options: readonly BriefQuestionOption[];
   maxLength: number | null;
 }>;
@@ -128,14 +128,36 @@ function QuestionField({
   question,
   value,
   error,
+  translate,
   onChange,
 }: {
   question: BriefQuestion;
   value: BriefAnswerValue | undefined;
   error: string | undefined;
+  translate: CustomerIntakeTranslate;
   onChange: (value: BriefAnswerValue) => void;
 }) {
   const theme = useTogtTheme();
+  if (question.inputType === 'boolean') {
+    const selected = typeof value === 'boolean' ? value : null;
+    return (
+      <View style={{ rowGap: theme.spacing.xs }}>
+        <Text accessibilityRole="header" allowFontScaling style={[theme.typography.h3, { color: theme.colors.text }]}>
+          {question.prompt}
+        </Text>
+        {question.helperText ? (
+          <Text allowFontScaling style={[theme.typography.bodySmall, { color: theme.colors.textSecondary }]}>
+            {question.helperText}
+          </Text>
+        ) : null}
+        <View style={[styles.actionWrap, { columnGap: theme.spacing.xs, rowGap: theme.spacing.xs }]}>
+          <Chip label={translate('common.yes')} onPress={() => onChange(true)} selected={selected === true} tone="brand" />
+          <Chip label={translate('common.no')} onPress={() => onChange(false)} selected={selected === false} tone="brand" />
+        </View>
+        {error ? <InlineError message={error} /> : null}
+      </View>
+    );
+  }
   if (question.inputType === 'single_choice' || question.inputType === 'multiple_choice') {
     const selected = answerAsList(value);
     const selectedSingle = typeof value === 'string' ? value : '';
@@ -225,7 +247,9 @@ export function GuidedJobBriefScreen({
     ? Object.keys(validationErrors).length === 0
     : activeStep === 'photos'
       ? photoRequirement !== 'required' || draft.brief.attachments.length > 0
-      : true;
+      : activeStep === 'responsibility'
+        ? draft.brief.materialsResponsibility !== null
+        : true;
   const progressLabel = translate('brief.progress', {
     current: activeIndex + 1,
     total: STEPS.length,
@@ -287,6 +311,7 @@ export function GuidedJobBriefScreen({
                 key={question.questionId}
                 onChange={(value) => onAnswerChange(question.questionId, value)}
                 question={question}
+                translate={translate}
                 value={draft.brief.answers[question.questionId]}
               />
             ))}

@@ -125,6 +125,30 @@ test('current location fails closed until reverse-geocoding can verify displayed
   assert.match(model, /isAddressResolutionDispatchSafe\(draft\.address\)[\s\S]*coordinates_unverified/);
 });
 
+test('boolean catalogue questions use keyed Yes and No controls with literal boolean answers', () => {
+  const screen = read('GuidedJobBriefScreen.tsx');
+  const copy = read('copy.ts');
+  assert.match(copy, /'common\.yes': 'Yes'/);
+  assert.match(copy, /'common\.no': 'No'/);
+  assert.match(screen, /label=\{translate\('common\.yes'\)\}[\s\S]*onPress=\{\(\) => onChange\(true\)\}/);
+  assert.match(screen, /label=\{translate\('common\.no'\)\}[\s\S]*onPress=\{\(\) => onChange\(false\)\}/);
+});
+
+test('the confirmed materials responsibility crosses the quote request boundary', () => {
+  const screen = read('GuidedJobBriefScreen.tsx');
+  const route = fs.readFileSync(path.join(
+    mobileRoot,
+    'src',
+    'features',
+    'customer',
+    'integration',
+    'CustomerIntakeRoutes.tsx',
+  ), 'utf8');
+  assert.match(screen, /activeStep === 'responsibility'[\s\S]*draft\.brief\.materialsResponsibility !== null/);
+  assert.match(route, /materialsResponsibility: snapshot\.brief\.materialsResponsibility/);
+  assert.match(route, /quote_materials_responsibility_missing/);
+});
+
 test('copy is keyed, South African, and no screens hard-code prices or synthetic workers', () => {
   const copy = read('copy.ts');
   const screens = [

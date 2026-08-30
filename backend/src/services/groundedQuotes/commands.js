@@ -140,6 +140,36 @@ function preparedQuoteInput(input) {
   };
 }
 
+const MATERIALS_RESPONSIBILITY = Object.freeze({
+  customer: 'Customer supplies materials or parts.',
+  worker: 'Worker supplies materials or parts.',
+  discuss: 'Materials responsibility must be agreed before work starts.',
+});
+
+function acceptedMaterialsResponsibility(brief) {
+  return MATERIALS_RESPONSIBILITY[brief?.materialsResponsibility]
+    || 'Materials responsibility was not separately recorded in this accepted agreement.';
+}
+
+function acceptedMaterialsResponsibilityCode(brief) {
+  return ['customer', 'worker', 'discuss'].includes(brief?.materialsResponsibility)
+    ? brief.materialsResponsibility
+    : 'not_recorded';
+}
+
+function assertMaterialsTermsCompatible(request, quote, status = 409) {
+  const materialsAmount = quote.materialsAmount ?? quote.materials_amount;
+  if (request.brief_snapshot?.materialsResponsibility === 'customer'
+      && Number(materialsAmount) > 0) {
+    fail(
+      'quote_materials_terms_conflict',
+      'The quote conflicts with the accepted materials responsibility',
+      status,
+      'The customer selected customer-supplied materials, but this quote includes a materials charge. Ask the Worker for a corrected quote.'
+    );
+  }
+}
+
 async function insertQuoteVersion(client, quoteId, version, input, authoredAs) {
   const prepared = preparedQuoteInput(input);
   const contentHash = hashPayload({ ...prepared, authoredAs });
@@ -323,7 +353,10 @@ async function createQuote({ actor, key, requestId, body }) {
       }
       const input = normalizeQuoteInput(quoteBody, { requireComplete: submit });
       const prepared = preparedQuoteInput(input);
-      if (submit) assertCompleteQuote(prepared, request);
+      if (submit) {
+        assertCompleteQuote(prepared, request);
+        assertMaterialsTermsCompatible(request, prepared, 422);
+      }
       const created = await client.query(
         `INSERT INTO grounded_quotes (
            quote_request_id, worker_id, status, current_version, submitted_at
@@ -395,7 +428,10 @@ async function editQuote({ actor, key, quoteId, body }) {
       const merged = mergeQuoteInput(quoteInputFromRow(quote), patch);
       const submit = quote.status === 'submitted' || wrapper.submit === true;
       const transitionedToSubmitted = quote.status === 'draft' && submit;
-      if (submit) assertCompleteQuote(merged, request);
+      if (submit) {
+        assertCompleteQuote(merged, request);
+        assertMaterialsTermsCompatible(request, merged, 422);
+      }
       const nextVersion = Number(quote.current_version) + 1;
       await insertQuoteVersion(client, quoteId, nextVersion, merged, submit ? 'submitted' : 'draft');
       await client.query(
@@ -454,6 +490,7 @@ async function submitQuote({ actor, key, quoteId, body }) {
       }
       const current = quoteInputFromRow(quote);
       assertCompleteQuote(current, request);
+      assertMaterialsTermsCompatible(request, current, 422);
       const nextVersion = Number(quote.current_version) + 1;
       await insertQuoteVersion(client, quoteId, nextVersion, current, 'submitted');
       await client.query(
@@ -631,13 +668,16 @@ async function acceptQuote({ actor, key, quoteId, body }) {
       }
       const complete = quoteInputFromRow(quote);
       assertCompleteQuote(complete, request, now);
+      assertMaterialsTermsCompatible(request, quote);
 
       const scopeSnapshot = {
         schemaVersion: 1,
         quoteVersion: Number(quote.current_version),
         scope: quote.scope,
         description: quote.scope,
-        items: quote.deliverables.map((label) => ({ label })),
+        items: quote.deliverables,
+        materialsResponsibility: acceptedMaterialsResponsibility(request.brief_snapshot),
+        materialsResponsibilityCode: acceptedMaterialsResponsibilityCode(request.brief_snapshot),
         deliverables: quote.deliverables,
         exclusions: quote.exclusions,
         assumptions: quote.assumptions,
@@ -681,7 +721,7 @@ async function acceptQuote({ actor, key, quoteId, body }) {
           quote.proposed_start_at,
           Number(quote.duration_minutes) / 60,
           quote.customer_total_amount,
-          JSON.stringify(quote.deliverables.map((label) => ({ label }))),
+          JSON.stringify(quote.deliverables),
           quoteId,
           quote.current_version,
         ]

@@ -69,6 +69,49 @@ test('catalogue adapter accepts only a complete published v1 identity and questi
   assert.ok(malformed.fields.includes('briefSchema'));
 });
 
+test('catalogue adapter accepts the backend boolean question contract without string coercion', () => {
+  const result = adaptCatalogueServiceV1(raw({
+    version: 1,
+    canonicalKey: 'complex_plumbing_quote',
+    description: 'A premium scoped remote quote for variable plumbing work.',
+    requiredQuestionIds: ['leak_location', 'water_isolated'],
+    briefSchema: {
+      questions: [
+        {
+          id: 'leak_location',
+          type: 'single_select',
+          label: 'Where is the leak?',
+          options: [
+            { value: 'kitchen', label: 'Kitchen' },
+            { value: 'bathroom', label: 'Bathroom' },
+          ],
+        },
+        { id: 'water_isolated', type: 'boolean', label: 'Is the water isolated?' },
+      ],
+    },
+    materialsRules: { disclosure: 'required' },
+    callOutFee: '0.00',
+    cancellationPolicyVersion: 'acceptance-cancellation-v1',
+    recurrenceEligible: true,
+    publishedAt: '2026-08-30T00:29:24.227Z',
+  }));
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.value.questions[1].inputType, 'boolean');
+  assert.deepEqual(result.value.questions[1].options, []);
+});
+
+test('catalogue adapter rejects a choice question with no usable choices', () => {
+  const result = adaptCatalogueServiceV1(raw({
+    briefSchema: {
+      questions: [{ id: 'leak_location', type: 'single_select', label: 'Where is the leak?' }],
+    },
+  }));
+
+  assert.equal(result.ok, false);
+  assert.ok(result.fields.includes('briefSchema'));
+});
+
 test('service version maps to one truthful pricing and fulfilment mode without supply claims', () => {
   const service = adapt();
   assert.deepEqual(toIntakeCatalogueSnapshot(service), {

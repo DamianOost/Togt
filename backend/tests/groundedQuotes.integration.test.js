@@ -100,8 +100,19 @@ async function seedService({ published = true } = {}) {
     [
       SERVICE_ID,
       JSON.stringify({ questions: [
-        { id: 'leak_location', type: 'single_select', label: 'Where is the leak?' },
+        {
+          id: 'leak_location',
+          type: 'single_select',
+          label: 'Where is the leak?',
+          options: [{ value: 'kitchen', label: 'Kitchen' }, { value: 'bathroom', label: 'Bathroom' }],
+        },
         { id: 'water_isolated', type: 'boolean', label: 'Is the water isolated?' },
+        {
+          id: 'preferred_tools',
+          type: 'multi_select',
+          label: 'Any preferred tools?',
+          options: [{ value: 'hand_tools', label: 'Hand tools' }, { value: 'power_tools', label: 'Power tools' }],
+        },
       ] }),
       JSON.stringify({ finalPrice: 'accepted_quote_only' }),
       JSON.stringify({ disclosure: 'required' }),
@@ -126,9 +137,10 @@ function requestBody(overrides = {}) {
     serviceVersion: 1,
     brief: {
       answers: {
-        leak_location: 'Kitchen sink — call 082 123 4567 if needed',
+        leak_location: 'kitchen',
         water_isolated: true,
       },
+      materialsResponsibility: 'worker',
       media: [{ id: 'safe-media-reference', kind: 'image' }],
       summary: 'A connector is leaking. Email owner@example.com.',
     },
@@ -210,6 +222,10 @@ describe('versioned public service catalogue', () => {
       fulfilmentMode: 'receive_quotes',
       requiredQuestionIds: ['leak_location', 'water_isolated'],
     });
+    expect(list.body.services[0].briefSchema.questions[0].options).toEqual([
+      { value: 'kitchen', label: 'Kitchen' },
+      { value: 'bathroom', label: 'Bathroom' },
+    ]);
     expect(list.body.services[0]).not.toHaveProperty('workers');
 
     const detail = await request.get(`/api/catalogue/services/${SERVICE_ID}?version=1`);
@@ -231,7 +247,7 @@ describe('quote request creation and privacy', () => {
   test('requires catalogue questions and replays the exact versioned request idempotently', async () => {
     await seedService();
     const customer = await createUser('customer', '1000001');
-    const incomplete = requestBody({ brief: { answers: { leak_location: 'Kitchen' } } });
+    const incomplete = requestBody({ brief: { answers: { leak_location: 'kitchen' }, materialsResponsibility: 'worker' } });
     const rejected = await request
       .post('/api/quote-requests')
       .set(auth(customer))
@@ -240,6 +256,45 @@ describe('quote request creation and privacy', () => {
     expect(rejected.status).toBe(422);
     expect(rejected.body.type).toMatch(/quote_brief_incomplete$/);
     expect(rejected.body.extensions.missingQuestionIds).toEqual(['water_isolated']);
+
+    for (const [suffix, answers, invalidQuestionId] of [
+      ['off-option', { leak_location: 'garage', water_isolated: true }, 'leak_location'],
+      ['wrong-boolean', { leak_location: 'kitchen', water_isolated: 'maybe' }, 'water_isolated'],
+    ]) {
+      const invalid = await createRequest(
+        customer,
+        `invalid-answer-${suffix}`,
+        requestBody({ brief: { answers, materialsResponsibility: 'worker' } })
+      );
+      expect(invalid.status).toBe(422);
+      expect(invalid.body.type).toMatch(/quote_brief_answer_invalid$/);
+      expect(invalid.body.extensions.invalidQuestionIds).toEqual([invalidQuestionId]);
+    }
+    await db.query(
+      `UPDATE service_catalogue_versions
+          SET required_question_ids = ARRAY['leak_location','water_isolated','preferred_tools']
+        WHERE service_id = $1 AND service_version = 1`,
+      [SERVICE_ID]
+    );
+    const emptyRequiredMulti = await createRequest(
+      customer,
+      'invalid-answer-empty-multi',
+      requestBody({
+        brief: {
+          answers: { leak_location: 'kitchen', water_isolated: true, preferred_tools: [] },
+          materialsResponsibility: 'worker',
+        },
+      })
+    );
+    expect(emptyRequiredMulti.status).toBe(422);
+    expect(emptyRequiredMulti.body.type).toMatch(/quote_brief_incomplete$/);
+    expect(emptyRequiredMulti.body.extensions.missingQuestionIds).toEqual(['preferred_tools']);
+    await db.query(
+      `UPDATE service_catalogue_versions
+          SET required_question_ids = ARRAY['leak_location','water_isolated']
+        WHERE service_id = $1 AND service_version = 1`,
+      [SERVICE_ID]
+    );
 
     const stableBody = requestBody();
     const first = await createRequest(customer, 'same-request-key', stableBody);
@@ -429,6 +484,11 @@ describe('atomic single-winner quote acceptance', () => {
           status: 'confirmed',
           source: 'accepted_agreement',
           proposedByRole: 'worker',
+          snapshot: {
+            items: ['Remove failed connector', 'Fit replacement', 'Pressure test'],
+            materialsResponsibility: 'Worker supplies materials or parts.',
+            materialsResponsibilityCode: 'worker',
+          },
         },
         proposal: null,
       },
@@ -460,7 +520,120 @@ describe('atomic single-winner quote acceptance', () => {
     expect(agreement.rows[0].quote_version).toBe(1);
     expect(agreement.rows[0].service_version).toBe(1);
     expect(agreement.rows[0].scope_snapshot.scope).toContain('pressure-test');
+    expect(agreement.rows[0].scope_snapshot.items).toEqual([
+      'Remove failed connector',
+      'Fit replacement',
+      'Pressure test',
+    ]);
+    expect(agreement.rows[0].scope_snapshot.materialsResponsibility)
+      .toBe('Worker supplies materials or parts.');
+    expect(agreement.rows[0].scope_snapshot.materialsResponsibilityCode).toBe('worker');
+    const canonicalBooking = await db.query('SELECT scope_items FROM bookings');
+    expect(canonicalBooking.rows[0].scope_items).toEqual([
+      'Remove failed connector',
+      'Fit replacement',
+      'Pressure test',
+    ]);
     expect(agreement.rows[0].commercial_snapshot.customerTotalAmount).toBe('1000.00');
+  });
+
+  test('rejects conflicting materials terms at submission and again at legacy acceptance', async () => {
+    await seedService();
+    const customer = await createUser('customer', '1000012');
+    const worker = await createUser('labourer', '2000012');
+    await optIn(worker);
+    const body = requestBody();
+    body.brief.materialsResponsibility = 'customer';
+    const created = await createRequest(customer, 'customer-materials-request', body);
+    const rejectedSubmission = await createSubmittedQuote(
+      worker,
+      created.body.quoteRequest.id,
+      'customer-materials-quote'
+    );
+    expect(rejectedSubmission.status).toBe(422);
+    expect(rejectedSubmission.body.type).toMatch(/quote_materials_terms_conflict$/);
+    expect((await db.query('SELECT COUNT(*)::int AS count FROM grounded_quotes')).rows[0].count).toBe(0);
+
+    const legacyDraft = await request
+      .post(`/api/quote-requests/${created.body.quoteRequest.id}/quotes`)
+      .set(auth(worker))
+      .set(key('customer-materials-legacy-draft'))
+      .send(completeQuoteBody({ submit: false }));
+    expect(legacyDraft.status).toBe(201);
+    const rejectedSubmit = await request
+      .post(`/api/quotes/${legacyDraft.body.quote.id}/submit`)
+      .set(auth(worker))
+      .set(key('customer-materials-submit-draft'))
+      .send({});
+    expect(rejectedSubmit.status).toBe(422);
+    expect(rejectedSubmit.body.type).toMatch(/quote_materials_terms_conflict$/);
+    const rejectedEditSubmit = await request
+      .put(`/api/quotes/${legacyDraft.body.quote.id}`)
+      .set(auth(worker))
+      .set(key('customer-materials-edit-submit'))
+      .send({ quote: {}, submit: true });
+    expect(rejectedEditSubmit.status).toBe(422);
+    expect(rejectedEditSubmit.body.type).toMatch(/quote_materials_terms_conflict$/);
+    await db.query(
+      `UPDATE grounded_quotes
+          SET status = 'submitted', submitted_at = NOW(), updated_at = NOW()
+        WHERE id = $1`,
+      [legacyDraft.body.quote.id]
+    );
+
+    const accepted = await request
+      .post(`/api/quotes/${legacyDraft.body.quote.id}/accept`)
+      .set(auth(customer))
+      .set(key('customer-materials-accept'))
+      .send({});
+    expect(accepted.status).toBe(409);
+    expect(accepted.body.type).toMatch(/quote_materials_terms_conflict$/);
+    expect((await db.query('SELECT COUNT(*)::int AS count FROM bookings')).rows[0].count).toBe(0);
+  });
+
+  test('legacy requests without materials evidence accept as not recorded and cannot reveal a start PIN', async () => {
+    await seedService();
+    const customer = await createUser('customer', '1000013');
+    const worker = await createUser('labourer', '2000013');
+    await optIn(worker);
+    const created = await createRequest(customer, 'legacy-materials-request');
+    const quote = await createSubmittedQuote(
+      worker,
+      created.body.quoteRequest.id,
+      'legacy-materials-quote'
+    );
+    await db.query(
+      `UPDATE grounded_quote_requests
+          SET brief_snapshot = brief_snapshot - 'materialsResponsibility'
+        WHERE id = $1`,
+      [created.body.quoteRequest.id]
+    );
+
+    const accepted = await request
+      .post(`/api/quotes/${quote.body.quote.id}/accept`)
+      .set(auth(customer))
+      .set(key('legacy-materials-accept'))
+      .send({});
+    expect(accepted.status).toBe(200);
+    await db.query(
+      `UPDATE bookings SET operational_phase = 'scope_confirmation' WHERE id = $1`,
+      [accepted.body.project.id]
+    );
+    const fulfilment = await request
+      .get(`/api/projects/${accepted.body.project.id}/fulfilment`)
+      .set(auth(customer));
+    expect(fulfilment.status).toBe(200);
+    expect(fulfilment.body.fulfilment.scope.current.snapshot.materialsResponsibilityCode)
+      .toBe('not_recorded');
+    expect(fulfilment.body.fulfilment.allowedActions.revealStartPin).toBe(false);
+    const reveal = await request
+      .post(`/api/projects/${accepted.body.project.id}/start-pin-reveals`)
+      .set(auth(customer))
+      .set('If-Match', '0')
+      .set(key('legacy-materials-reveal'))
+      .send({});
+    expect(reveal.status).toBe(409);
+    expect(reveal.body.type).toMatch(/start_materials_responsibility_unresolved$/);
   });
 
   test('successful acceptance replays exactly and rejects the same key with a changed payload', async () => {

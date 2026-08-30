@@ -1,4 +1,9 @@
 const SCHEMA = 'togt.fulfilment.v1';
+const {
+  LEGACY_MATERIALS_RESPONSIBILITY,
+  canonicalScopeSnapshot,
+  scopeMaterialsResolved,
+} = require('./scope');
 
 function iso(value) {
   return value == null ? null : new Date(value).toISOString();
@@ -67,13 +72,14 @@ function participantsFor(booking, actor) {
 
 function scopeDto(row, actor) {
   if (!row) return null;
+  const snapshot = canonicalScopeSnapshot(row.scope_snapshot, row.source);
   return {
     version: Number(row.version),
     baseVersion: row.base_version == null ? null : Number(row.base_version),
     status: row.status,
     source: row.source,
     proposedByRole: row.proposed_by_role === 'labourer' ? 'worker' : row.proposed_by_role,
-    snapshot: actor.role === 'labourer' ? scrub(row.scope_snapshot) : row.scope_snapshot,
+    snapshot: actor.role === 'labourer' ? scrub(snapshot) : snapshot,
     confirmations: {
       customer: iso(row.customer_confirmed_at),
       worker: iso(row.worker_confirmed_at),
@@ -83,14 +89,12 @@ function scopeDto(row, actor) {
   };
 }
 
-function pinDto(pin, booking, actor) {
+function pinDto(pin, actions) {
   if (!pin) {
     return {
       status: 'not_issued',
-      customerCanReveal: actor.role === 'customer'
-        && booking.status === 'accepted'
-        && booking.current_scope_version != null,
-      workerMustEnter: actor.role === 'labourer',
+      customerCanReveal: actions.revealStartPin,
+      workerMustEnter: false,
     };
   }
   return {
@@ -99,8 +103,8 @@ function pinDto(pin, booking, actor) {
     failedAttempts: Number(pin.failed_attempts),
     attemptsRemaining: Math.max(0, Number(pin.max_attempts) - Number(pin.failed_attempts)),
     expiresAt: iso(pin.expires_at),
-    customerCanReveal: actor.role === 'customer' && pin.status === 'active',
-    workerMustEnter: actor.role === 'labourer' && pin.status === 'active',
+    customerCanReveal: pin.status === 'active' && actions.revealStartPin,
+    workerMustEnter: pin.status === 'active' && actions.startWork,
   };
 }
 
@@ -154,6 +158,10 @@ function allowedActions(booking, state, actor) {
   const accessActive = booking.fulfilment_access_revoked_at == null;
   const noOpenRecovery = !state.noShows.some((row) => ['received', 'replacement_requested'].includes(row.status));
   const proposal = state.scopes.find((row) => row.status === 'proposed');
+  const currentScope = state.scopes.find((row) => row.status === 'confirmed');
+  const currentScopeReady = Boolean(currentScope
+    && Number(currentScope.version) === Number(booking.current_scope_version)
+    && scopeMaterialsResolved(currentScope));
   const reschedule = state.reschedules.find((row) => row.status === 'pending');
   return {
     startRoute: known && policy && accessActive && worker && accepted
@@ -166,9 +174,11 @@ function allowedActions(booking, state, actor) {
     decideScope: known && policy && accessActive && accepted && Boolean(proposal)
       && proposal.proposed_by !== actor.id && noOpenRecovery,
     revealStartPin: known && policy && accessActive && customer && accepted
-      && booking.current_scope_version != null && !proposal && noOpenRecovery,
+      && booking.operational_phase === 'scope_confirmation'
+      && currentScopeReady && !proposal && noOpenRecovery,
     startWork: known && policy && accessActive && worker && accepted
-      && booking.current_scope_version != null && !proposal && !reschedule && noOpenRecovery,
+      && booking.operational_phase === 'scope_confirmation'
+      && currentScopeReady && !proposal && !reschedule && noOpenRecovery,
     proposeReschedule: known && policy && accessActive && accepted
       && booking.operational_phase === 'scheduled' && !reschedule && noOpenRecovery,
     decideReschedule: known && policy && accessActive && accepted && Boolean(reschedule)
@@ -191,6 +201,7 @@ function allowedActions(booking, state, actor) {
 function serializeFulfilment(booking, state, actor) {
   const currentScope = state.scopes.find((row) => row.status === 'confirmed') || null;
   const proposal = state.scopes.find((row) => row.status === 'proposed') || null;
+  const actions = allowedActions(booking, state, actor);
   return {
     schema: SCHEMA,
     projectId: booking.id,
@@ -218,7 +229,7 @@ function serializeFulfilment(booking, state, actor) {
       })),
     },
     start: {
-      ...pinDto(state.pin, booking, actor),
+      ...pinDto(state.pin, actions),
       workStartedAt: iso(booking.work_started_at),
     },
     reschedules: state.reschedules.map(rescheduleDto),
@@ -246,9 +257,17 @@ function serializeFulfilment(booking, state, actor) {
           'work_active', 'completion_review', 'payment_pending', 'closed']
           .includes(booking.operational_phase),
     },
-    allowedActions: allowedActions(booking, state, actor),
+    allowedActions: actions,
     updatedAt: iso(booking.phase_updated_at || booking.created_at),
   };
 }
 
-module.exports = { SCHEMA, scrub, workerExactAccess, serializeFulfilment };
+module.exports = {
+  SCHEMA,
+  LEGACY_MATERIALS_RESPONSIBILITY,
+  canonicalScopeSnapshot,
+  scopeMaterialsResolved,
+  scrub,
+  workerExactAccess,
+  serializeFulfilment,
+};

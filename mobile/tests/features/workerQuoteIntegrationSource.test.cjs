@@ -29,6 +29,7 @@ test('worker quote routes adapt every response and pair discovery, detail, build
   assert.match(routes, /saveGroundedQuote\(existing\.id, quote, submit, key\)/);
   assert.match(routes, /runGroundedQuoteCommand\(quote\.id, 'withdraw', key\)/);
   assert.match(routes, /validateWorkerQuoteForSubmission/);
+  assert.match(routes, /submit \|\| state\.detail\.ownQuote\?\.status === 'submitted'/);
   assert.match(routes, /workerQuoteIdempotencyKey/);
 });
 

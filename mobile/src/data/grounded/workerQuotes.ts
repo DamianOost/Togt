@@ -67,6 +67,7 @@ export type WorkerQuoteRequest = Readonly<{
   brief: Readonly<{
     summary: string | null;
     answers: readonly Readonly<{ questionId: string; label: string; value: string }>[];
+    materialsResponsibility: 'customer' | 'worker' | 'discuss' | null;
     mediaCount: number;
   }>;
   broadAreaLabel: string;
@@ -187,6 +188,12 @@ function adaptBrief(raw: unknown, service: JsonRecord): WorkerQuoteRequest['brie
   if (!media || !media.every((item) => isRecord(item) && item.kind === 'image' && text(item.id, 255))) return null;
   const summary = nullableText(raw.summary, 1_000);
   if (summary === undefined) return null;
+  const materialsResponsibility = raw.materialsResponsibility == null
+    ? null
+    : raw.materialsResponsibility === 'customer' || raw.materialsResponsibility === 'worker' || raw.materialsResponsibility === 'discuss'
+      ? raw.materialsResponsibility
+      : undefined;
+  if (materialsResponsibility === undefined) return null;
   const questionLabels = new Map<string, string>();
   if (isRecord(service.briefSchema) && Array.isArray(service.briefSchema.questions)) {
     for (const question of service.briefSchema.questions) {
@@ -202,7 +209,7 @@ function adaptBrief(raw: unknown, service: JsonRecord): WorkerQuoteRequest['brie
     if (!SAFE_KEY.test(questionId) || (questionLabels.size > 0 && !questionLabels.has(questionId))) return null;
     answers.push(Object.freeze({ questionId, label: answerLabel(questionId, questionLabels), value: answerValue(value) }));
   }
-  return Object.freeze({ summary, answers: Object.freeze(answers), mediaCount: media.length });
+  return Object.freeze({ summary, answers: Object.freeze(answers), materialsResponsibility, mediaCount: media.length });
 }
 
 function adaptEligibility(raw: unknown): Readonly<{

@@ -171,6 +171,7 @@ export type SubmissionBlockerCode =
   | 'required_answers_missing'
   | 'required_photos_missing'
   | 'photos_not_allowed'
+  | 'materials_responsibility_missing'
   | 'address_incomplete'
   | 'coordinates_unresolved'
   | 'coordinates_unverified'
@@ -674,6 +675,9 @@ export function deriveSubmissionReadiness(
     if (draft.selectedService.photoRequirement === 'not_allowed' && draft.brief.attachments.length > 0) {
       blockers.push(blocker('photos_not_allowed', 'Remove photos because this service version does not accept them.'));
     }
+  }
+  if (!draft.brief.materialsResponsibility) {
+    blockers.push(blocker('materials_responsibility_missing', 'Choose who should provide materials or parts.'));
   }
 
   if (!addressHasOperationalText(draft.address)) {

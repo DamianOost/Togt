@@ -11,6 +11,8 @@ const BOOKING_RELATIONSHIP_SELECT = `
          agreement.service_version AS agreement_service_version,
          agreement.service_snapshot AS agreement_service_snapshot,
          agreement.scope_snapshot AS agreement_scope_snapshot,
+         current_scope.scope_snapshot AS current_scope_snapshot,
+         current_scope.source AS current_scope_source,
          agreement.commercial_snapshot AS agreement_commercial_snapshot,
          catalogue.cancellation_policy_version,
          catalogue.recurrence_eligible
@@ -25,6 +27,13 @@ const BOOKING_RELATIONSHIP_SELECT = `
        LIMIT 1
     ) payment ON TRUE
     LEFT JOIN grounded_booking_agreement_snapshots agreement ON agreement.booking_id = b.id
+    LEFT JOIN LATERAL (
+      SELECT scope.scope_snapshot, scope.source
+        FROM grounded_scope_versions scope
+       WHERE scope.booking_id = b.id AND scope.status = 'confirmed'
+       ORDER BY scope.version DESC
+       LIMIT 1
+    ) current_scope ON TRUE
     LEFT JOIN service_catalogue_versions catalogue
       ON catalogue.service_id = agreement.service_id
      AND catalogue.service_version = agreement.service_version

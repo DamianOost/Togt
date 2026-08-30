@@ -24,6 +24,7 @@ function scope(overrides = {}) {
       description: 'Replace the failed connector.',
       items: ['Remove failed connector', 'Fit replacement'],
       materialsResponsibility: 'Worker supplies the connector.',
+      materialsResponsibilityCode: 'worker',
       estimatedMinutes: 90,
     },
     confirmations: {
@@ -102,6 +103,28 @@ test('canonical fulfilment accepts initial revision zero and preserves privacy a
   assert.equal(value.location.precision, 'exact');
   assert.equal(value.participants.worker.phone, '0831234567');
   assert.equal(customerScopeFromFulfilmentV1(value).ok, false);
+});
+
+test('scope arrays fail closed when empty or when any legacy item is not a canonical string', () => {
+  for (const items of [[], [{ label: 'Legacy item' }], ['Valid item', { label: 'Legacy item' }]]) {
+    const result = adaptGroundedFulfilmentV1(fulfilment({
+      scope: { current: scope({ snapshot: { ...scope().snapshot, items } }), proposal: null, history: [] },
+    }));
+    assert.equal(result.ok, false);
+  }
+});
+
+test('scope materials codes preserve explicit resolution and reject unknown authority', () => {
+  const value = adapt(fulfilment({ scope: { current: scope(), proposal: null, history: [] } }));
+  assert.equal(value.scope.current.materialsResponsibilityCode, 'worker');
+  const invalid = adaptGroundedFulfilmentV1(fulfilment({
+    scope: {
+      current: scope({ snapshot: { ...scope().snapshot, materialsResponsibilityCode: 'someone_else' } }),
+      proposal: null,
+      history: [],
+    },
+  }));
+  assert.equal(invalid.ok, false);
 });
 
 test('worker proposal maps to pending customer confirmation without inventing a PIN or price', () => {

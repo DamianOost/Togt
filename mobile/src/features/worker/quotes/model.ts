@@ -132,6 +132,11 @@ export function validateWorkerQuoteForSubmission(
   if (!form.durationMinutes.trim()) errors.durationMinutes = 'Duration is required.';
   if (!form.labourAmount.trim()) errors.labourAmount = 'Labour amount is required.';
   if (!form.materialsAmount.trim()) errors.materialsAmount = 'Materials amount is required (use 0 when none).';
+  if (request.brief.materialsResponsibility === 'customer'
+      && validMoney(form.materialsAmount)
+      && Number(form.materialsAmount) > 0) {
+    errors.materialsAmount = 'Use 0 because the customer selected customer-supplied materials.';
+  }
   if (Object.keys(errors).length > 0) return Object.freeze(errors);
 
   const start = Date.parse(form.proposedStartAt);

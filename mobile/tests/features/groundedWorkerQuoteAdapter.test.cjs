@@ -34,6 +34,7 @@ function request(overrides = {}) {
     brief: {
       schemaVersion: 1,
       answers: { leak_location: 'Kitchen sink — [contact removed]', water_isolated: true },
+      materialsResponsibility: 'worker',
       media: [{ id: 'opaque-media-reference', kind: 'image' }],
       summary: 'A connector is leaking. [contact removed]',
     },
@@ -99,6 +100,7 @@ test('worker inbox and detail adapt only privacy-safe request evidence and the w
   assert.equal(list.value[0].service.identityVerificationRequired, true);
   assert.deepEqual(list.value[0].service.credentialIds, ['trade.plumbing']);
   assert.equal(list.value[0].brief.answers[0].label, 'Where is the leak?');
+  assert.equal(list.value[0].brief.materialsResponsibility, 'worker');
   assert.equal(list.value[0].brief.mediaCount, 1);
   assert.equal(Object.hasOwn(list.value[0], 'customerId'), false);
 
@@ -114,8 +116,9 @@ test('worker request adapter fails closed on exact location, customer identity o
   for (const unsafe of [
     request({ privateLocation: { address: '12 Exact Street' } }),
     request({ customerId: '55555555-5555-4555-8555-555555555555' }),
-    request({ brief: { answers: { leak_location: 'Call 082 123 4567' }, media: [], summary: null } }),
-    request({ brief: { answers: { location: { address: '12 Exact Street' } }, media: [], summary: null } }),
+    request({ brief: { answers: { leak_location: 'Call 082 123 4567' }, materialsResponsibility: 'worker', media: [], summary: null } }),
+    request({ brief: { answers: { location: { address: '12 Exact Street' } }, materialsResponsibility: 'worker', media: [], summary: null } }),
+    request({ brief: { answers: {}, materialsResponsibility: 'invented', media: [], summary: null } }),
   ]) {
     assert.deepEqual(adaptWorkerQuoteRequestDetailV1({ quoteRequest: unsafe, ownQuote: null }), {
       ok: false,

@@ -31,6 +31,7 @@ export type QuoteRequestCreateInput = Readonly<{
   serviceVersion: number;
   brief: Readonly<{
     answers: Readonly<Record<string, unknown>>;
+    materialsResponsibility: 'customer' | 'worker' | 'discuss';
     media: readonly Readonly<{ id: string; kind: 'image' }>[];
     summary?: string;
   }>;

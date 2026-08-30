@@ -213,6 +213,16 @@ test('catalogue-required photos block submission until an attachment is present'
   assert.ok(result.readiness.blockers.some((item) => item.code === 'required_photos_missing'));
 });
 
+test('materials responsibility is required before a consequential submission', () => {
+  const ready = createReadyDraft();
+  const missing = reviseCustomerIntakeDraft(ready, {
+    brief: { ...ready.brief, materialsResponsibility: null },
+  }, '2026-08-29T07:03:00Z');
+  const result = createSubmissionIntent(missing, capabilities(), '2026-08-29T07:04:00Z');
+  assert.equal(result.ok, false);
+  assert.ok(result.readiness.blockers.some((item) => item.code === 'materials_responsibility_missing'));
+});
+
 test('a no-fee remote quote contains no fabricated final total and does not require payment', () => {
   const result = createSubmissionIntent(
     createReadyDraft({ pricingMode: 'remote_quote' }),

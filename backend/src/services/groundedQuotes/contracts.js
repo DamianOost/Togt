@@ -147,6 +147,76 @@ function normalizeSchedule(value, now = new Date()) {
   };
 }
 
+const QUESTION_TYPE_ALIASES = Object.freeze({
+  short_text: 'short_text',
+  text: 'short_text',
+  long_text: 'long_text',
+  textarea: 'long_text',
+  number: 'number',
+  single_choice: 'single_choice',
+  single_select: 'single_choice',
+  multiple_choice: 'multiple_choice',
+  multi_select: 'multiple_choice',
+  boolean: 'boolean',
+});
+const SAFE_QUESTION_OPTION = /^[A-Za-z0-9][A-Za-z0-9 ._:/-]{0,119}$/;
+
+function rendererText(value, max) {
+  return typeof value === 'string' && value.trim().length > 0 && value.trim().length <= max
+    ? value.trim()
+    : null;
+}
+
+function questionContract(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)
+      || typeof raw.id !== 'string' || raw.id.length > 80
+      || !/^[a-z0-9]+(?:_[a-z0-9]+)*$/.test(raw.id)) return null;
+  const type = QUESTION_TYPE_ALIASES[raw.inputType ?? raw.type];
+  const prompt = rendererText(raw.prompt ?? raw.label, 300);
+  if (!type || !prompt) return null;
+  let options = [];
+  if (type === 'single_choice' || type === 'multiple_choice') {
+    if (!Array.isArray(raw.options) || raw.options.length < 1 || raw.options.length > 20) return null;
+    options = raw.options.map((option) => {
+      if (!option || typeof option !== 'object' || Array.isArray(option)) return null;
+      const value = option.value ?? option.id;
+      const normalizedValue = rendererText(value, 120);
+      const label = rendererText(option.label, 160);
+      return normalizedValue && SAFE_QUESTION_OPTION.test(normalizedValue) && label
+        ? normalizedValue
+        : null;
+    });
+    if (options.some((value) => value === null) || new Set(options).size !== options.length) return null;
+  }
+  const maxLength = Number.isSafeInteger(raw.maxLength)
+    && raw.maxLength > 0 && raw.maxLength <= 4_000
+    ? Number(raw.maxLength)
+    : 4_000;
+  return { id: raw.id, type, options: new Set(options), maxLength };
+}
+
+function answerMissing(value) {
+  return value == null
+    || (typeof value === 'string' && value.trim() === '')
+    || (Array.isArray(value) && value.length === 0);
+}
+
+function answerMatchesQuestion(answer, question) {
+  if (answerMissing(answer)) return true;
+  if (question.type === 'short_text' || question.type === 'long_text') {
+    return typeof answer === 'string' && answer.length <= question.maxLength;
+  }
+  if (question.type === 'number') return typeof answer === 'number' && Number.isFinite(answer);
+  if (question.type === 'boolean') return typeof answer === 'boolean';
+  if (question.type === 'single_choice') {
+    return typeof answer === 'string' && question.options.has(answer);
+  }
+  return Array.isArray(answer)
+    && answer.length <= question.options.size
+    && answer.every((value) => typeof value === 'string' && question.options.has(value))
+    && new Set(answer).size === answer.length;
+}
+
 function normalizeRequestInput(body, service, now = new Date()) {
   const input = plainObject(body, 'request');
   rejectFields(input, [
@@ -158,13 +228,32 @@ function normalizeRequestInput(body, service, now = new Date()) {
     'schedule', 'questionsDeadlineAt', 'quotesCloseAt',
   ], 'request');
   const brief = plainObject(input.brief, 'brief');
-  rejectUnknownFields(brief, ['answers', 'media', 'summary'], 'brief');
+  rejectUnknownFields(brief, ['answers', 'materialsResponsibility', 'media', 'summary'], 'brief');
+  const materialsResponsibility = ['customer', 'worker', 'discuss'].includes(brief.materialsResponsibility)
+    ? brief.materialsResponsibility
+    : null;
+  if (!materialsResponsibility) {
+    fail(
+      'quote_materials_responsibility_invalid',
+      'Materials responsibility is required',
+      422,
+      'Choose customer, worker or discuss before sending the quote request.'
+    );
+  }
   const answers = plainObject(brief.answers, 'brief.answers');
-  const supportedQuestionIds = new Set(
-    (service.brief_schema?.questions || [])
-      .map((question) => question?.id)
-      .filter((id) => typeof id === 'string')
-  );
+  const rawQuestions = service.brief_schema?.questions;
+  const questionContracts = Array.isArray(rawQuestions) ? rawQuestions.map(questionContract) : [];
+  if (!Array.isArray(rawQuestions) || questionContracts.some((question) => question === null)
+      || new Set(questionContracts.map((question) => question.id)).size !== questionContracts.length) {
+    fail(
+      'quote_brief_schema_unavailable',
+      'This service brief is not available',
+      409,
+      'The published question contract could not be verified. No quote request was created.'
+    );
+  }
+  const questionById = new Map(questionContracts.map((question) => [question.id, question]));
+  const supportedQuestionIds = new Set(questionById.keys());
   const unsupportedQuestionIds = Object.keys(answers).filter((id) => !supportedQuestionIds.has(id)).sort();
   if (unsupportedQuestionIds.length) {
     fail(
@@ -176,8 +265,7 @@ function normalizeRequestInput(body, service, now = new Date()) {
     );
   }
   const missingQuestionIds = (service.required_question_ids || []).filter((id) => {
-    const answer = answers[id];
-    return answer == null || (typeof answer === 'string' && answer.trim() === '');
+    return answerMissing(answers[id]);
   });
   if (missingQuestionIds.length) {
     fail(
@@ -186,6 +274,19 @@ function normalizeRequestInput(body, service, now = new Date()) {
       422,
       'Complete every question required by this service version.',
       { missingQuestionIds }
+    );
+  }
+  const invalidQuestionIds = Object.entries(answers)
+    .filter(([id, answer]) => !answerMatchesQuestion(answer, questionById.get(id)))
+    .map(([id]) => id)
+    .sort();
+  if (invalidQuestionIds.length) {
+    fail(
+      'quote_brief_answer_invalid',
+      'Brief answers do not match the published question contract',
+      422,
+      'Use the declared answer type and published options for every service question.',
+      { invalidQuestionIds }
     );
   }
   const quotesCloseAt = dateValue(input.quotesCloseAt, 'quotesCloseAt');
@@ -224,6 +325,7 @@ function normalizeRequestInput(body, service, now = new Date()) {
     brief: {
       schemaVersion: 1,
       answers,
+      materialsResponsibility,
       media: normalizedMedia,
       summary: stringValue(brief.summary, 'brief.summary', { optional: true, max: 1000 }) || null,
     },

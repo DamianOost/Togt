@@ -17,7 +17,7 @@ const request = Object.freeze({
   version: 2,
   status: 'open',
   service: { id: '22222222-2222-4222-8222-222222222222', version: 1, label: 'Repair', identityVerificationRequired: true, credentialIds: [] },
-  brief: { summary: null, answers: [], mediaCount: 0 },
+  brief: { summary: null, answers: [], materialsResponsibility: 'worker', mediaCount: 0 },
   broadAreaLabel: 'Rondebosch',
   startsAt: '2026-09-02T08:00:00.000Z',
   endsAt: '2026-09-02T10:00:00.000Z',
@@ -58,6 +58,20 @@ test('complete worker quote is validated against request window, expiry, duratio
   assert.match(invalid.durationMinutes, /equal/);
   assert.match(invalid.validUntil, /no later/);
   assert.match(invalid.labourAmount, /greater than zero/);
+});
+
+test('customer-supplied materials reject a nonzero worker materials charge before submission', () => {
+  const errors = validateWorkerQuoteForSubmission(
+    completeForm({ materialsAmount: '10.00' }),
+    { ...request, brief: { ...request.brief, materialsResponsibility: 'customer' } },
+    '2026-08-29T10:00:00.000Z'
+  );
+  assert.match(errors.materialsAmount, /customer-supplied/);
+  assert.deepEqual(validateWorkerQuoteForSubmission(
+    completeForm({ materialsAmount: '0' }),
+    { ...request, brief: { ...request.brief, materialsResponsibility: 'customer' } },
+    '2026-08-29T10:00:00.000Z'
+  ), {});
 });
 
 test('mutation canonicalises server fields and never authors fee, net, identity or status', () => {

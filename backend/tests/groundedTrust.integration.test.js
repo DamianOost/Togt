@@ -143,6 +143,8 @@ async function attachRecurringAgreement(fixture) {
       JSON.stringify({
         schemaVersion: 1,
         scope: 'Repair the tap',
+        description: 'Repair the tap',
+        items: [{ label: 'Repair' }],
         deliverables: ['Repair'],
         customerBrief: { privateNote: 'Gate code 1234' },
       }),
@@ -533,7 +535,51 @@ describe('relationship eligibility, favourites, blocking and rebook drafts', () 
   });
 
   test('rebook produces an editable private draft and never submits, prices or substitutes', async () => {
-    const fixture = await createFixture();
+    const fixture = await createFixture({ withAgreement: true });
+    await db.query(
+      `INSERT INTO grounded_scope_versions (
+         booking_id, version, base_version, status, source,
+         proposed_by, proposed_by_role, scope_snapshot,
+         customer_confirmed_by, customer_confirmed_at,
+         worker_confirmed_by, worker_confirmed_at
+       ) VALUES (
+         $1, 1, NULL, 'superseded', 'accepted_agreement',
+         $2, 'labourer', $3::jsonb, $4, NOW(), $2, NOW()
+       )`,
+      [
+        fixture.booking.id,
+        fixture.worker.id,
+        JSON.stringify({ description: 'Repair the tap', items: [{ label: 'Repair' }] }),
+        fixture.customer.id,
+      ]
+    );
+    await db.query(
+      `INSERT INTO grounded_scope_versions (
+         booking_id, version, base_version, status, source,
+         proposed_by, proposed_by_role, scope_snapshot,
+         customer_confirmed_by, customer_confirmed_at,
+         worker_confirmed_by, worker_confirmed_at
+       ) VALUES (
+         $1, 2, 1, 'confirmed', 'approved_change_order',
+         $2, 'labourer', $3::jsonb, $4, NOW(), $2, NOW()
+       )`,
+      [
+        fixture.booking.id,
+        fixture.worker.id,
+        JSON.stringify({
+          description: 'Repair the tap and replace the isolation valve',
+          items: [{ label: 'Repair' }, 'Replace isolation valve'],
+        }),
+        fixture.customer.id,
+      ]
+    );
+    await db.query(
+      `UPDATE bookings
+          SET current_scope_version = 2,
+              scope_items = $2::jsonb
+        WHERE id = $1`,
+      [fixture.booking.id, JSON.stringify([{ label: 'Repair' }, 'Replace isolation valve'])]
+    );
     const before = (await db.query('SELECT COUNT(*)::int AS count FROM bookings')).rows[0].count;
     const created = await command(
       'post',
@@ -562,6 +608,9 @@ describe('relationship eligibility, favourites, blocking and rebook drafts', () 
         supportedByThisEndpoint: false,
       },
     });
+    expect(created.body.rebookDraft.editableScope.items).toEqual(['Repair', 'Replace isolation valve']);
+    expect(created.body.rebookDraft.editableScope.materialsResponsibility)
+      .toBe('Materials responsibility was not separately recorded in this accepted agreement.');
     expect(created.body.rebookDraft).not.toHaveProperty('price');
     expect(created.body.rebookDraft).not.toHaveProperty('address');
     expect((await db.query('SELECT COUNT(*)::int AS count FROM bookings')).rows[0].count)

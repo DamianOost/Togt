@@ -99,6 +99,7 @@ function inputType(value: unknown): BriefQuestion['inputType'] | null {
     single_select: 'single_choice',
     multiple_choice: 'multiple_choice',
     multi_select: 'multiple_choice',
+    boolean: 'boolean',
   });
   return typeof value === 'string' ? mapping[value] ?? null : null;
 }
@@ -115,6 +116,8 @@ function adaptQuestions(briefSchema: unknown, requiredIds: readonly string[]): r
     const type = inputType(raw.inputType ?? raw.type);
     if (!questionId || !prompt || !type || seen.has(questionId)) return null;
     seen.add(questionId);
+    const options = cleanOptions(raw.options);
+    if ((type === 'single_choice' || type === 'multiple_choice') && options.length === 0) return null;
     const maxLength = raw.maxLength == null
       ? null
       : Number.isSafeInteger(raw.maxLength) && Number(raw.maxLength) > 0 && Number(raw.maxLength) <= 4_000
@@ -126,7 +129,7 @@ function adaptQuestions(briefSchema: unknown, requiredIds: readonly string[]): r
       helperText: raw.helperText == null ? null : cleanText(raw.helperText, 500),
       required: required.has(questionId),
       inputType: type,
-      options: cleanOptions(raw.options),
+      options,
       maxLength,
     }));
   }

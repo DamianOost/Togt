@@ -1067,12 +1067,13 @@ function applyGroundedOpenApi(spec) {
         requestSchema: {
           type: 'object',
           additionalProperties: false,
-          required: ['description', 'items', 'materialsResponsibility'],
+          required: ['description', 'items', 'materialsResponsibility', 'materialsResponsibilityCode'],
           properties: {
             baseVersion: { type: ['integer', 'null'], minimum: 1 },
             description: { type: 'string', minLength: 3, maxLength: 1500 },
             items: { type: 'array', minItems: 1, maxItems: 50, items: { type: 'string', minLength: 1, maxLength: 300 } },
             materialsResponsibility: { type: 'string', minLength: 2, maxLength: 300 },
+            materialsResponsibilityCode: { type: 'string', enum: ['customer', 'worker'] },
             estimatedMinutes: { type: ['integer', 'null'], minimum: 1, maximum: 10080 },
           },
         },
@@ -1262,9 +1263,10 @@ function applyGroundedOpenApi(spec) {
             serviceId: { type: 'string', format: 'uuid' },
             serviceVersion: { type: 'integer', minimum: 1 },
             brief: {
-              type: 'object', additionalProperties: false, required: ['answers'],
+              type: 'object', additionalProperties: false, required: ['answers', 'materialsResponsibility'],
               properties: {
                 answers: { type: 'object', additionalProperties: true },
+                materialsResponsibility: { type: 'string', enum: ['customer', 'worker', 'discuss'] },
                 media: { type: 'array', maxItems: 12, items: { type: 'object', additionalProperties: false, required: ['id', 'kind'], properties: { id: { type: 'string' }, kind: { type: 'string', const: 'image' } } } },
                 summary: { type: 'string', maxLength: 1000 },
               },

@@ -182,7 +182,8 @@ export function WorkerQuoteBuilderRoute({ navigation, route }: { navigation: any
 
   const mutate = useCallback(async (submit: boolean) => {
     if (state.status !== 'ready' || pendingAction !== null) return;
-    const validation = submit
+    const requiresCompleteQuote = submit || state.detail.ownQuote?.status === 'submitted';
+    const validation = requiresCompleteQuote
       ? validateWorkerQuoteForSubmission(state.form, state.detail.request, new Date().toISOString())
       : validateWorkerQuoteDraft(state.form);
     setErrors(validation);

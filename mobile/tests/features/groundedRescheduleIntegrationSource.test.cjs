@@ -28,3 +28,13 @@ test('reschedule scheduling uses the native date-time control and never changes 
   assert.match(route, /other participant must accept before the Project schedule changes/i);
   assert.doesNotMatch(route, /schedule (?:was|has been) changed[^\n]*propos/i);
 });
+
+test('on-site scope resolution uses a structured materials owner and the current base version', () => {
+  assert.match(worker, /materialsResponsibilityCode: 'customer' \| 'worker' \| null/);
+  assert.match(worker, /baseVersion: fulfilment\.scope\.current\?\.version \?\? null/);
+  assert.match(worker, /materialsResponsibilityCode: proposal\.materialsResponsibilityCode/);
+  assert.match(worker, /scope-materials-customer/);
+  assert.match(worker, /scope-materials-worker/);
+  assert.match(worker, /needsMaterialsResolution/);
+  assert.doesNotMatch(worker, /TextField label="Materials responsibility"/);
+});

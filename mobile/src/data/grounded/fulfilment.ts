@@ -34,6 +34,7 @@ export type GroundedScope = Readonly<{
   description: string;
   items: readonly string[];
   materialsResponsibility: string;
+  materialsResponsibilityCode: 'customer' | 'worker' | 'discuss' | 'not_recorded' | null;
   estimatedMinutes: number | null;
   customerConfirmedAt: string | null;
   workerConfirmedAt: string | null;
@@ -173,7 +174,7 @@ function decimalMoney(value: unknown, currency: unknown): MoneyAmount | null {
 }
 
 function stringArray(value: unknown, maxItems = 50, maxLength = 500): readonly string[] | null {
-  if (!Array.isArray(value) || value.length > maxItems) return null;
+  if (!Array.isArray(value) || value.length < 1 || value.length > maxItems) return null;
   const items: string[] = [];
   for (const item of value) {
     const candidate = stringValue(item, maxLength);
@@ -196,6 +197,11 @@ function parseScope(value: unknown): GroundedScope | null | undefined {
   const description = stringValue(value.snapshot.description, 1_500);
   const items = stringArray(value.snapshot.items);
   const materialsResponsibility = stringValue(value.snapshot.materialsResponsibility, 300);
+  const materialsResponsibilityCode = value.snapshot.materialsResponsibilityCode == null
+    ? null
+    : ['customer', 'worker', 'discuss', 'not_recorded'].includes(String(value.snapshot.materialsResponsibilityCode))
+      ? value.snapshot.materialsResponsibilityCode as GroundedScope['materialsResponsibilityCode']
+      : undefined;
   const estimatedMinutes = value.snapshot.estimatedMinutes == null
     ? null
     : positiveInteger(value.snapshot.estimatedMinutes);
@@ -204,6 +210,7 @@ function parseScope(value: unknown): GroundedScope | null | undefined {
   const createdAt = iso(value.createdAt);
   if (!version || (value.baseVersion != null && !baseVersion) || !status || !proposedByRole
       || !description || !items || !materialsResponsibility
+      || materialsResponsibilityCode === undefined
       || (value.snapshot.estimatedMinutes != null && !estimatedMinutes)
       || customerConfirmedAt === undefined || workerConfirmedAt === undefined || !createdAt) return undefined;
   return Object.freeze({
@@ -214,6 +221,7 @@ function parseScope(value: unknown): GroundedScope | null | undefined {
     description,
     items,
     materialsResponsibility,
+    materialsResponsibilityCode,
     estimatedMinutes,
     customerConfirmedAt,
     workerConfirmedAt,

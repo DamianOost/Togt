@@ -58,6 +58,13 @@ function quoteTone(status: NonNullable<WorkerQuoteRequestDetail['ownQuote']>['st
   return 'offline';
 }
 
+function materialsResponsibilityLabel(value: WorkerQuoteRequestDetail['request']['brief']['materialsResponsibility']): string {
+  if (value === 'customer') return 'Customer supplies materials or parts';
+  if (value === 'worker') return 'Worker supplies materials or parts';
+  if (value === 'discuss') return 'Agree responsibility before work starts';
+  return 'Not separately recorded';
+}
+
 export function WorkerQuoteRequestDetailScreen({
   state,
   connection,
@@ -131,6 +138,12 @@ export function WorkerQuoteRequestDetailScreen({
         <View>
           <SectionHeader subtitle="Customer-provided content is sanitised before Workers can read it." title="Structured brief" />
           <Surface style={{ marginTop: theme.spacing.sm }}>
+            <View>
+              <Text allowFontScaling style={[theme.typography.label, { color: theme.colors.textSecondary }]}>Materials responsibility</Text>
+              <Text allowFontScaling style={[theme.typography.body, { color: theme.colors.text, marginTop: theme.spacing.xxs }]}>
+                {materialsResponsibilityLabel(request.brief.materialsResponsibility)}
+              </Text>
+            </View>
             {request.brief.summary ? (
               <Text allowFontScaling style={[theme.typography.body, { color: theme.colors.text }]}>{request.brief.summary}</Text>
             ) : null}

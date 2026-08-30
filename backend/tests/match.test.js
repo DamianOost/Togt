@@ -324,6 +324,11 @@ describe('POST /api/match', () => {
           status: 'confirmed',
           source: 'accepted_agreement',
           proposedByRole: 'customer',
+          snapshot: {
+            items: [offered.body.offer.scopeSummary],
+            materialsResponsibility: 'Materials responsibility was not separately recorded in this match request.',
+            materialsResponsibilityCode: 'not_recorded',
+          },
         },
         proposal: null,
       },
@@ -357,7 +362,10 @@ describe('POST /api/match', () => {
     expect(canonical.rows[0]).toMatchObject({ current_scope_version: 1, policies: 1, scopes: 1 });
     expect(canonical.rows[0].scope_snapshot.description).toBe(offered.body.offer.scopeSummary);
     expect(canonical.rows[0].scope_snapshot.serviceLabel).toBe(offered.body.offer.scopeSummary);
-    expect(canonical.rows[0].scope_snapshot.items).toEqual([{ label: offered.body.offer.scopeSummary }]);
+    expect(canonical.rows[0].scope_snapshot.items).toEqual([offered.body.offer.scopeSummary]);
+    expect(canonical.rows[0].scope_snapshot.materialsResponsibility)
+      .toBe('Materials responsibility was not separately recorded in this match request.');
+    expect(canonical.rows[0].scope_snapshot.materialsResponsibilityCode).toBe('not_recorded');
     const confirmedScopeJson = JSON.stringify(canonical.rows[0].scope_snapshot);
     expect(confirmedScopeJson).not.toContain('1 Test Rd');
     expect(confirmedScopeJson).not.toContain('customer-private@example.test');

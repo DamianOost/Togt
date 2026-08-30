@@ -3,6 +3,7 @@ const { ProblemError, typeUri } = require('../../lib/problemJson');
 const { requestHash } = require('./contracts');
 const { createPinMaterial, verifyPin, revealPin, deviceIdHash } = require('./pin');
 const { serializeFulfilment } = require('./privacy');
+const { canonicalScopeSnapshot, scopeMaterialsResolved } = require('./scope');
 const store = require('./store');
 
 const KNOWN_STATUSES = new Set(['pending', 'accepted', 'in_progress', 'completed', 'cancelled', 'terminated_after_start']);
@@ -437,6 +438,7 @@ async function proposeScope(context) {
           description: context.body.description,
           items: context.body.items,
           materialsResponsibility: context.body.materialsResponsibility,
+          materialsResponsibilityCode: context.body.materialsResponsibilityCode,
           estimatedMinutes: context.body.estimatedMinutes,
         }),
         customer ? context.actor.id : null,
@@ -611,6 +613,14 @@ async function revealStartPin(context) {
         409
       );
     }
+    if (!scopeMaterialsResolved(scope)) {
+      problem(
+        'start_materials_responsibility_unresolved',
+        'Materials responsibility must be confirmed before work starts',
+        409,
+        'Confirm who supplies materials or parts in a bilateral on-site scope before revealing the start PIN.'
+      );
+    }
 
     let challenge = await store.getActivePin(client, booking.id, { forUpdate: true });
     if (challenge && new Date(challenge.expires_at) <= new Date()) {
@@ -696,6 +706,14 @@ async function startWork(context) {
     const scope = await store.getConfirmedScope(client, booking.id, { forUpdate: true });
     if (!scope || Number(scope.version) !== Number(booking.current_scope_version)) {
       problem('start_scope_not_confirmed', 'Both participants must confirm the current scope first', 409);
+    }
+    if (!scopeMaterialsResolved(scope)) {
+      problem(
+        'start_materials_responsibility_unresolved',
+        'Materials responsibility must be confirmed before work starts',
+        409,
+        'Confirm who supplies materials or parts in a bilateral on-site scope before entering the start PIN.'
+      );
     }
     const pendingReschedule = await client.query(
       `SELECT EXISTS (
@@ -1237,9 +1255,19 @@ async function decideChangeOrder(context, decision) {
       };
     }
 
-    const currentSnapshot = currentScope.scope_snapshot || {};
+    const currentSnapshot = canonicalScopeSnapshot(currentScope.scope_snapshot, currentScope.source) || {};
     const currentItems = Array.isArray(currentSnapshot.items) ? currentSnapshot.items : [];
     const addedItems = Array.isArray(change.added_scope_items) ? change.added_scope_items : [];
+    if (currentItems.length < 1 || !currentItems.every((item) => (
+      typeof item === 'string' && item.trim().length > 0
+    ))) {
+      problem(
+        'change_order_scope_not_canonical',
+        'The current scope cannot be safely extended',
+        409,
+        'The existing agreement contains an unsupported scope shape and must be reconciled first.'
+      );
+    }
     const history = Array.isArray(currentSnapshot.changeOrders) ? currentSnapshot.changeOrders : [];
     const nextVersionResult = await client.query(
       'SELECT COALESCE(MAX(version), 0) + 1 AS version FROM grounded_scope_versions WHERE booking_id = $1',

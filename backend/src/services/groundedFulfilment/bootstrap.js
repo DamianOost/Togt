@@ -20,6 +20,24 @@ function requireApprovedFulfilmentPolicy() {
   return resolved.snapshot;
 }
 
+function assertCanonicalInitialScope(scopeSnapshot, scopeItems) {
+  const validText = (value, max) => typeof value === 'string'
+    && value.trim().length > 0
+    && value.trim().length <= max;
+  const snapshotItems = scopeSnapshot?.items;
+  if (!scopeSnapshot || typeof scopeSnapshot !== 'object' || Array.isArray(scopeSnapshot)
+      || !validText(scopeSnapshot.description, 1_500)
+      || !Array.isArray(snapshotItems) || snapshotItems.length < 1 || snapshotItems.length > 50
+      || !snapshotItems.every((item) => validText(item, 500))
+      || !validText(scopeSnapshot.materialsResponsibility, 300)
+      || !['customer', 'worker', 'discuss', 'not_recorded']
+        .includes(scopeSnapshot.materialsResponsibilityCode)
+      || !Array.isArray(scopeItems)
+      || JSON.stringify(scopeItems) !== JSON.stringify(snapshotItems)) {
+    throw new TypeError('Canonical initial scope requires matching string items and materials responsibility.');
+  }
+}
+
 async function bootstrapCanonicalFulfilment(client, {
   bookingId,
   policy,
@@ -30,6 +48,7 @@ async function bootstrapCanonicalFulfilment(client, {
   scopeSnapshot,
   scopeItems,
 }) {
+  assertCanonicalInitialScope(scopeSnapshot, scopeItems);
   await client.query(
     `INSERT INTO grounded_fulfilment_policy_snapshots (
        booking_id, policy_version, source, route_reveal_lead_minutes,
@@ -82,6 +101,7 @@ async function bootstrapCanonicalFulfilment(client, {
 }
 
 module.exports = {
+  assertCanonicalInitialScope,
   requireApprovedFulfilmentPolicy,
   bootstrapCanonicalFulfilment,
 };

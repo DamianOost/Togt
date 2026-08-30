@@ -156,12 +156,15 @@ app.use('/api/match', matchRoutes);
 app.use('/api/api-keys', apiKeyRoutes);
 app.use('/api/webhook-subscriptions', webhookSubscriptionRoutes);
 app.use('/api/capabilities', capabilityRoutes);
+// The catalogue contract is public. Keep this exact-prefix router ahead of
+// the router-wide authenticated `/api` modules below so their auth middleware
+// cannot shadow catalogue list/detail reads in the assembled application.
+app.use('/api/catalogue', catalogueRouter);
 app.use('/api/projects', groundedProjectRoutes);
 app.use('/api/projects', groundedFulfilmentRoutes);
 app.use('/api', groundedTrustRoutes);
 app.use('/api', groundedIntelligenceRoutes);
 app.use('/api/worker', groundedWorkerRoutes);
-app.use('/api/catalogue', catalogueRouter);
 app.use('/api/quote-requests', quoteRequestRouter);
 app.use('/api/quotes', quoteRouter);
 app.use('/mcp', mcpHttpRoutes);

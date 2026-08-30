@@ -1,6 +1,6 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
+import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { useTogtTheme } from '../../../design';
 import { AppScaffold, Button, Chip, SectionHeader, StatusPill, Surface, TopAppBar } from '../../../ui';
 import { customerProjectMessage, formatProjectMoney } from './copy';

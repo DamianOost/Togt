@@ -47,6 +47,27 @@ function requireValue(environment, name, reason) {
   return value;
 }
 
+function requireValueOrFile(environment, valueName, fileName, reason) {
+  const inlineValue = environment[valueName]?.trim();
+  const configuredFile = environment[fileName]?.trim();
+  if (inlineValue && configuredFile) {
+    throw new Error(`${valueName} and ${fileName} cannot both be set.`);
+  }
+  if (inlineValue) return inlineValue;
+  if (!configuredFile) {
+    throw new Error(`${valueName} or ${fileName} is required ${reason}.`);
+  }
+  if (!path.isAbsolute(configuredFile)) {
+    throw new Error(`${fileName} must be an absolute path.`);
+  }
+  if (!fs.existsSync(configuredFile) || !fs.statSync(configuredFile).isFile()) {
+    throw new Error(`${fileName} must point to a readable file.`);
+  }
+  const fileValue = fs.readFileSync(configuredFile, 'utf8').trim();
+  if (!fileValue) throw new Error(`${fileName} must not be empty.`);
+  return fileValue;
+}
+
 function resolveAppEnvironment(environment) {
   const explicit = environment.EXPO_PUBLIC_APP_ENV?.trim();
   if (explicit) return normalizeAppEnvironment(explicit);
@@ -172,9 +193,10 @@ function resolveBuildConfiguration(environment = process.env) {
 
   let googleMapsAndroidApiKey = null;
   if (mapsProvider === 'google') {
-    googleMapsAndroidApiKey = requireValue(
+    googleMapsAndroidApiKey = requireValueOrFile(
       environment,
       'GOOGLE_MAPS_ANDROID_API_KEY',
+      'GOOGLE_MAPS_ANDROID_API_KEY_FILE',
       'when Google Maps is enabled'
     );
     if (/^(?:replace|example|your[-_]|<)/i.test(googleMapsAndroidApiKey)) {

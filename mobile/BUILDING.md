@@ -47,7 +47,9 @@ The URL must be an origin with no path, query, fragment, or credentials.
   `EAS_PROJECT_ID`; `fcm` requires `GOOGLE_SERVICES_JSON` pointing to the
   approved native configuration file.
 - `EXPO_PUBLIC_MAPS_PROVIDER=google` requires a package/signature-restricted
-  `GOOGLE_MAPS_ANDROID_API_KEY`. The default is `disabled`.
+  key supplied through either `GOOGLE_MAPS_ANDROID_API_KEY` or the safer
+  absolute file path `GOOGLE_MAPS_ANDROID_API_KEY_FILE`. Never set both. The
+  default Maps provider is `disabled`.
 - `EXPO_PUBLIC_ENABLE_PEACH` defaults to `false`. Enabling the client allow-list
   still does not override the server capability gate.
 - `TOGT_GROUNDED_MOMENTUM` packages the new role shells and defaults to `true`
@@ -160,11 +162,13 @@ inputs above except:
 
 ```powershell
 $env:EXPO_PUBLIC_MAPS_PROVIDER = 'google'
-$env:GOOGLE_MAPS_ANDROID_API_KEY = '<Android-restricted-key>'
+$env:GOOGLE_MAPS_ANDROID_API_KEY_FILE = 'C:\absolute\path\to\za.togt.app.key'
 ```
 
 The key must be restricted to package `za.togt.app` and the candidate signer
-SHA-1. `maps_display` also requires fresh explicit server release evidence;
+SHA-1. The file-backed form keeps the secret out of shell history, process
+arguments, repository files, build logs, and the generated evidence manifest;
+the manifest records only its SHA-256 fingerprint. `maps_display` also requires fresh explicit server release evidence;
 `address_search` and `address_resolution` remain off for Wave 1. Build and
 publish only through the immutable candidate/evidence process below. Do not
 treat setting these environment values as provider approval.

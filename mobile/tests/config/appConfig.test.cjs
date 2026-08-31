@@ -2,6 +2,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const createConfig = require('../../app.config.js');
 const base = require('../../app.json');
 const eas = require('../../eas.json');
@@ -20,6 +23,7 @@ const CONFIG_ENVIRONMENT_NAMES = [
   'EXPO_PUBLIC_MAPS_PROVIDER',
   'EXPO_PUBLIC_PUSH_PROVIDER',
   'GOOGLE_MAPS_ANDROID_API_KEY',
+  'GOOGLE_MAPS_ANDROID_API_KEY_FILE',
   'GOOGLE_SERVICES_JSON',
   'TOGT_GROUNDED_MOMENTUM',
   'TOGT_CUSTOMER_FLAGSHIP',
@@ -382,7 +386,7 @@ test('enabled Google providers require their provider-specific inputs', () => {
   };
   assert.throws(
     () => configFor({ ...common, EXPO_PUBLIC_MAPS_PROVIDER: 'google' }),
-    /GOOGLE_MAPS_ANDROID_API_KEY is required/
+    /GOOGLE_MAPS_ANDROID_API_KEY or GOOGLE_MAPS_ANDROID_API_KEY_FILE is required/
   );
   assert.throws(
     () => configFor({
@@ -414,6 +418,40 @@ test('enabled Google providers require their provider-specific inputs', () => {
     addressResolution: false,
     addressProvenanceRecording: true,
   });
+});
+
+test('Google Maps key can be loaded from an absolute local secret file', () => {
+  const secretDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'togt-maps-key-'));
+  const secretFile = path.join(secretDirectory, 'android.key');
+  fs.writeFileSync(secretFile, 'synthetic-file-backed-android-key\n', 'utf8');
+  try {
+    const common = {
+      ANDROID_BUILD_PROVIDER: 'local_gradle',
+      EXPO_PUBLIC_API_BASE_URL: 'https://preview.example.test',
+      EXPO_PUBLIC_APP_ENV: 'preview',
+      EXPO_PUBLIC_MAPS_PROVIDER: 'google',
+      TOGT_GROUNDED_MOMENTUM: 'true',
+      TOGT_CUSTOMER_FLAGSHIP: 'true',
+    };
+    const config = configFor({
+      ...common,
+      GOOGLE_MAPS_ANDROID_API_KEY_FILE: secretFile,
+    });
+    assert.equal(
+      config.android.config.googleMaps.apiKey,
+      'synthetic-file-backed-android-key'
+    );
+    assert.throws(
+      () => configFor({
+        ...common,
+        GOOGLE_MAPS_ANDROID_API_KEY: 'synthetic-inline-android-key',
+        GOOGLE_MAPS_ANDROID_API_KEY_FILE: secretFile,
+      }),
+      /cannot both be set/
+    );
+  } finally {
+    fs.rmSync(secretDirectory, { recursive: true, force: true });
+  }
 });
 
 test('package override and invalid provider values fail closed', () => {
